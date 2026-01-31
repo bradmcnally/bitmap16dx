@@ -1,0 +1,54 @@
+# PlatformIO build artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE and editor files
+.vscode/
+.idea/
+.claude/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+*.bin
+*.elf
+*.map
+*.hex
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Backup and working files
+*.bak
+*.bak2
+working_main.cpp
+brad-readme.md
+
+# Development tools (keep in local but not in repo)
+migrate_slots.py
+palette_picker.html
+convert_battery_icons.py
+build.sh
+claude.md
+tools/
+devlog/
+
+# Documentation and design files
+docs/
+
+# Folders with source assets (not needed to build)
+assets/
+palettes/
+reference/
+ux/
