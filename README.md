@@ -1,4 +1,5 @@
 # BitMap16 DX
+![Logo](img/bitmap16dx.png)
 
 A tiny pixel-art workstation firmware for the M5Stack Cardputer ADV. 
 
