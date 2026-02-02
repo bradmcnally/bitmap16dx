@@ -270,6 +270,8 @@ namespace StatusMsg {
   const char* FILE_OPEN_FAIL = "File open fail";
   const char* WRITE_INCOMPLETE = "Write incomplete";
   const char* WRITE_FAIL = "Write fail";
+  const char* FILE_NOT_FOUND = "File not found";
+  const char* FILE_CORRUPT = "File corrupted";
 
   // Memory & Allocation
   const char* ALLOC_MEMORY = "Alloc memory...";
@@ -533,18 +535,21 @@ void loadSketchListFromSD() {
   sketchList.clear();
 
   if (!sdCardAvailable && !testSDCard()) {
+    setStatusMessage(StatusMsg::SD_NOT_READY);
     return;
   }
 
   // Quick card check
   if (SD.cardType() == CARD_NONE) {
     sdCardAvailable = false;
+    setStatusMessage(StatusMsg::SD_NOT_READY);
     return;
   }
 
   // Open /bitmap16dx/sketches directory
   File root = SD.open("/bitmap16dx/sketches");
   if (!root || !root.isDirectory()) {
+    setStatusMessage(StatusMsg::SD_NOT_READY);
     return;
   }
 
@@ -745,23 +750,27 @@ bool saveActiveSketchAsNew() {
  */
 bool loadSketchFromSD(String filename) {
   if (!sdCardAvailable && !testSDCard()) {
+    setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
   }
 
   // Quick card check
   if (SD.cardType() == CARD_NONE) {
     sdCardAvailable = false;
+    setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
   }
 
   String fullPath = "/bitmap16dx/sketches/" + filename;
 
   if (!SD.exists(fullPath.c_str())) {
+    setStatusMessage(StatusMsg::FILE_NOT_FOUND);
     return false;
   }
 
   File file = SD.open(fullPath.c_str(), FILE_READ);
   if (!file) {
+    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
     return false;
   }
 
@@ -775,6 +784,7 @@ bool loadSketchFromSD(String filename) {
     if (formatVersion != SKETCH_FORMAT_VERSION) {
       // Unknown version, try to read anyway but could fail
       file.close();
+      setStatusMessage(StatusMsg::FILE_CORRUPT);
       return false;
     }
   } else if (fileSize == SKETCH_FILE_SIZE_V1) {
@@ -783,6 +793,7 @@ bool loadSketchFromSD(String filename) {
   } else {
     // Invalid file size
     file.close();
+    setStatusMessage(StatusMsg::FILE_CORRUPT);
     return false;
   }
 
@@ -2009,6 +2020,14 @@ void drawPaletteView(bool fullRedraw = true) {
     }
   }
 
+  // Draw status message at bottom if one exists
+  if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
+    paletteCanvas.setTextColor(TFT_BLACK);
+    paletteCanvas.setTextSize(1);
+    paletteCanvas.setCursor(3, 124);
+    paletteCanvas.print(statusMessage);
+  }
+
   // NOW push the entire frame to display at once - NO TEARING!
   paletteCanvas.pushSprite(0, 0);  // Push full-screen canvas
 
@@ -2547,6 +2566,14 @@ void drawMemoryViewGrid(bool fullRedraw = true) {
     drawMemoryViewCursor(memoryViewCursor, cursorX, cursorY, thumbSize);
   }
 
+  // Draw status message at bottom if one exists
+  if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
+    memoryCanvas.setTextColor(TFT_BLACK);
+    memoryCanvas.setTextSize(1);
+    memoryCanvas.setCursor(3, 124);
+    memoryCanvas.print(statusMessage);
+  }
+
   // Push entire canvas to display at (0, 0) to eliminate tearing
   memoryCanvas.pushSprite(0, 0);
   memoryCanvas.deleteSprite();
@@ -2615,6 +2642,7 @@ void drawSketchThumbnail(int sketchIndex, int x, int y, int thumbSize) {
     String fullPath = "/bitmap16dx/sketches/" + info.filename;
     File file = SD.open(fullPath.c_str(), FILE_READ);
     if (!file) {
+      setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
       return;
     }
 
