@@ -641,14 +641,6 @@ bool saveActiveSketchToSD() {
   }
 
   // Create directories if needed
-  if (!SD.exists("/dx")) {
-    if (!SD.mkdir("/dx")) {
-      setStatusMessage(StatusMsg::SD_NOT_READY);
-      sdCardAvailable = false;
-      return false;
-    }
-  }
-
   if (!SD.exists("/bitmap16dx/sketches")) {
     if (!SD.mkdir("/bitmap16dx/sketches")) {
       setStatusMessage(StatusMsg::SD_NOT_READY);
@@ -993,9 +985,6 @@ bool exportCanvasToPNG(bool scale) {
   delay(50);
 
   // Create exports directory if it doesn't exist
-  if (!SD.exists("/dx")) {
-    SD.mkdir("/dx");
-  }
   if (!SD.exists("/bitmap16dx/exports")) {
     SD.mkdir("/bitmap16dx/exports");
   }
@@ -1188,9 +1177,6 @@ bool takeScreenshot() {
   delay(50);
 
   // Create screenshots directory if it doesn't exist
-  if (!SD.exists("/dx")) {
-    SD.mkdir("/dx");
-  }
   if (!SD.exists("/bitmap16dx/screenshots")) {
     SD.mkdir("/bitmap16dx/screenshots");
   }
