@@ -47,7 +47,7 @@ Preferences preferences;
 
 // Enable screenshot feature (Y key) - disable for release builds
 // Export feature (X key) always remains enabled for users
-#define ENABLE_SCREENSHOTS 1  // Set to 0 to disable screenshots in release
+#define ENABLE_SCREENSHOTS 0  // Set to 0 to disable screenshots in release
 
 // ============================================================================
 // CONFIGURATION
