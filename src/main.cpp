@@ -22,7 +22,9 @@
  *   - In view mode: 1=black bg, 2=white bg, 3=gray bg
  * - X to export PNG (128×128 scaled)
  * - Fn+X to export PNG (logical size: 8×8 or 16×16)
- * - Y to take screenshot (captures full 240×135 display)
+#if ENABLE_SCREENSHOTS
+ * - Y to take screenshot (captures full 240×135 display) [DEBUG ONLY]
+#endif
  * - P to open palette menu (swap between color palettes)
  * - G0 button (physical) to clear canvas
  */
@@ -38,6 +40,14 @@
 
 // Preferences for persistent storage across reboots
 Preferences preferences;
+
+// ============================================================================
+// FEATURE FLAGS
+// ============================================================================
+
+// Enable screenshot feature (Y key) - disable for release builds
+// Export feature (X key) always remains enabled for users
+#define ENABLE_SCREENSHOTS 1  // Set to 0 to disable screenshots in release
 
 // ============================================================================
 // CONFIGURATION
@@ -291,10 +301,13 @@ namespace StatusMsg {
 
   // Export & Screenshot
   const char* EXPORTED = "Exported!";
+  const char* TOO_MANY_EXPORTS = "Too many exports";
+
+#if ENABLE_SCREENSHOTS
   const char* SCREENSHOT = "Screenshot...";
   const char* SCREENSHOT_OK = "Screenshot OK!";
-  const char* TOO_MANY_EXPORTS = "Too many exports";
   const char* TOO_MANY_SHOTS = "Too many shots";
+#endif
 
   // User Actions
   const char* NO_UNDO = "No undo";
@@ -1022,6 +1035,7 @@ bool exportCanvasToPNG(bool scale) {
   return true;
 }
 
+#if ENABLE_SCREENSHOTS
 /**
  * Take a screenshot of the full display (240×135 pixels)
  * Saves to /bitmap16dx/screenshots/screenshot_XXXX.png
@@ -1215,6 +1229,7 @@ bool takeScreenshot() {
   setStatusMessage(StatusMsg::SCREENSHOT_OK);
   return true;
 }
+#endif // ENABLE_SCREENSHOTS
 
 /**
  * Draw the current status message if it's still active
@@ -2770,147 +2785,10 @@ void drawMemoryViewCursor(int itemIndex, int x, int y, int thumbSize) {
   drawCorner(x + thumbSize + cornerOffset - 16 - offsetX, y + thumbSize + cornerOffset - 16 - offsetY, true, true);
 }
 
-// ============================================================================
-// SCROLLING LAYOUT (64×64 thumbnails, horizontally scrolling) - COMMENTED OUT
-// ============================================================================
-// void drawMemoryViewScrolling(bool fullRedraw = true) {
-//   if (fullRedraw) {
-//     M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
-//
-//     // Title
-//     M5Cardputer.Display.setTextColor(TFT_BLACK);
-//     M5Cardputer.Display.setTextSize(1);
-//     M5Cardputer.Display.setCursor(4, 4);
-//     M5Cardputer.Display.print("SKETCHES");
-//   }
-//
-//   // Smooth scroll animation
-//   // Interpolate scroll position towards cursor position
-//   float targetPos = (float)memoryViewCursor;
-//   float diff = targetPos - memoryViewScrollPos;
-//
-//   if (fabs(diff) > 0.01f) {
-//     // Smoothly animate towards target
-//     memoryViewScrollPos += diff * MEMORY_SCROLL_SPEED;
-//   } else {
-//     // Close enough - snap to target
-//     memoryViewScrollPos = targetPos;
-//   }
-//
-//   // Layout: Horizontal scrolling list of 64×64 thumbnails
-//   // Screen width: 240px, height: 135px
-//   const int thumbSize = 64;  // Each thumbnail is 64×64 pixels
-//   const int thumbGap = 16;   // Gap between thumbnails
-//
-//   // Vertically center the thumbnail + label
-//   // Total height: 64px (thumb) + 2px (gap) + 8px (text) = 74px
-//   // Center: (135 - 74) / 2 = 30.5, round to 31
-//   const int thumbY = 31;
-//
-//   // Calculate scroll offset to center the selected item
-//   // Center position on screen for selected item
-//   const int centerX = 120;  // Center of 240px screen
-//
-//   // Calculate base X position for each thumbnail based on animated scroll position
-//   float offset = (0 - memoryViewScrollPos) * (thumbSize + thumbGap);
-//   const int baseX = centerX + (int)offset - (thumbSize / 2);
-//
-//   // Create canvas for content area (below title) - 240×121 pixels
-//   // This eliminates screen tearing during animation!
-//   const int canvasHeight = 121;  // 135 - 14 (title area)
-//   memoryCanvas.createSprite(240, canvasHeight);
-//   memoryCanvas.fillSprite(COLOR_BACKGROUND);
-//
-//   // Draw all 12 slots to canvas
-//   for (int i = 0; i < MAX_SLOTS; i++) {
-//     int thumbX = baseX + (i * (thumbSize + thumbGap));
-//
-//     // Only draw if thumbnail is visible on screen (with some margin)
-//     if (thumbX + thumbSize < -10 || thumbX > 250) {
-//       continue;  // Skip off-screen thumbnails
-//     }
-//
-//     Slot& slot = slots[i];
-//
-//     // Adjust Y position for canvas (canvas starts at 0, not 14)
-//     int canvasThumbY = thumbY - 14;
-//
-//     // Draw thumbnail
-//     if (!slot.isEmpty) {
-//       // Draw the saved canvas as a 64×64 thumbnail
-//       // 8×8 canvas: 8× scale = 64×64 pixels
-//       // 16×16 canvas: 4× scale = 64×64 pixels
-//       int cellSize = (slot.gridSize == 8) ? 8 : 4;
-//
-//       for (int y = 0; y < slot.gridSize; y++) {
-//         for (int x = 0; x < slot.gridSize; x++) {
-//           uint8_t pixelIndex = slot.pixels[y][x];
-//           uint16_t color;
-//
-//           if (pixelIndex == 0) {
-//             // Transparent - use checkerboard
-//             bool isDark = ((x + y) % 2 == 0);
-//             color = isDark ? COLOR_CELL_DARK : COLOR_CELL_LIGHT;
-//           } else {
-//             // Get color from slot's palette (with collapse support)
-//             color = getSlotPixelColor(i, pixelIndex);
-//           }
-//
-//           memoryCanvas.fillRect(
-//             thumbX + (x * cellSize),
-//             canvasThumbY + (y * cellSize),
-//             cellSize,
-//             cellSize,
-//             color
-//           );
-//         }
-//       }
-//     } else {
-//       // Empty slot - draw gray box
-//       memoryCanvas.fillRect(thumbX, canvasThumbY, thumbSize, thumbSize, 0x8410);  // Dark gray
-//     }
-//
-//     // Draw borders (active slot gets yellow, cursor gets black, both if overlapping)
-//     bool isActive = (i == activeSlotIndex);
-//     bool isCursor = (i == memoryViewCursor);
-//
-//     if (isActive && isCursor) {
-//       // Both active and selected - draw yellow outer, black inner
-//       memoryCanvas.drawRect(thumbX - 2, canvasThumbY - 2, thumbSize + 4, thumbSize + 4, TFT_YELLOW);
-//       memoryCanvas.drawRect(thumbX - 1, canvasThumbY - 1, thumbSize + 2, thumbSize + 2, TFT_BLACK);
-//     } else if (isCursor) {
-//       // Just cursor selection
-//       memoryCanvas.drawRect(thumbX - 1, canvasThumbY - 1, thumbSize + 2, thumbSize + 2, TFT_BLACK);
-//       memoryCanvas.drawRect(thumbX - 2, canvasThumbY - 2, thumbSize + 4, thumbSize + 4, TFT_BLACK);
-//     } else if (isActive) {
-//       // Just active slot
-//       memoryCanvas.drawRect(thumbX - 1, canvasThumbY - 1, thumbSize + 2, thumbSize + 2, TFT_YELLOW);
-//     }
-//
-//     // Draw slot number centered below the thumbnail
-//     memoryCanvas.setTextSize(1);
-//     memoryCanvas.setTextColor(TFT_BLACK);
-//     String slotLabel = String(i + 1);  // Display as 1-12 instead of 0-11
-//     if (i < 9) slotLabel = "0" + slotLabel;  // Pad with zero (01, 02, ... 12)
-//
-//     // Center the text below the thumbnail
-//     // Each character is 6px wide at size 1, so "01" = 12px
-//     int textWidth = 12;  // 2 characters × 6px
-//     int textX = thumbX + (thumbSize / 2) - (textWidth / 2);
-//     int textY = canvasThumbY + thumbSize + 2;  // 2px below thumbnail
-//
-//     memoryCanvas.setCursor(textX, textY);
-//     memoryCanvas.print(slotLabel);
-//   }
-//
-//   // Push canvas to display at position (0, 14) - below title
-//   // This single operation eliminates tearing!
-//   memoryCanvas.pushSprite(0, 14);
-//   memoryCanvas.deleteSprite();
-// }
+
 
 // ============================================================================
-// DRAW MEMORY VIEW - uses grid layout only
+// DRAW MEMORY VIEW 
 // ============================================================================
 void drawMemoryView(bool fullRedraw) {
   drawMemoryViewGrid(fullRedraw);
@@ -3329,11 +3207,13 @@ void handleHelpView(Keyboard_Class::KeysState& status) {
         delay(200);  // Debounce
         return;
       }
+#if ENABLE_SCREENSHOTS
       // Y key - Take Screenshot
       else if (i == 'y' || i == 'Y') {
         takeScreenshot();
         enterHelpView();  // Redraw help view after screenshot status message
       }
+#endif
     }
   }
 
@@ -3518,11 +3398,13 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
         delay(200);  // Debounce
         return;  // Exit memory view loop to enter help view mode
       }
+#if ENABLE_SCREENSHOTS
       // Y key - Take Screenshot
       else if (i == 'y' || i == 'Y') {
         takeScreenshot();
         memoryViewNeedsRedraw = true;  // Redraw after screenshot status message
       }
+#endif
       // Arrow keys - navigate grid (2D navigation with 4 columns)
       const int COLS = 4;  // Match the column count in drawMemoryViewGrid
       int totalItems = 1 + sketchList.size();  // 1 for "+", rest are sketches
@@ -3597,11 +3479,13 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
         enterPreviewView();  // Redraw with new background
         delay(150);  // Debounce
       }
+#if ENABLE_SCREENSHOTS
       // Y key - Take Screenshot
       else if (i == 'y' || i == 'Y') {
         takeScreenshot();
         enterPreviewView();  // Redraw preview view after screenshot status message
       }
+#endif
     }
   }
 
@@ -3784,11 +3668,13 @@ void handlePaletteView(Keyboard_Class::KeysState& status) {
         paletteViewCursor++;
         delay(150);
       }
+#if ENABLE_SCREENSHOTS
       // Y key - Take Screenshot
       else if (i == 'y' || i == 'Y') {
         takeScreenshot();
         paletteViewNeedsRedraw = true;  // Redraw palette view after screenshot status message
       }
+#endif
     }
   }
 
@@ -3978,10 +3864,12 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           bool scaleToFull = !status.fn;  // Scale unless Fn is held
           exportCanvasToPNG(scaleToFull);
         }
+#if ENABLE_SCREENSHOTS
         // Y key - Take Screenshot (full 240×135 display)
         else if (i == 'y' || i == 'Y') {
           takeScreenshot();
         }
+#endif
         // P key - Open Palette Menu
         else if (i == 'p' || i == 'P') {
           enterPaletteView();
