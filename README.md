@@ -1,7 +1,6 @@
-# BitMap16 DX
 ![Logo](img/bitmap16dx.png)
 
-A tiny pixel-art workstation firmware for the M5Stack Cardputer ADV. 
+BitMap16 DX is a tiny pixel-art workstation for the M5Stack Cardputer ADV. 
 
 ![Drawing Mode](img/drawing.png)
 
