@@ -1288,16 +1288,6 @@ void drawBatteryIndicator() {
   }
 }
 
-/**
- * Draw active sketch indicator (removed - no longer needed with unlimited sketches)
- */
-void drawSketchIndicator() {
-  // No-op: We don't show sketch indicators anymore
-  // Just clear the area in case old indicator was there
-  M5Cardputer.Display.fillRect(190, 3, 47, 10, COLOR_BACKGROUND);
-}
-
-
 // ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
@@ -2931,7 +2921,6 @@ void showBootScreen() {
 
     // Check for timeout
     if (millis() - startTime > timeout) {
-      Serial.println("Boot screen timeout - auto-continuing");
       waiting = false;
       break;
     }
@@ -2940,7 +2929,6 @@ void showBootScreen() {
       // Check for backtick (ESC key)
       for (auto i : M5Cardputer.Keyboard.keysState().word) {
         if (i == '`') {
-          Serial.println("ESC key pressed");
           waiting = false;
           break;
         }
@@ -3019,17 +3007,13 @@ void loadUserPalettes() {
   File root = SD.open("/bitmap16dx/palettes");
   if (!root || !root.isDirectory()) {
     // Try to create the folder
-    Serial.println("No /bitmap16dx/palettes folder found - creating it");
     if (SD.mkdir("/bitmap16dx/palettes")) {
-      Serial.println("Created /bitmap16dx/palettes folder");
       // Try opening again
       root = SD.open("/bitmap16dx/palettes");
       if (!root || !root.isDirectory()) {
-        Serial.println("Failed to open /bitmap16dx/palettes after creation");
         return;
       }
     } else {
-      Serial.println("Failed to create /bitmap16dx/palettes folder");
       return;
     }
   }
@@ -3063,7 +3047,6 @@ void loadUserPalettes() {
         paletteIsUserLoaded[totalPaletteCount] = true;
 
         totalPaletteCount++;
-        Serial.printf("Loaded user palette: %s (%d colors)\n", name, size);
       } else {
         // Invalid palette - free memory and skip silently
         free(colors);
@@ -3075,7 +3058,6 @@ void loadUserPalettes() {
   }
 
   root.close();
-  Serial.printf("Total palettes available: %d\n", totalPaletteCount);
 }
 
 // Update the filtered palette list based on current filter settings
@@ -3120,8 +3102,6 @@ void setup() {
   // Initialize SD card and load user palettes
   if (testSDCard()) {
     loadUserPalettes();
-  } else {
-    Serial.println("SD card mount failed - user palettes unavailable");
   }
 
   // Show boot screen with logo
@@ -3135,8 +3115,6 @@ void setup() {
   if (!paletteCanvas.createSprite(240, 135)) {
     // Memory allocation failed - set flag and continue without canvas
     paletteCanvasAvailable = false;
-    Serial.println("WARNING: Could not allocate paletteCanvas during setup");
-    Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
     // Device will boot normally, palette menu will show error if accessed
   } else {
     paletteCanvasAvailable = true;
@@ -4039,15 +4017,11 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
 
     int freeHeap = ESP.getFreeHeap();
 
-    // Log heap status to serial for debugging
-    Serial.printf("Heap check: %d bytes free\n", freeHeap);
-
     // Show warning if memory is getting low
     if (freeHeap < HEAP_WARNING_THRESHOLD) {
       char warningMsg[32];
       snprintf(warningMsg, sizeof(warningMsg), StatusMsg::LOW_MEMORY_FMT, freeHeap / 1024);
       setStatusMessage(warningMsg);
-      Serial.println("WARNING: Low heap memory detected!");
     }
   }
 
