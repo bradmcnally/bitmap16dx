@@ -95,10 +95,6 @@ BitMap16DX/
 │   └── boot_image.h       # Splash screen
 ```
 
-
-### Known Issues
-- SD card error handling needs improvement
-
 ### What's Next
 - I2C module support (joystick/buttons)
 - Bluetooth keyboard/controller support
@@ -121,3 +117,4 @@ BitMap16DX/
 - ✅ Battery indicator
 - ✅ Smooth animations and transitions
 - ✅ Versioning for sketch file format
+- ✅ Improved SD card error handling
