@@ -60,47 +60,27 @@ const uint16_t PALETTE_PICO8[16] PROGMEM = {
   RGB565(0xFF, 0xCC, 0xAA)   // 16. Peach
 };
 
-// Palette 2: ENDESGA-16 (popular 16-color palette)
-const uint16_t PALETTE_ENDESGA16[16] PROGMEM = {
-  RGB565(0xE4, 0xA6, 0x72),  // 1. #E4A672 - Peach
-  RGB565(0xB8, 0x6F, 0x50),  // 2. #B86F50 - Brown
-  RGB565(0x74, 0x3F, 0x39),  // 3. #743F39 - Dark brown
-  RGB565(0x3F, 0x28, 0x32),  // 4. #3F2832 - Very dark brown
-  RGB565(0x9E, 0x28, 0x35),  // 5. #9E2835 - Dark red
-  RGB565(0xE5, 0x3B, 0x44),  // 6. #E53B44 - Red
-  RGB565(0xFB, 0x92, 0x2B),  // 7. #FB922B - Orange
-  RGB565(0xFF, 0xE7, 0x62),  // 8. #FFE762 - Yellow
-  RGB565(0x63, 0xC6, 0x4D),  // 9. #63C64D - Green
-  RGB565(0x32, 0x73, 0x45),  // 10. #327345 - Dark green
-  RGB565(0x19, 0x3D, 0x3F),  // 11. #193D3F - Teal
-  RGB565(0x4F, 0x67, 0x81),  // 12. #4F6781 - Blue-gray
-  RGB565(0xAF, 0xBF, 0xD2),  // 13. #AFBFD2 - Light blue
-  RGB565(0xFF, 0xFF, 0xFF),  // 14. #FFFFFF - White
-  RGB565(0x2C, 0xE8, 0xF4),  // 15. #2CE8F4 - Cyan
-  RGB565(0x04, 0x84, 0xD1)   // 16. #0484D1 - Blue
+// Palette 2: NA16 (retro 16-color palette)
+const uint16_t PALETTE_NA16[16] PROGMEM = {
+  RGB565(0x8C, 0x8F, 0xAE),  // 1. #8C8FAE - Light blue-gray
+  RGB565(0x58, 0x45, 0x63),  // 2. #584563 - Dark purple
+  RGB565(0x3E, 0x21, 0x37),  // 3. #3E2137 - Very dark purple
+  RGB565(0x9A, 0x63, 0x48),  // 4. #9A6348 - Brown
+  RGB565(0xD7, 0x9B, 0x7D),  // 5. #D79B7D - Light brown
+  RGB565(0xF5, 0xED, 0xBA),  // 6. #F5EDBA - Cream
+  RGB565(0xC0, 0xC7, 0x41),  // 7. #C0C741 - Yellow-green
+  RGB565(0x64, 0x7D, 0x34),  // 8. #647D34 - Olive
+  RGB565(0xE4, 0x94, 0x3A),  // 9. #E4943A - Orange
+  RGB565(0x9D, 0x30, 0x3B),  // 10. #9D303B - Dark red
+  RGB565(0xD2, 0x64, 0x71),  // 11. #D26471 - Pink-red
+  RGB565(0x70, 0x37, 0x7F),  // 12. #70377F - Purple
+  RGB565(0x7E, 0xC4, 0xC1),  // 13. #7EC4C1 - Cyan
+  RGB565(0x34, 0x85, 0x9D),  // 14. #34859D - Blue
+  RGB565(0x17, 0x43, 0x4B),  // 15. #17434B - Dark teal
+  RGB565(0x1F, 0x0E, 0x1C)   // 16. #1F0E1C - Almost black
 };
 
-// Palette 3: DAWNBRINGER-16 (popular 16-color palette)
-const uint16_t PALETTE_DAWNBRINGER16[16] PROGMEM = {
-  RGB565(0x14, 0x0C, 0x1C),  // 1. #140C1C - Very dark purple
-  RGB565(0x44, 0x24, 0x34),  // 2. #442434 - Dark purple
-  RGB565(0x30, 0x34, 0x6D),  // 3. #30346D - Dark blue
-  RGB565(0x4E, 0x4A, 0x4E),  // 4. #4E4A4E - Dark gray
-  RGB565(0x85, 0x4C, 0x30),  // 5. #854C30 - Brown
-  RGB565(0x34, 0x65, 0x24),  // 6. #346524 - Dark green
-  RGB565(0xD0, 0x46, 0x48),  // 7. #D04648 - Red
-  RGB565(0x75, 0x71, 0x61),  // 8. #757161 - Gray
-  RGB565(0x59, 0x7D, 0xCE),  // 9. #597DCE - Blue
-  RGB565(0xD2, 0x7D, 0x2C),  // 10. #D27D2C - Orange
-  RGB565(0x85, 0x95, 0xA1),  // 11. #8595A1 - Blue-gray
-  RGB565(0x6D, 0xAA, 0x2C),  // 12. #6DAA2C - Green
-  RGB565(0xD2, 0xAA, 0x99),  // 13. #D2AA99 - Tan
-  RGB565(0x6D, 0xC2, 0xCA),  // 14. #6DC2CA - Cyan
-  RGB565(0xDA, 0xD4, 0x5E),  // 15. #DAD45E - Yellow
-  RGB565(0xDE, 0xEE, 0xD6)   // 16. #DEEED6 - Off-white
-};
-
-// Palette 4: WOODSPARK (16-color nature palette)
+// Palette 3: WOODSPARK (16-color nature palette)
 const uint16_t PALETTE_WOODSPARK[16] PROGMEM = {
   RGB565(0xF5, 0xEE, 0xB0),  // 1. #F5EEB0 - Cream
   RGB565(0xFA, 0xBF, 0x61),  // 2. #FABF61 - Light orange
@@ -120,48 +100,7 @@ const uint16_t PALETTE_WOODSPARK[16] PROGMEM = {
   RGB565(0xEB, 0x6C, 0x98)   // 16. #EB6C98 - Pink
 };
 
-// Palette 5: LOST CENTURY (16-color vintage palette)
-const uint16_t PALETTE_LOSTCENTURY[16] PROGMEM = {
-  RGB565(0xD1, 0xB1, 0x87),  // 1. #D1B187 - Tan
-  RGB565(0xC7, 0x7B, 0x58),  // 2. #C77B58 - Light brown
-  RGB565(0xAE, 0x5D, 0x40),  // 3. #AE5D40 - Brown
-  RGB565(0x79, 0x44, 0x4A),  // 4. #79444A - Dark red-brown
-  RGB565(0x4B, 0x3D, 0x44),  // 5. #4B3D44 - Very dark brown
-  RGB565(0xBA, 0x91, 0x58),  // 6. #BA9158 - Gold-brown
-  RGB565(0x92, 0x74, 0x41),  // 7. #927441 - Dark gold
-  RGB565(0x4D, 0x45, 0x39),  // 8. #4D4539 - Dark gray-brown
-  RGB565(0x77, 0x74, 0x3B),  // 9. #77743B - Olive
-  RGB565(0xB3, 0xA5, 0x55),  // 10. #B3A555 - Yellow-green
-  RGB565(0xD2, 0xC9, 0xA5),  // 11. #D2C9A5 - Light tan
-  RGB565(0x8C, 0xAB, 0xA1),  // 12. #8CABA1 - Blue-gray
-  RGB565(0x4B, 0x72, 0x6E),  // 13. #4B726E - Dark teal
-  RGB565(0x57, 0x48, 0x52),  // 14. #574852 - Dark purple-gray
-  RGB565(0x84, 0x78, 0x75),  // 15. #847875 - Gray
-  RGB565(0xAB, 0x9B, 0x8E)   // 16. #AB9B8E - Light gray
-};
-
-// Palette 6: BERRY NEBULA (8-color purple gradient)
-const uint16_t PALETTE_BERRYNEBULA[16] PROGMEM = {
-  RGB565(0x6C, 0xED, 0xED),  // 1. #6CEDED - Cyan
-  RGB565(0x6C, 0xB9, 0xC9),  // 2. #6CB9C9 - Light blue
-  RGB565(0x6D, 0x85, 0xA5),  // 3. #6D85A5 - Blue
-  RGB565(0x6E, 0x51, 0x81),  // 4. #6E5181 - Purple-blue
-  RGB565(0x6F, 0x1D, 0x5C),  // 5. #6F1D5C - Purple
-  RGB565(0x4F, 0x14, 0x46),  // 6. #4F1446 - Dark purple
-  RGB565(0x2E, 0x0A, 0x30),  // 7. #2E0A30 - Very dark purple
-  RGB565(0x0D, 0x00, 0x1A),  // 8. #0D001A - Black-purple
-  // Indices 9-16 repeat the 8 colors
-  RGB565(0x6C, 0xED, 0xED),  // 9. Maps to color 1
-  RGB565(0x6C, 0xB9, 0xC9),  // 10. Maps to color 2
-  RGB565(0x6D, 0x85, 0xA5),  // 11. Maps to color 3
-  RGB565(0x6E, 0x51, 0x81),  // 12. Maps to color 4
-  RGB565(0x6F, 0x1D, 0x5C),  // 13. Maps to color 5
-  RGB565(0x4F, 0x14, 0x46),  // 14. Maps to color 6
-  RGB565(0x2E, 0x0A, 0x30),  // 15. Maps to color 7
-  RGB565(0x0D, 0x00, 0x1A)   // 16. Maps to color 8
-};
-
-// Palette 7: GOTHIC BIT (8-color gray/purple tones)
+// Palette 4: GOTHIC BIT (8-color gray/purple tones)
 const uint16_t PALETTE_GOTHICBIT[16] PROGMEM = {
   RGB565(0x0E, 0x0E, 0x12),  // 1. #0E0E12 - Almost black
   RGB565(0x1A, 0x1A, 0x24),  // 2. #1A1A24 - Very dark purple-gray
@@ -182,7 +121,7 @@ const uint16_t PALETTE_GOTHICBIT[16] PROGMEM = {
   RGB565(0xE6, 0xE6, 0xEC)   // 16. Maps to color 8
 };
 
-// Palette 8: DREAM HAZE (8-color purple/pink gradient)
+// Palette 5: DREAM HAZE (8-color purple/pink gradient)
 const uint16_t PALETTE_DREAMHAZE[16] PROGMEM = {
   RGB565(0x3C, 0x42, 0xC4),  // 1. #3C42C4 - Blue
   RGB565(0x6E, 0x51, 0xC8),  // 2. #6E51C8 - Purple-blue
@@ -203,28 +142,49 @@ const uint16_t PALETTE_DREAMHAZE[16] PROGMEM = {
   RGB565(0xF4, 0xDF, 0xBE)   // 16. Maps to color 8
 };
 
-// Palette 9: LINK'S AWAKENING (4-color Zelda inspired)
-const uint16_t PALETTE_LINKSAWAKENING[16] PROGMEM = {
-  RGB565(0x5A, 0x39, 0x21),  // 1. #5A3921 - Dark brown
-  RGB565(0x6B, 0x8C, 0x42),  // 2. #6B8C42 - Olive green
-  RGB565(0x7B, 0xC6, 0x7B),  // 3. #7BC67B - Light green
-  RGB565(0xFF, 0xFF, 0xB5),  // 4. #FFFFB5 - Cream yellow
-  // Repeat for compatibility with 16-color system
-  RGB565(0x5A, 0x39, 0x21),  // 5. Maps to color 1
-  RGB565(0x6B, 0x8C, 0x42),  // 6. Maps to color 2
-  RGB565(0x7B, 0xC6, 0x7B),  // 7. Maps to color 3
-  RGB565(0xFF, 0xFF, 0xB5),  // 8. Maps to color 4
-  RGB565(0x5A, 0x39, 0x21),  // 9. Maps to color 1
-  RGB565(0x6B, 0x8C, 0x42),  // 10. Maps to color 2
-  RGB565(0x7B, 0xC6, 0x7B),  // 11. Maps to color 3
-  RGB565(0xFF, 0xFF, 0xB5),  // 12. Maps to color 4
-  RGB565(0x5A, 0x39, 0x21),  // 13. Maps to color 1
-  RGB565(0x6B, 0x8C, 0x42),  // 14. Maps to color 2
-  RGB565(0x7B, 0xC6, 0x7B),  // 15. Maps to color 3
-  RGB565(0xFF, 0xFF, 0xB5)   // 16. Maps to color 4
+// Palette 6: POLLEN8 (8-color warm/cool gradient)
+const uint16_t PALETTE_POLLEN8[16] PROGMEM = {
+  RGB565(0x73, 0x46, 0x4C),  // 1. #73464C - Dark mauve
+  RGB565(0xAB, 0x56, 0x75),  // 2. #AB5675 - Mauve
+  RGB565(0xEE, 0x6A, 0x7C),  // 3. #EE6A7C - Pink
+  RGB565(0xFF, 0xA7, 0xA5),  // 4. #FFA7A5 - Light pink
+  RGB565(0xFF, 0xE0, 0x7E),  // 5. #FFE07E - Yellow
+  RGB565(0xFF, 0xE7, 0xD6),  // 6. #FFE7D6 - Cream
+  RGB565(0x72, 0xDC, 0xBB),  // 7. #72DCBB - Turquoise
+  RGB565(0x34, 0xAC, 0xBA),  // 8. #34ACBA - Teal
+  // Indices 9-16 repeat the 8 colors
+  RGB565(0x73, 0x46, 0x4C),  // 9. Maps to color 1
+  RGB565(0xAB, 0x56, 0x75),  // 10. Maps to color 2
+  RGB565(0xEE, 0x6A, 0x7C),  // 11. Maps to color 3
+  RGB565(0xFF, 0xA7, 0xA5),  // 12. Maps to color 4
+  RGB565(0xFF, 0xE0, 0x7E),  // 13. Maps to color 5
+  RGB565(0xFF, 0xE7, 0xD6),  // 14. Maps to color 6
+  RGB565(0x72, 0xDC, 0xBB),  // 15. Maps to color 7
+  RGB565(0x34, 0xAC, 0xBA)   // 16. Maps to color 8
 };
 
-// Palette 10: ICE CREAM GB (4-color pastel palette)
+// Palette 7: FUNKYFUTURE-8 (8-color vibrant gradient)
+const uint16_t PALETTE_FUNKYFUTURE8[16] PROGMEM = {
+  RGB565(0x2B, 0x0F, 0x54),  // 1. #2B0F54 - Dark purple
+  RGB565(0xAB, 0x1F, 0x65),  // 2. #AB1F65 - Magenta
+  RGB565(0xFF, 0x4F, 0x69),  // 3. #FF4F69 - Pink-red
+  RGB565(0xFF, 0xF7, 0xF8),  // 4. #FFF7F8 - White
+  RGB565(0xFF, 0x81, 0x42),  // 5. #FF8142 - Orange
+  RGB565(0xFF, 0xDA, 0x45),  // 6. #FFDA45 - Yellow
+  RGB565(0x33, 0x68, 0xDC),  // 7. #3368DC - Blue
+  RGB565(0x49, 0xE7, 0xEC),  // 8. #49E7EC - Cyan
+  // Indices 9-16 repeat the 8 colors
+  RGB565(0x2B, 0x0F, 0x54),  // 9. Maps to color 1
+  RGB565(0xAB, 0x1F, 0x65),  // 10. Maps to color 2
+  RGB565(0xFF, 0x4F, 0x69),  // 11. Maps to color 3
+  RGB565(0xFF, 0xF7, 0xF8),  // 12. Maps to color 4
+  RGB565(0xFF, 0x81, 0x42),  // 13. Maps to color 5
+  RGB565(0xFF, 0xDA, 0x45),  // 14. Maps to color 6
+  RGB565(0x33, 0x68, 0xDC),  // 15. Maps to color 7
+  RGB565(0x49, 0xE7, 0xEC)   // 16. Maps to color 8
+};
+
+// Palette 8: ICE CREAM GB (4-color pastel palette)
 const uint16_t PALETTE_ICECREAMGB[16] PROGMEM = {
   RGB565(0x7C, 0x3F, 0x58),  // 1. #7C3F58 - Dark purple
   RGB565(0xEB, 0x6B, 0x6F),  // 2. #EB6B6F - Coral red
@@ -245,7 +205,7 @@ const uint16_t PALETTE_ICECREAMGB[16] PROGMEM = {
   RGB565(0xFF, 0xF6, 0xD3)   // 16. Maps to color 4
 };
 
-// Palette 11: HOLLOW (4-color minimal palette)
+// Palette 9: HOLLOW (4-color minimal palette)
 const uint16_t PALETTE_HOLLOW[16] PROGMEM = {
   RGB565(0x0F, 0x0F, 0x1B),  // 1. #0F0F1B - Very dark blue
   RGB565(0x56, 0x5A, 0x75),  // 2. #565A75 - Blue-gray
@@ -266,25 +226,46 @@ const uint16_t PALETTE_HOLLOW[16] PROGMEM = {
   RGB565(0xFA, 0xFB, 0xF6)   // 16. Maps to color 4
 };
 
-// Palette 12: NINTENDO GAMEBOY (4-color classic Game Boy palette)
-const uint16_t PALETTE_GAMEBOY[16] PROGMEM = {
-  RGB565(0x08, 0x18, 0x20),  // 1. #081820 - Very dark teal
-  RGB565(0x34, 0x68, 0x56),  // 2. #346856 - Dark green
-  RGB565(0x88, 0xC0, 0x70),  // 3. #88C070 - Light green
-  RGB565(0xE0, 0xF8, 0xD0),  // 4. #E0F8D0 - Very light green
+// Palette 10: KIROKAZE GAMEBOY (4-color Game Boy palette)
+const uint16_t PALETTE_KIROKAZEGB[16] PROGMEM = {
+  RGB565(0x33, 0x2C, 0x50),  // 1. #332C50 - Dark purple
+  RGB565(0x46, 0x87, 0x8F),  // 2. #46878F - Teal
+  RGB565(0x94, 0xE3, 0x44),  // 3. #94E344 - Lime green
+  RGB565(0xE2, 0xF3, 0xE4),  // 4. #E2F3E4 - Light mint
   // Repeat for compatibility with 16-color system
-  RGB565(0x08, 0x18, 0x20),  // 5. Maps to color 1
-  RGB565(0x34, 0x68, 0x56),  // 6. Maps to color 2
-  RGB565(0x88, 0xC0, 0x70),  // 7. Maps to color 3
-  RGB565(0xE0, 0xF8, 0xD0),  // 8. Maps to color 4
-  RGB565(0x08, 0x18, 0x20),  // 9. Maps to color 1
-  RGB565(0x34, 0x68, 0x56),  // 10. Maps to color 2
-  RGB565(0x88, 0xC0, 0x70),  // 11. Maps to color 3
-  RGB565(0xE0, 0xF8, 0xD0),  // 12. Maps to color 4
-  RGB565(0x08, 0x18, 0x20),  // 13. Maps to color 1
-  RGB565(0x34, 0x68, 0x56),  // 14. Maps to color 2
-  RGB565(0x88, 0xC0, 0x70),  // 15. Maps to color 3
-  RGB565(0xE0, 0xF8, 0xD0)   // 16. Maps to color 4
+  RGB565(0x33, 0x2C, 0x50),  // 5. Maps to color 1
+  RGB565(0x46, 0x87, 0x8F),  // 6. Maps to color 2
+  RGB565(0x94, 0xE3, 0x44),  // 7. Maps to color 3
+  RGB565(0xE2, 0xF3, 0xE4),  // 8. Maps to color 4
+  RGB565(0x33, 0x2C, 0x50),  // 9. Maps to color 1
+  RGB565(0x46, 0x87, 0x8F),  // 10. Maps to color 2
+  RGB565(0x94, 0xE3, 0x44),  // 11. Maps to color 3
+  RGB565(0xE2, 0xF3, 0xE4),  // 12. Maps to color 4
+  RGB565(0x33, 0x2C, 0x50),  // 13. Maps to color 1
+  RGB565(0x46, 0x87, 0x8F),  // 14. Maps to color 2
+  RGB565(0x94, 0xE3, 0x44),  // 15. Maps to color 3
+  RGB565(0xE2, 0xF3, 0xE4)   // 16. Maps to color 4
+};
+
+// Palette 11: LAVA GB (4-color hot gradient)
+const uint16_t PALETTE_LAVAGB[16] PROGMEM = {
+  RGB565(0x05, 0x1F, 0x39),  // 1. #051F39 - Dark blue
+  RGB565(0x4A, 0x24, 0x80),  // 2. #4A2480 - Purple
+  RGB565(0xC5, 0x3A, 0x9D),  // 3. #C53A9D - Magenta
+  RGB565(0xFF, 0x8E, 0x80),  // 4. #FF8E80 - Coral
+  // Repeat for compatibility with 16-color system
+  RGB565(0x05, 0x1F, 0x39),  // 5. Maps to color 1
+  RGB565(0x4A, 0x24, 0x80),  // 6. Maps to color 2
+  RGB565(0xC5, 0x3A, 0x9D),  // 7. Maps to color 3
+  RGB565(0xFF, 0x8E, 0x80),  // 8. Maps to color 4
+  RGB565(0x05, 0x1F, 0x39),  // 9. Maps to color 1
+  RGB565(0x4A, 0x24, 0x80),  // 10. Maps to color 2
+  RGB565(0xC5, 0x3A, 0x9D),  // 11. Maps to color 3
+  RGB565(0xFF, 0x8E, 0x80),  // 12. Maps to color 4
+  RGB565(0x05, 0x1F, 0x39),  // 13. Maps to color 1
+  RGB565(0x4A, 0x24, 0x80),  // 14. Maps to color 2
+  RGB565(0xC5, 0x3A, 0x9D),  // 15. Maps to color 3
+  RGB565(0xFF, 0x8E, 0x80)   // 16. Maps to color 4
 };
 
 // Default palette (used for new slots)
@@ -309,43 +290,41 @@ const uint16_t PALETTE[16] = {
 
 // Palette catalog - array of pointers to all available palettes
 // Organized by size: 16-color, then 8-color, then 4-color
-const int NUM_PALETTES = 13;
+const int NUM_PALETTES = 12;
 const uint16_t* PALETTE_CATALOG[NUM_PALETTES] = {
-  // 16-color palettes (6 total)
+  // 16-color palettes (4 total)
   PALETTE_SWEETIE16,
   PALETTE_PICO8,
-  PALETTE_ENDESGA16,
-  PALETTE_DAWNBRINGER16,
+  PALETTE_NA16,
   PALETTE_WOODSPARK,
-  PALETTE_LOSTCENTURY,
-  // 8-color palettes (3 total)
-  PALETTE_BERRYNEBULA,
+  // 8-color palettes (4 total)
   PALETTE_GOTHICBIT,
   PALETTE_DREAMHAZE,
+  PALETTE_POLLEN8,
+  PALETTE_FUNKYFUTURE8,
   // 4-color palettes (4 total)
-  PALETTE_LINKSAWAKENING,
   PALETTE_ICECREAMGB,
   PALETTE_HOLLOW,
-  PALETTE_GAMEBOY
+  PALETTE_KIROKAZEGB,
+  PALETTE_LAVAGB
 };
 
 const char* PALETTE_NAMES[NUM_PALETTES] = {
   // 16-color palettes
   "SWEETIE-16",
   "PICO-8",
-  "ENDESGA-16",
-  "DAWNBRINGER",
+  "NA16",
   "WOODSPARK",
-  "LOST CENTURY",
   // 8-color palettes
-  "BERRY NEBULA",
   "GOTHIC BIT",
   "DREAM HAZE",
+  "POLLEN8",
+  "FUNKY FUTURE",
   // 4-color palettes
-  "LINK'S AWK",
   "ICE CREAM",
   "HOLLOW",
-  "GAME BOY"
+  "KIROKAZE GB",
+  "LAVA GB"
 };
 
 // Palette sizes (4, 8, or 16 colors)
@@ -354,19 +333,18 @@ const uint8_t PALETTE_SIZES[NUM_PALETTES] = {
   // 16-color palettes
   16,  // SWEETIE-16
   16,  // PICO-8
-  16,  // ENDESGA-16
-  16,  // DAWNBRINGER-16
+  16,  // NA16
   16,  // WOODSPARK
-  16,  // LOST CENTURY
   // 8-color palettes
-  8,   // BERRY NEBULA
   8,   // GOTHIC BIT
   8,   // DREAM HAZE
+  8,   // POLLEN8
+  8,   // FUNKY FUTURE
   // 4-color palettes
-  4,   // LINK'S AWAKENING
   4,   // ICE CREAM
   4,   // HOLLOW
-  4    // GAME BOY
+  4,   // KIROKAZE GB
+  4    // LAVA GB
 };
 
 #endif // PALETTES_H
