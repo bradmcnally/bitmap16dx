@@ -20,7 +20,6 @@ Thumbs.db
 *.bin
 *.elf
 *.map
-*.hex
 
 # Python
 __pycache__/
