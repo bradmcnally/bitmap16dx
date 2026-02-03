@@ -4,19 +4,35 @@ BitMap16 DX is a tiny pixel-art workstation for the M5Stack Cardputer ADV.
 
 ![Drawing Mode](img/drawing.png)
 
-## Features (SD card required)
+## Features
 - 8×8 and 16×16 canvas modes
 - Draw, Erase, Fill tools
 - Undo last action
-- Built-in 16, 8, and 4-color palettes  
-*Custom palettes can be added by placing Lospec `.hex` files in the `bitmap16dx/palettes/` directory. (32 total)*
+- Save/open sketches from SD card
+- Built-in 16, 8, and 4-color palettes
 - Export `.png` files to `bitmap16dx/exports/` (128x128 or logical size)
 
-### Palettes
+### First Boot
 
+1. **Insert SD card** before powering on (FAT32 format recommended)
+2. Power on your Cardputer
+3. BitMap16 DX will automatically create these folders:
+   ```
+   /bitmap16dx/
+   ├── sketches/   # Your saved artwork
+   ├── exports/    # Exported PNG files
+   └── palettes/   # Custom color palettes (optional)
+   ```
+4. Start drawing!
+
+### Adding Custom Palettes (Optional)
 ![Available Palettes](img/palettes.png)
+1. Download `.hex` palette files from [Lospec](https://lospec.com/palette-list)
+2. Copy to `/bitmap16dx/palettes/` on your SD card
+3. Power cycle your Cardputer
+4. Access custom palettes in the Palette Menu
 
-BitMap16DX includes curated palettes from Lospec, and you can add your own by placing `.hex` files in the `bitmap16dx/palettes/` directory on your SD card.
+*Supports 4, 8, or 16-color palettes. Maximum 32 total (12 built-in + 20 custom).*
 
 ## How to Use
 
@@ -40,7 +56,7 @@ BitMap16DX includes curated palettes from Lospec, and you can add your own by pl
 | `FN + S` | **S**ave as new sketch (always creates new file) |
 | `X` | E**x**port PNG (128×128 scaled) |
 | `FN + X` | Export PNG (logical size: 8×8 or 16×16) |
-| `I` | Open help screen |
+| `I` | Open help screen (key commands) |
 | `P` | Open **P**alette Menu |
 | `O` | **O**pen Sketches Menu |
 | `V` | Open Pre**v**iew Mode |
@@ -79,8 +95,6 @@ BitMap16DX includes curated palettes from Lospec, and you can add your own by pl
 | `3` | Gray background |
 | `esc` | Dismiss |
 
-
-
 ### Project Structure
 
 ```
@@ -97,23 +111,4 @@ BitMap16DX/
 ### What's Next
 - I2C module support (joystick/buttons)
 - Bluetooth keyboard/controller support
-- Non-ADV support
-- Background music/UI sound
-
-### Completed Features
-- ✅ 8×8 and 16×16 pixel grid with dynamic toggling
-- ✅ Cursor movement with key repeat and visual feedback
-- ✅ Pixel placement/erasing with line drawing support
-- ✅ Flood fill tool (paint bucket)
-- ✅ Color palette system (4/8/16 color support)
-- ✅ Custom Color palettes (.hex files)
-- ✅ Unlimited sketch storage on SD card
-- ✅ Save/Save As functionality with auto-increment
-- ✅ Full undo system
-- ✅ PNG export (scaled and logical size)
-- ✅ Full-screen view mode with background options
-- ✅ Help/info screen
-- ✅ Battery indicator
-- ✅ Smooth animations and transitions
-- ✅ Versioning for sketch file format
-- ✅ Improved SD card error handling
+- Background music/UI sound exploration
