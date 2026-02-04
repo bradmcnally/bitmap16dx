@@ -26,6 +26,8 @@
  * - Y to take screenshot (captures full 240×135 display) [DEBUG ONLY]
 #endif
  * - P to open palette menu (swap between color palettes)
+ * - Hold B + press Plus (+) to increase brightness
+ * - Hold B + press Minus (-) to decrease brightness
  * - G0 button (physical) to clear canvas
  */
 
@@ -168,6 +170,10 @@ uint8_t canvas[16][16] = {0};
 
 // Currently selected color (1-16)
 uint8_t selectedColor = 1;  // Start with color 1 (black)
+
+// Display brightness level (stored as percentage: 10-100%)
+// Converted to hardware range (0-255) when setting display
+uint8_t displayBrightness = 80;  // Start at 80% brightness
 
 // Undo state - stores a single previous canvas state
 uint8_t undoCanvas[16][16] = {0};
@@ -400,6 +406,19 @@ void setStatusMessage(const char* message) {
   strncpy(statusMessage, message, sizeof(statusMessage) - 1);
   statusMessage[sizeof(statusMessage) - 1] = '\0';  // Ensure null termination
   statusMessageTime = millis();
+}
+
+/**
+ * Check if the B key is currently being held down
+ * Used for brightness control (B + Plus/Minus)
+ */
+bool isBKeyHeld(Keyboard_Class::KeysState& status) {
+  for (auto i : status.word) {
+    if (i == 'b' || i == 'B') {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ============================================================================
@@ -3138,6 +3157,11 @@ void setup() {
     detectedBoardName = "M5Cardputer ADV";
   }
 
+  // Set initial display brightness
+  // displayBrightness is stored as percentage (10-100%), convert to hardware range (0-255)
+  uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
+  M5Cardputer.Display.setBrightness(hardwareBrightness);
+
   // Initialize palette system
   initStockPalettes();
 
@@ -3880,6 +3904,41 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
         else if (i == 'p' || i == 'P') {
           enterPaletteView();
           delay(200);  // Debounce to prevent immediate close
+        }
+        // B key + Plus/Minus - Brightness control
+        // Hold B and press + to increase brightness
+        // Hold B and press - to decrease brightness
+        else if ((i == '+' || i == '=' || i == '-') && isBKeyHeld(status)) {
+          const int BRIGHTNESS_STEP = 10;  // Adjust brightness by 10% each press
+          const int MIN_BRIGHTNESS = 10;   // Minimum brightness (10%)
+          const int MAX_BRIGHTNESS = 100;  // Maximum brightness (100%)
+
+          if (i == '+' || i == '=') {
+            // Increase brightness by 10% (cap at 100%)
+            if (displayBrightness <= MAX_BRIGHTNESS - BRIGHTNESS_STEP) {
+              displayBrightness += BRIGHTNESS_STEP;
+            } else {
+              displayBrightness = MAX_BRIGHTNESS;
+            }
+          } else if (i == '-') {
+            // Decrease brightness by 10% (don't go below minimum)
+            if (displayBrightness > MIN_BRIGHTNESS + BRIGHTNESS_STEP) {
+              displayBrightness -= BRIGHTNESS_STEP;
+            } else {
+              displayBrightness = MIN_BRIGHTNESS;  // Keep minimum usable brightness
+            }
+          }
+
+          // Convert percentage (10-100) to hardware range (0-255)
+          uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
+
+          // Apply the new brightness setting to the display
+          M5Cardputer.Display.setBrightness(hardwareBrightness);
+
+          // Show brightness level as clean percentage
+          char brightnessMsg[20];
+          snprintf(brightnessMsg, sizeof(brightnessMsg), "BRIGHT: %d%%", displayBrightness);
+          setStatusMessage(brightnessMsg);
         }
         // Arrow keys - handle first press
         else if (i == ';' || i == '.' || i == ',' || i == '/') {
