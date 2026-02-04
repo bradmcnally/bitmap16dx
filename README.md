@@ -1,8 +1,9 @@
 
 
 BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices, channeling the vibe of 2000s handheld gaming consoles.
+![Drawing](img/photo_drawing.jpg)
 
-![Logo](img/bitmap16dx.png)![Drawing Mode](img/drawing.png)
+![Logo](img/bitmap16dx.png)![Drawing](img/drawing.png)
 
 ## Features
 - 8×8 and 16×16 canvas modes
@@ -39,7 +40,7 @@ BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices, channeling t
 
 ### Drawing Mode
 
-![Drawing Interface](img/drawing_link.png)
+![Drawing Interface Link](img/drawing_link.png)
 
 | Key | Function |
 |-----|----------|
@@ -114,3 +115,6 @@ BitMap16DX/
 - I2C module support (joystick/buttons)
 - Bluetooth keyboard/controller support
 - Background music/UI sound exploration
+
+![Sketches](img/photo_sketches.jpg)
+![Palettes](img/photo_palettes.jpg)
