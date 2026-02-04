@@ -1,8 +1,8 @@
-![Logo](img/bitmap16dx.png)
+
 
 BitMap16 DX is a tiny pixel art tool for the M5Stack Cardputer ADV. 
 
-![Drawing Mode](img/drawing.png)
+![Logo](img/bitmap16dx.png)![Drawing Mode](img/drawing.png)
 
 ## Features
 - 8×8 and 16×16 canvas modes
