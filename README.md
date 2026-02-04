@@ -1,6 +1,6 @@
 
 
-BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices. 
+BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices, channeling the vibe of 2000s handheld gaming consoles.
 
 ![Logo](img/bitmap16dx.png)![Drawing Mode](img/drawing.png)
 
