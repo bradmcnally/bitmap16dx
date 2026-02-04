@@ -10,6 +10,7 @@ BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices.
 - Undo last action
 - Save/open sketches from SD card
 - Built-in 16, 8, and 4-color palettes
+  - Switching palettes remaps your canvas to the new colors, you can always switch back to restore the original palette.
 - Export `.png` files to `bitmap16dx/exports/` (128x128 or logical size)
 
 ### First Boot
