@@ -3157,6 +3157,12 @@ void setup() {
     detectedBoardName = "M5Cardputer ADV";
   }
 
+  // Load saved brightness setting from preferences
+  // Default to 80% if never saved before
+  preferences.begin("bitmap16dx", false);
+  displayBrightness = preferences.getUChar("brightness", 80);
+  preferences.end();
+
   // Set initial display brightness
   // displayBrightness is stored as percentage (10-100%), convert to hardware range (0-255)
   uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
@@ -3934,6 +3940,11 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
 
           // Apply the new brightness setting to the display
           M5Cardputer.Display.setBrightness(hardwareBrightness);
+
+          // Save brightness setting to preferences so it persists across reboots
+          preferences.begin("bitmap16dx", false);
+          preferences.putUChar("brightness", displayBrightness);
+          preferences.end();
 
           // Show brightness level as clean percentage
           char brightnessMsg[20];
