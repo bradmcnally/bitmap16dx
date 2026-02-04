@@ -47,20 +47,21 @@ BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices, channeling t
 | `ok`/`enter` | Place pixel with selected color |
 | `del`/`backspace` | Erase pixel |
 | `1-8` | Quick color selection (colors 1-8) |
-| `fn + 1-8` | Quick color selection (colors 9-16) |
+| `fn` + `1-8` | Quick color selection (colors 9-16) |
 | `C` | **C**ycle to next color |
 | `F` | Flood **f**ill |
 | `G` | Toggle between 8×8 and 16×16 **g**rid |
 | `Z` | Undo last action |
 | `g0` button | Clear canvas |
 | `S` | **S**ave sketch (update current or create new) |
-| `FN + S` | **S**ave as new sketch (always creates new file) |
+| `FN` + `S` | **S**ave as new sketch (always creates new file) |
 | `X` | E**x**port PNG (128×128 scaled) |
-| `FN + X` | Export PNG (logical size: 8×8 or 16×16) |
+| `FN` + `X` | Export PNG (logical size: 8×8 or 16×16) |
 | `I` | Open help screen (key commands) |
 | `P` | Open **P**alette Menu |
 | `O` | **O**pen Sketches Menu |
 | `V` | Open Pre**v**iew Mode |
+| `B` + `+/-` | Adjust **b**rightness |
 
 ### Palette Menu *(P)*
 
