@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - Prototype v0.5
+ * BitMap16 DX - v0.4.0
  *
  * Working pixel sketch station for Cardputer ADV!
  *
@@ -331,7 +331,10 @@ bool statusMessageJustCleared = false;  // Flag to trigger redraw when message e
 bool sdCardInitialized = false;
 bool sdCardAvailable = false;
 
-// SD card pins for M5Cardputer ADV (from M5Unified library)
+// Hardware detection (determined at boot)
+const char* detectedBoardName = "Unknown";
+
+// SD card pins (same for both M5Cardputer and M5Cardputer ADV)
 #define SD_SPI_SCK_PIN  40
 #define SD_SPI_MISO_PIN 39
 #define SD_SPI_MOSI_PIN 14
@@ -484,12 +487,13 @@ uint16_t getActiveSketchPixelColor(uint8_t pixelIndex) {
 // ============================================================================
 
 /**
- * Test SD card - safely check if card is present and working
- * This function attempts to initialize the SD card and reports status
+ * Initialize SD card - set up SPI and mount the SD card
+ * This function initializes the SD card with retry logic for reliability
+ * on both M5Cardputer and M5Cardputer ADV models
  *
  * Returns true if SD card is available, false otherwise
  */
-bool testSDCard() {
+bool initSDCard() {
   // Only try to initialize once
   if (sdCardInitialized) {
     return sdCardAvailable;
@@ -498,31 +502,60 @@ bool testSDCard() {
   // Mark as initialized before attempting (prevent retry loops)
   sdCardInitialized = true;
 
-  // Initialize SPI with explicit pins for M5Cardputer ADV
-  // This matches the official M5Cardputer SD card example
+  // Small delay to let SD card stabilize after power-on
+  // This helps with timing-sensitive cards
+  delay(100);
+
+  // Initialize SPI with explicit pins (same for both Cardputer models)
+  // Pins: CLK=40, MOSI=14, MISO=39, CS=12
   SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
 
-  // Try to initialize SD card with explicit CS pin
-  // Using 25MHz as per M5Cardputer official example
-  if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
-    sdCardAvailable = false;
-    return false;
+  // Try multiple times with delays between attempts
+  // Some SD cards need more time to initialize
+  for (int attempt = 0; attempt < 3; attempt++) {
+    // Try to initialize SD card with explicit CS pin at 25MHz
+    if (SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
+      // Card initialized - verify card type
+      uint8_t cardType = SD.cardType();
+
+      if (cardType != CARD_NONE) {
+        // Final verification - check card size
+        uint64_t cardSize = SD.cardSize() / (1024 * 1024);  // Convert to MB
+
+        // Create base directory structure if it doesn't exist
+        if (!SD.exists("/bitmap16dx")) {
+          SD.mkdir("/bitmap16dx");
+        }
+        if (!SD.exists("/bitmap16dx/sketches")) {
+          SD.mkdir("/bitmap16dx/sketches");
+        }
+        if (!SD.exists("/bitmap16dx/exports")) {
+          SD.mkdir("/bitmap16dx/exports");
+        }
+#if ENABLE_SCREENSHOTS
+        if (!SD.exists("/bitmap16dx/screenshots")) {
+          SD.mkdir("/bitmap16dx/screenshots");
+        }
+#endif
+        if (!SD.exists("/bitmap16dx/palettes")) {
+          SD.mkdir("/bitmap16dx/palettes");
+        }
+
+        // SD card is ready
+        sdCardAvailable = true;
+        return true;
+      }
+    }
+
+    // Wait before retry (except on last attempt)
+    if (attempt < 2) {
+      delay(100);
+    }
   }
 
-  // Card initialized - try to get card type
-  uint8_t cardType = SD.cardType();
-
-  if (cardType == CARD_NONE) {
-    sdCardAvailable = false;
-    return false;
-  }
-
-  // Try to get card size as a final test
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);  // Convert to MB
-
-  // SD card is ready (no status message needed)
-  sdCardAvailable = true;
-  return true;
+  // All attempts failed
+  sdCardAvailable = false;
+  return false;
 }
 
 /**
@@ -547,7 +580,7 @@ bool testSDCard() {
 void loadSketchListFromSD() {
   sketchList.clear();
 
-  if (!sdCardAvailable && !testSDCard()) {
+  if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return;
   }
@@ -628,7 +661,7 @@ void loadSketchListFromSD() {
  * Returns true if successful, false if failed
  */
 bool saveActiveSketchToSD() {
-  if (!sdCardAvailable && !testSDCard()) {
+  if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
   }
@@ -754,7 +787,7 @@ bool saveActiveSketchAsNew() {
  * Returns true if successful, false if failed
  */
 bool loadSketchFromSD(String filename) {
-  if (!sdCardAvailable && !testSDCard()) {
+  if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
   }
@@ -840,7 +873,7 @@ bool loadSketchFromSD(String filename) {
  */
 bool exportCanvasToPNG(bool scale) {
   // Ensure SD card is initialized
-  if (!sdCardAvailable && !testSDCard()) {
+  if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
   }
@@ -1036,7 +1069,7 @@ bool exportCanvasToPNG(bool scale) {
  */
 bool takeScreenshot() {
   // Ensure SD card is initialized
-  if (!sdCardAvailable && !testSDCard()) {
+  if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
   }
@@ -3096,11 +3129,20 @@ void setup() {
 
   M5Cardputer.begin(cfg);
 
+  // Detect which Cardputer model is running
+  // This helps with debugging and user support
+  auto boardType = M5.getBoard();
+  if (boardType == m5::board_t::board_M5Cardputer) {
+    detectedBoardName = "M5Cardputer";
+  } else if (boardType == m5::board_t::board_M5CardputerADV) {
+    detectedBoardName = "M5Cardputer ADV";
+  }
+
   // Initialize palette system
   initStockPalettes();
 
   // Initialize SD card and load user palettes
-  if (testSDCard()) {
+  if (initSDCard()) {
     loadUserPalettes();
   }
 
