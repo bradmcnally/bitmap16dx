@@ -113,6 +113,7 @@ BitMap16DX/
 ```
 
 ### What's Next
+- Dark mode
 - I2C module support (joystick/buttons)
 - Bluetooth keyboard/controller support
 - Background music/UI sound exploration
