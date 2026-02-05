@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - v0.4.0
+ * BitMap16 DX - v0.5.0
  *
  * Working pixel sketch station for Cardputer ADV!
  *
