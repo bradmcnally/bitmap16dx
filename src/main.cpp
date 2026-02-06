@@ -49,7 +49,7 @@ Preferences preferences;
 
 // Enable screenshot feature (Y key) - disable for release builds
 // Export feature (X key) always remains enabled for users
-#define ENABLE_SCREENSHOTS 0  // Set to 0 to disable screenshots in release
+#define ENABLE_SCREENSHOTS 1  // Set to 0 to disable screenshots in release
 
 // ============================================================================
 // CONFIGURATION
@@ -137,6 +137,7 @@ const uint16_t COLOR_CELL_DARK = RGB565(0xEE, 0xEF, 0xF4);   // #EEEFF4 - Light 
 const uint16_t COLOR_CELL_LIGHT = RGB565(0xFF, 0xFF, 0xFF);  // #FFFFFF - White
 const uint16_t COLOR_BACKGROUND = RGB565(0xD3, 0xD3, 0xDD);  // #D3D3DD - Light gray-purple
 const uint16_t COLOR_CURSOR = TFT_BLACK;                      // Black cursor
+const uint16_t COLOR_CENTER_LINE = RGB565(0xC8, 0xC8, 0xD2); // #C8C8D2 - Center guide (drawn with 50% opacity)
 
 // View mode background colors
 const uint16_t VIEW_BG_BLACK = TFT_BLACK;                     // Black background
@@ -170,6 +171,9 @@ uint8_t canvas[16][16] = {0};
 
 // Currently selected color (1-16)
 uint8_t selectedColor = 1;  // Start with color 1 (black)
+
+// Center rulers/guides visibility
+bool rulersVisible = false;  // Toggle with R key
 
 // Display brightness level (stored as percentage: 10-100%)
 // Converted to hardware range (0-255) when setting display
@@ -2214,6 +2218,41 @@ void drawCutCornerOutline(int x, int y, int w, int h, int cutSize, uint16_t colo
 }
 
 /**
+ * Blend two RGB565 colors with alpha (0.0 = bg only, 1.0 = fg only)
+ */
+uint16_t blendRGB565(uint16_t bg, uint16_t fg, float alpha) {
+  // Extract RGB components from RGB565
+  uint8_t bgR = (bg >> 11) & 0x1F;
+  uint8_t bgG = (bg >> 5) & 0x3F;
+  uint8_t bgB = bg & 0x1F;
+
+  uint8_t fgR = (fg >> 11) & 0x1F;
+  uint8_t fgG = (fg >> 5) & 0x3F;
+  uint8_t fgB = fg & 0x1F;
+
+  // Blend
+  uint8_t outR = bgR + (fgR - bgR) * alpha;
+  uint8_t outG = bgG + (fgG - bgG) * alpha;
+  uint8_t outB = bgB + (fgB - bgB) * alpha;
+
+  // Pack back to RGB565
+  return (outR << 11) | (outG << 5) | outB;
+}
+
+/**
+ * Draw a line with alpha transparency by blending a color with existing pixels
+ */
+void drawLineWithAlpha(int x, int y, int w, int h, uint16_t color, float alpha) {
+  for (int py = 0; py < h; py++) {
+    for (int px = 0; px < w; px++) {
+      uint16_t bgColor = M5Cardputer.Display.readPixel(x + px, y + py);
+      uint16_t blended = blendRGB565(bgColor, color, alpha);
+      M5Cardputer.Display.drawPixel(x + px, y + py, blended);
+    }
+  }
+}
+
+/**
  * Draw a single cell at the given grid coordinates
  *
  * This redraws one cell with either:
@@ -2224,15 +2263,13 @@ void drawCell(int x, int y, bool isSelected = false) {
   int screenX = GRID_X + (x * currentCellSize);
   int screenY = GRID_Y + (y * currentCellSize);
 
-  // Check if there's a pixel at this position
+  // Check if this cell has a color
   if (canvas[y][x] != 0) {
-    // There's a pixel here - look up its color from the active sketch's palette
-    // Canvas stores indices 1-16, but array is 0-indexed, so subtract 1
+    // FILLED CELL: Draw solid color directly (center lines will be underneath/hidden)
     uint16_t cellColor = activeSketch.paletteColors[canvas[y][x] - 1];
 
     // Apply tint if this is the selected cell
     if (isSelected) {
-      // Darken the color slightly to tint the selected cell
       uint8_t r = ((cellColor >> 11) & 0x1F) * 0.8;
       uint8_t g = ((cellColor >> 5) & 0x3F) * 0.8;
       uint8_t b = (cellColor & 0x1F) * 0.8;
@@ -2241,58 +2278,60 @@ void drawCell(int x, int y, bool isSelected = false) {
 
     M5Cardputer.Display.fillRect(screenX, screenY, currentCellSize, currentCellSize, cellColor);
   } else {
-    // Empty cell - draw checkerboard pattern based on screen pixel position
-    // Always use half the cell size so each cell contains 4 mini-squares (2×2)
-    // - 8×8 mode (16px cells): 8px mini-squares
-    // - 16×16 mode (8px cells): 4px mini-squares
+    // EMPTY CELL: Draw checkerboard pattern, then center lines on top
     int checkSize = currentCellSize / 2;
 
-    // Draw the checkerboard pattern for this cell
+    // Draw checkerboard pattern
     for (int py = 0; py < currentCellSize; py += checkSize) {
       for (int px = 0; px < currentCellSize; px += checkSize) {
-        // Calculate absolute screen position for this mini-square
         int absX = screenX + px;
         int absY = screenY + py;
-
-        // Determine color based on position in the global checkerboard
-        // Divide by checkSize to get checker grid coordinates
         bool isDark = ((absX / checkSize) + (absY / checkSize)) % 2 == 0;
         uint16_t color = isDark ? COLOR_CELL_DARK : COLOR_CELL_LIGHT;
 
         // Apply tint if this is the selected cell
         if (isSelected) {
-          // Darken the colors slightly to tint the selected cell
           uint8_t r = ((color >> 11) & 0x1F) * 0.8;
           uint8_t g = ((color >> 5) & 0x3F) * 0.8;
           uint8_t b = (color & 0x1F) * 0.8;
           color = (r << 11) | (g << 5) | b;
         }
 
-        // Draw this mini-square (clip to cell bounds)
         int drawWidth = min(checkSize, currentCellSize - px);
         int drawHeight = min(checkSize, currentCellSize - py);
         M5Cardputer.Display.fillRect(absX, absY, drawWidth, drawHeight, color);
       }
     }
+
+    // Draw center lines (if rulers are visible and they pass through this cell)
+    if (rulersVisible) {
+      int centerX = GRID_X + 64;  // Vertical line at x=120
+      int centerY = GRID_Y + 64;  // Horizontal line at y=68
+
+      if (centerX >= screenX && centerX < screenX + currentCellSize) {
+        // Redraw the vertical line segment for this cell
+        M5Cardputer.Display.fillRect(centerX, screenY, 1, currentCellSize, COLOR_BACKGROUND);
+      }
+
+      if (centerY >= screenY && centerY < screenY + currentCellSize) {
+        // Redraw the horizontal line segment for this cell
+        M5Cardputer.Display.fillRect(screenX, centerY, currentCellSize, 1, COLOR_BACKGROUND);
+      }
+    }
   }
 
-  // Apply corner masking for corner cells
-  // Check if this cell is in a corner position and mask the appropriate corner
+  // LAYER 4: Apply corner masking for corner cells
   if (x == 0 && y == 0) {
-    // Top-left corner cell - mask top-left corner
     M5Cardputer.Display.fillRect(screenX, screenY, 2, 2, COLOR_BACKGROUND);
   }
   else if (x == currentGridSize - 1 && y == 0) {
-    // Top-right corner cell - mask top-right corner
     M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY, 2, 2, COLOR_BACKGROUND);
   }
   else if (x == 0 && y == currentGridSize - 1) {
-    // Bottom-left corner cell - mask bottom-left corner
     M5Cardputer.Display.fillRect(screenX, screenY + currentCellSize - 2, 2, 2, COLOR_BACKGROUND);
   }
   else if (x == currentGridSize - 1 && y == currentGridSize - 1) {
-    // Bottom-right corner cell - mask bottom-right corner
-    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY + currentCellSize - 2, 2, 2, COLOR_BACKGROUND);
+    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY + currentCellSize - 2, 2, 2, 0xC63A);
   }
 }
 
@@ -2920,10 +2959,9 @@ void drawGrid() {
   // Draw shadow behind the grid (with bottom-right cut corner)
   drawShadow(GRID_X, GRID_Y, 128, 128, 0xC63A, true);
 
-  // Draw each cell with 2×2 mini-squares
+  // Draw each cell
   for (int y = 0; y < currentGridSize; y++) {
     for (int x = 0; x < currentGridSize; x++) {
-      // Use drawCell to draw the checkerboard pattern
       drawCell(x, y);
     }
   }
@@ -3776,6 +3814,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   bool canvasCleared = false;
   bool undoPerformed = false;
   bool gridToggled = false;
+  bool rulersToggled = false;
   bool floodFilled = false;
   int oldX = cursorX;
   int oldY = cursorY;
@@ -3852,6 +3891,12 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
         else if (i == 'g' || i == 'G') {
           toggleGridSize();
           gridToggled = true;
+        }
+        // R key - Toggle rulers (center guides)
+        else if (i == 'r' || i == 'R') {
+          rulersVisible = !rulersVisible;
+          rulersToggled = true;
+          setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
         }
         // O key - Open Memory View
         else if (i == 'o' || i == 'O') {
@@ -4049,9 +4094,10 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   }
 
   // Redraw based on what changed
-  if (canvasCleared || undoPerformed || gridToggled || floodFilled) {
+  if (canvasCleared || undoPerformed || gridToggled || rulersToggled || floodFilled) {
     // Redraw the entire canvas
     // (gridToggled needs full redraw because cell size changed)
+    // (rulersToggled needs full redraw to show/hide rulers)
     // (floodFilled needs full redraw because many cells may have changed)
 
     drawGrid();
