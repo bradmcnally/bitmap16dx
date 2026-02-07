@@ -1,6 +1,6 @@
 
 
-BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices, channeling the vibe of 2000s handheld gaming consoles.
+BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channeling the vibe of 2000s handheld gaming consoles.
 
 ![Logo](img/bitmap16dx.png)![Drawing](img/drawing.png)
 
@@ -53,6 +53,8 @@ BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices, channeling t
 | `C` | **C**ycle to next color |
 | `F` | Flood **f**ill |
 | `G` | Toggle between 8×8 and 16×16 **g**rid |
+| `R` | Toggle **r**ulers (center guide lines) |
+| `T` | Toggle **t**heme (light/dark mode) |
 | `Z` | Undo last action |
 | `g0` button | Clear canvas |
 | `S` | **S**ave sketch (update current or create new) |
@@ -96,7 +98,8 @@ BitMap16 DX is a tiny pixel art tool for M5Stack Cardputer devices, channeling t
 |-----|----------|
 | `1` | Black background |
 | `2` | White background |
-| `3` | Gray background |
+| `3` | Light gray background |
+| `4` | Dark gray background |
 | `esc` | Dismiss |
 
 ### Project Structure
@@ -113,7 +116,6 @@ BitMap16DX/
 ```
 
 ### What's Next
-- Dark mode
 - I2C module support (joystick/buttons)
 - Bluetooth keyboard/controller support
 - Background music/UI sound exploration
