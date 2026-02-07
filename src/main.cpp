@@ -154,21 +154,21 @@ const ThemeColors THEME_LIGHT = {
   RGB565(0xEE, 0xEF, 0xF4),  // cellDark #EEEFF4
   RGB565(0xFC, 0xFD, 0xFF),  // cellLight #FCFDFF
   RGB565(0xC1, 0xC4, 0xD6),  // shadow #c1c4d6
-  TFT_BLACK,                  // text #000000
+  TFT_BLACK,                 // text #000000
   RGB565(0xD3, 0xD3, 0xDD),  // centerLine (same as background)
-  TFT_BLACK,                  // iconDark #000000
-  TFT_WHITE                   // iconLight #ffffff
+  TFT_BLACK,                 // iconDark #000000
+  TFT_WHITE                  // iconLight #ffffff
 };
 
 // Dark theme definition
 const ThemeColors THEME_DARK = {
-  RGB565(0x20, 0x22, 0x26),  // background #202226
-  RGB565(0x50, 0x50, 0x52),  // cellDark #505052 (more neutral)
-  RGB565(0x58, 0x58, 0x5E),  // cellLight #58585E (more neutral)
+  0x2105,                    // background #202226
+  RGB565(0x9E, 0x9E, 0x9E),  // cellDark #9c9c9c
+  RGB565(0xBD, 0xBA, 0xBA),  // cellLight #bdbaba
   RGB565(0x15, 0x17, 0x1A),  // shadow #15171A
-  TFT_WHITE,                  // text #ffffff
-  RGB565(0x20, 0x22, 0x26),  // centerLine (same as background)
-  TFT_BLACK,                  // iconDark #000000
+  TFT_WHITE,                 // text #ffffff
+  0x2105,                    // centerLine (same as background)
+  TFT_BLACK,                 // iconDark #000000
   RGB565(0xEE, 0xEF, 0xF4)   // iconLight #EEEFF4
 };
 
@@ -1879,7 +1879,7 @@ inline uint16_t getCartridgeColor(uint16_t originalColor) {
     // Map light theme colors to dark theme
     const uint16_t LIGHT_BG = RGB565(0xD3, 0xD3, 0xDD);    // #d3d3dd
     const uint16_t LIGHT_SHADOW = RGB565(0xC1, 0xC4, 0xD6); // #c1c4d6
-    const uint16_t DARK_BG = RGB565(0x20, 0x22, 0x26);      // #202226
+    const uint16_t DARK_BG = 0x2105;                        // #202226
     const uint16_t DARK_SHADOW = RGB565(0x15, 0x17, 0x1A);  // #15171A
 
     if (originalColor == LIGHT_BG || originalColor == RGB565(0xD6, 0x9B, 0x00)) { // 0xD69B
@@ -2363,10 +2363,19 @@ void drawCell(int x, int y, bool isSelected = false) {
 
     // Apply tint if this is the selected cell
     if (isSelected) {
-      uint8_t r = ((cellColor >> 11) & 0x1F) * 0.8;
-      uint8_t g = ((cellColor >> 5) & 0x3F) * 0.8;
-      uint8_t b = (cellColor & 0x1F) * 0.8;
-      cellColor = (r << 11) | (g << 5) | b;
+      if (currentTheme == &THEME_DARK) {
+        // In dark mode, darken the cell (but less than light mode)
+        uint8_t r = ((cellColor >> 11) & 0x1F) * 0.7;
+        uint8_t g = ((cellColor >> 5) & 0x3F) * 0.7;
+        uint8_t b = (cellColor & 0x1F) * 0.7;
+        cellColor = (r << 11) | (g << 5) | b;
+      } else {
+        // In light mode, darken the cell more
+        uint8_t r = ((cellColor >> 11) & 0x1F) * 0.8;
+        uint8_t g = ((cellColor >> 5) & 0x3F) * 0.8;
+        uint8_t b = (cellColor & 0x1F) * 0.8;
+        cellColor = (r << 11) | (g << 5) | b;
+      }
     }
 
     M5Cardputer.Display.fillRect(screenX, screenY, currentCellSize, currentCellSize, cellColor);
@@ -2384,10 +2393,19 @@ void drawCell(int x, int y, bool isSelected = false) {
 
         // Apply tint if this is the selected cell
         if (isSelected) {
-          uint8_t r = ((color >> 11) & 0x1F) * 0.8;
-          uint8_t g = ((color >> 5) & 0x3F) * 0.8;
-          uint8_t b = (color & 0x1F) * 0.8;
-          color = (r << 11) | (g << 5) | b;
+          if (currentTheme == &THEME_DARK) {
+            // In dark mode, darken the cell (but less than light mode)
+            uint8_t r = ((color >> 11) & 0x1F) * 0.7;
+            uint8_t g = ((color >> 5) & 0x3F) * 0.7;
+            uint8_t b = (color & 0x1F) * 0.7;
+            color = (r << 11) | (g << 5) | b;
+          } else {
+            // In light mode, darken the cell more
+            uint8_t r = ((color >> 11) & 0x1F) * 0.8;
+            uint8_t g = ((color >> 5) & 0x3F) * 0.8;
+            uint8_t b = (color & 0x1F) * 0.8;
+            color = (r << 11) | (g << 5) | b;
+          }
         }
 
         int drawWidth = min(checkSize, currentCellSize - px);
@@ -2594,11 +2612,11 @@ void drawPalette() {
   M5Cardputer.Display.fillRect(swatchX - 2, swatchY - 2, 2, PALETTE_SWATCH_SIZE + 4, TFT_BLACK);  // Left
   M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE, swatchY - 2, 2, PALETTE_SWATCH_SIZE + 4, TFT_BLACK);  // Right
 
-  // Draw 2px white inset INSIDE the swatch (right against the edge)
-  M5Cardputer.Display.fillRect(swatchX, swatchY, PALETTE_SWATCH_SIZE, 2, TFT_WHITE);  // Top
-  M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, PALETTE_SWATCH_SIZE, 2, TFT_WHITE);  // Bottom
-  M5Cardputer.Display.fillRect(swatchX, swatchY, 2, PALETTE_SWATCH_SIZE, TFT_WHITE);  // Left
-  M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, PALETTE_SWATCH_SIZE, TFT_WHITE);  // Right
+  // Draw 2px light inset INSIDE the swatch (right against the edge)
+  M5Cardputer.Display.fillRect(swatchX, swatchY, PALETTE_SWATCH_SIZE, 2, currentTheme->iconLight);  // Top
+  M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, PALETTE_SWATCH_SIZE, 2, currentTheme->iconLight);  // Bottom
+  M5Cardputer.Display.fillRect(swatchX, swatchY, 2, PALETTE_SWATCH_SIZE, currentTheme->iconLight);  // Left
+  M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, PALETTE_SWATCH_SIZE, currentTheme->iconLight);  // Right
 }
 
 // ============================================================================
@@ -2765,7 +2783,7 @@ void drawMemorySketchThumbnail(int sketchIndex, int x, int y, int thumbSize) {
 // Helper function to draw "+" create new sketch button
 void drawCreateNewSketchThumbnail(int x, int y, int thumbSize) {
   // Draw dashed outline
-  uint16_t outlineColor = RGB565(0xC1, 0xC4, 0xD6);
+  uint16_t outlineColor = currentTheme->shadow;
   const int cutSize = 2;
   const int dashLength = 4;
   const int gapLength = 4;
@@ -2916,7 +2934,7 @@ void drawMemoryViewCursor(int itemIndex, int x, int y, int thumbSize) {
           int drawX = flipH ? (cornerX + ICON_SELECTOR_CORNER_WIDTH - 1 - col) : (cornerX + col);
           int drawY = flipV ? (cornerY + ICON_SELECTOR_CORNER_HEIGHT - 1 - row) : (cornerY + row);
 
-          uint16_t color = (value == 1) ? TFT_BLACK : TFT_WHITE;
+          uint16_t color = (value == 1) ? currentTheme->iconDark : currentTheme->iconLight;
           memoryCanvas.drawPixel(drawX, drawY, color);
         }
       }
