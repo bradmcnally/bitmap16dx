@@ -132,17 +132,48 @@ bool paletteFilterUser = false;         // true=show only user palettes
 uint8_t filteredPaletteIndices[32];
 uint8_t filteredPaletteCount = 0;
 
-// UI Colors (defined after RGB565 macro)
-const uint16_t COLOR_CELL_DARK = RGB565(0xEE, 0xEF, 0xF4);   // #EEEFF4 - Light purple-gray
-const uint16_t COLOR_CELL_LIGHT = RGB565(0xFF, 0xFF, 0xFF);  // #FFFFFF - White
-const uint16_t COLOR_BACKGROUND = RGB565(0xD3, 0xD3, 0xDD);  // #D3D3DD - Light gray-purple
-const uint16_t COLOR_CURSOR = TFT_BLACK;                      // Black cursor
-const uint16_t COLOR_CENTER_LINE = RGB565(0xC8, 0xC8, 0xD2); // #C8C8D2 - Center guide (drawn with 50% opacity)
+// ============================================================================
+// THEME SYSTEM
+// ============================================================================
 
-// View mode background colors
-const uint16_t VIEW_BG_BLACK = TFT_BLACK;                     // Black background
-const uint16_t VIEW_BG_WHITE = TFT_WHITE;                     // White background
-const uint16_t VIEW_BG_GRAY = COLOR_BACKGROUND;               // Use main background color
+// Theme color structure
+struct ThemeColors {
+  uint16_t background;
+  uint16_t cellDark;
+  uint16_t cellLight;
+  uint16_t shadow;
+  uint16_t text;
+  uint16_t centerLine;
+};
+
+// Light theme definition
+const ThemeColors THEME_LIGHT = {
+  RGB565(0xD3, 0xD3, 0xDD),  // background #d3d3dd
+  RGB565(0xEE, 0xEF, 0xF4),  // cellDark #EEEFF4
+  RGB565(0xFC, 0xFD, 0xFF),  // cellLight #FCFDFF
+  RGB565(0xC1, 0xC4, 0xD6),  // shadow #c1c4d6
+  TFT_BLACK,                  // text #000000
+  RGB565(0xD3, 0xD3, 0xDD)   // centerLine (same as background)
+};
+
+// Dark theme definition
+const ThemeColors THEME_DARK = {
+  RGB565(0x2C, 0x2C, 0x33),  // background #2c2c33
+  RGB565(0xD3, 0xD3, 0xDD),  // cellDark #d3d3dd (reuses light bg!)
+  RGB565(0xEE, 0xEF, 0xF4),  // cellLight #EEEFF4 (reuses light cellDark!)
+  RGB565(0x2D, 0x2A, 0x2A),  // shadow #2d2a2a
+  TFT_WHITE,                  // text #ffffff
+  RGB565(0x2C, 0x2C, 0x33)   // centerLine (same as background)
+};
+
+// Active theme pointer (default to light)
+const ThemeColors* currentTheme = &THEME_LIGHT;
+
+// View mode background colors (theme-independent)
+const uint16_t VIEW_BG_BLACK = TFT_BLACK;
+const uint16_t VIEW_BG_WHITE = TFT_WHITE;
+const uint16_t VIEW_BG_GRAY = THEME_LIGHT.background;  // Light mode background
+const uint16_t VIEW_BG_DARK = THEME_DARK.background;   // Dark mode background
 
 // ============================================================================
 // STATE
@@ -240,7 +271,7 @@ bool helpViewFromMemoryView = false;  // Track if hint screen was opened from me
 
 // View mode state
 bool inPreviewView = false;
-uint8_t previewViewBackground = 0;  // 0=black, 1=white, 2=light gray
+uint8_t previewViewBackground = 0;  // 0=black, 1=white, 2=light gray, 3=dark gray
 
 // Palette menu state
 bool inPaletteView = false;
@@ -1323,7 +1354,7 @@ void drawBatteryIndicator() {
   // Redraw if changed or forced
   if (batteryPercent != lastBatteryPercent || forceRedraw) {
     // Clear old icon area (24×24 icon below fill icon)
-    M5Cardputer.Display.fillRect(3, 85, 24, 24, COLOR_BACKGROUND);
+    M5Cardputer.Display.fillRect(3, 85, 24, 24, currentTheme->background);
 
     // Select icon based on battery level
     const unsigned char* batteryIcon;
@@ -1612,7 +1643,7 @@ void enterMemoryView() {
 
   lastMemoryAnimTime = millis();
   memoryCursorAnimPhase = 0.0f;
-  M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+  M5Cardputer.Display.fillScreen(currentTheme->background);
   drawMemoryView(true);
 }
 
@@ -1623,7 +1654,7 @@ void exitMemoryView() {
   inMemoryView = false;
 
   // Redraw the canvas view
-  M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+  M5Cardputer.Display.fillScreen(currentTheme->background);
   drawGrid();
   drawPalette();
   drawCursor();
@@ -1667,7 +1698,7 @@ void exitHelpView() {
     helpViewFromMemoryView = false;
   } else {
     // Return to canvas/drawing view
-    M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+    M5Cardputer.Display.fillScreen(currentTheme->background);
     drawGrid();
     drawPalette();
     drawCursor();
@@ -1697,6 +1728,7 @@ void enterPreviewView() {
     case 0: bgColor = VIEW_BG_BLACK; break;
     case 1: bgColor = VIEW_BG_WHITE; break;
     case 2: bgColor = VIEW_BG_GRAY; break;
+    case 3: bgColor = VIEW_BG_DARK; break;
     default: bgColor = VIEW_BG_BLACK; break;
   }
 
@@ -1735,7 +1767,7 @@ void exitPreviewView() {
   inPreviewView = false;
 
   // Redraw the canvas view
-  M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+  M5Cardputer.Display.fillScreen(currentTheme->background);
   drawGrid();
   drawPalette();
   drawCursor();
@@ -1790,7 +1822,7 @@ void enterPaletteView() {
   paletteViewScrollPos = (float)paletteViewCursor;
 
   // Clear screen and draw palette menu
-  M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+  M5Cardputer.Display.fillScreen(currentTheme->background);
 }
 
 /**
@@ -1800,7 +1832,7 @@ void exitPaletteView() {
   inPaletteView = false;
 
   // Redraw the canvas view
-  M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+  M5Cardputer.Display.fillScreen(currentTheme->background);
   drawGrid();
   drawPalette();
   drawCursor();
@@ -1833,6 +1865,72 @@ void exitPaletteView() {
 void drawCutCornerRect(int x, int y, int w, int h, int cutSize, uint16_t color, uint8_t corners, M5Canvas* canvas);
 
 /**
+ * Helper function to get theme-appropriate cartridge color
+ * Maps light theme cartridge colors to dark theme equivalents
+ */
+inline uint16_t getCartridgeColor(uint16_t originalColor) {
+  if (currentTheme == &THEME_DARK) {
+    // Map light theme colors to dark theme
+    const uint16_t LIGHT_BG = RGB565(0xD3, 0xD3, 0xDD);    // #d3d3dd
+    const uint16_t LIGHT_SHADOW = RGB565(0xC1, 0xC4, 0xD6); // #c1c4d6
+    const uint16_t DARK_BG = RGB565(0x2C, 0x2C, 0x33);      // #2c2c33
+    const uint16_t DARK_SHADOW = RGB565(0x2D, 0x2A, 0x2A);  // #2d2a2a
+
+    if (originalColor == LIGHT_BG || originalColor == RGB565(0xD6, 0x9B, 0x00)) { // 0xD69B
+      return DARK_BG;
+    }
+    if (originalColor == LIGHT_SHADOW || originalColor == RGB565(0xC6, 0x3A, 0x00)) { // 0xC63A
+      return DARK_SHADOW;
+    }
+  }
+  return originalColor; // Return unchanged in light mode or if no match
+}
+
+/**
+ * Draw theme-aware cartridge graphic
+ * Transforms colors for dark mode on-the-fly
+ */
+void drawThemedCartridge(int x, int y, M5Canvas* canvas = nullptr) {
+  // For light mode, use original graphic directly
+  if (currentTheme == &THEME_LIGHT) {
+    if (canvas != nullptr) {
+      bool oldSwap = canvas->getSwapBytes();
+      canvas->setSwapBytes(true);
+      canvas->pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, CARTRIDGE_GRAPHIC);
+      canvas->setSwapBytes(oldSwap);
+    } else {
+      bool oldSwap = M5Cardputer.Display.getSwapBytes();
+      M5Cardputer.Display.setSwapBytes(true);
+      M5Cardputer.Display.pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, CARTRIDGE_GRAPHIC);
+      M5Cardputer.Display.setSwapBytes(oldSwap);
+    }
+    return;
+  }
+
+  // For dark mode, transform colors
+  // Create a temporary buffer for the transformed graphic
+  static uint16_t cartridgeBuffer[CARTRIDGE_WIDTH * CARTRIDGE_HEIGHT];
+
+  // Copy and transform colors
+  for (int i = 0; i < CARTRIDGE_WIDTH * CARTRIDGE_HEIGHT; i++) {
+    cartridgeBuffer[i] = getCartridgeColor(pgm_read_word(&CARTRIDGE_GRAPHIC[i]));
+  }
+
+  // Draw the transformed graphic
+  if (canvas != nullptr) {
+    bool oldSwap = canvas->getSwapBytes();
+    canvas->setSwapBytes(true);
+    canvas->pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, cartridgeBuffer);
+    canvas->setSwapBytes(oldSwap);
+  } else {
+    bool oldSwap = M5Cardputer.Display.getSwapBytes();
+    M5Cardputer.Display.setSwapBytes(true);
+    M5Cardputer.Display.pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, cartridgeBuffer);
+    M5Cardputer.Display.setSwapBytes(oldSwap);
+  }
+}
+
+/**
  * Draw a single palette preview at given position
  * Shows cartridge graphic with color swatches displayed on it
  * @param canvas Optional canvas to draw to (defaults to main display)
@@ -1855,18 +1953,8 @@ void drawPalettePreview(int x, int y, const uint16_t* palette, bool isCursor, bo
     cartY = cartY + (int)(PALETTE_INSERT_DISTANCE * eased);
   }
 
-  // Enable byte swapping for RGB565 data from PROGMEM
-  if (canvas != nullptr) {
-    bool oldSwap = canvas->getSwapBytes();
-    canvas->setSwapBytes(true);
-    canvas->pushImage(cartX, cartY, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, CARTRIDGE_GRAPHIC);
-    canvas->setSwapBytes(oldSwap);
-  } else {
-    bool oldSwap = M5Cardputer.Display.getSwapBytes();
-    M5Cardputer.Display.setSwapBytes(true);
-    M5Cardputer.Display.pushImage(cartX, cartY, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, CARTRIDGE_GRAPHIC);
-    M5Cardputer.Display.setSwapBytes(oldSwap);
-  }
+  // Draw theme-aware cartridge graphic
+  drawThemedCartridge(cartX, cartY, canvas);
 
   // Draw color swatches: 64×64 area positioned 8px from left, 6px from top of cartridge
   const int swatchAreaWidth = 64;
@@ -1947,14 +2035,14 @@ void drawPaletteView(bool fullRedraw = true) {
   // Check if canvas is available
   if (!paletteCanvasAvailable) {
     // Canvas wasn't allocated - show error message
-    M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+    M5Cardputer.Display.fillScreen(currentTheme->background);
     M5Cardputer.Display.setTextColor(TFT_RED);
     M5Cardputer.Display.setCursor(10, 50);
     M5Cardputer.Display.println("WARNING: Low memory!");
     M5Cardputer.Display.setCursor(10, 65);
     M5Cardputer.Display.println("Cannot show palette menu.");
     M5Cardputer.Display.setCursor(10, 85);
-    M5Cardputer.Display.setTextColor(TFT_BLACK);
+    M5Cardputer.Display.setTextColor(currentTheme->text);
     M5Cardputer.Display.println("Press ESC (`) to exit");
     M5Cardputer.Display.setCursor(10, 100);
     M5Cardputer.Display.println("Restart device to recover");
@@ -1962,10 +2050,10 @@ void drawPaletteView(bool fullRedraw = true) {
   }
 
   // Clear the canvas buffer (full screen)
-  paletteCanvas.fillSprite(COLOR_BACKGROUND);
+  paletteCanvas.fillSprite(currentTheme->background);
 
   // Draw title to canvas
-  paletteCanvas.setTextColor(TFT_BLACK);
+  paletteCanvas.setTextColor(currentTheme->text);
   paletteCanvas.setTextSize(1);
   paletteCanvas.setCursor(4, 4);
   paletteCanvas.print("PALETTES");
@@ -2046,7 +2134,7 @@ void drawPaletteView(bool fullRedraw = true) {
       // Draw palette name FIRST (but not during insertion animation to prevent text peeking out)
       if (isCursor && !paletteInsertionAnimating) {
         paletteCanvas.setTextSize(1);
-        paletteCanvas.setTextColor(TFT_BLACK);
+        paletteCanvas.setTextColor(currentTheme->text);
 
         // Add checkmark if this is the active palette, star if user-loaded
         String displayText = String(allPaletteNames[paletteIdx]);
@@ -2069,7 +2157,7 @@ void drawPaletteView(bool fullRedraw = true) {
 
   // Draw status message at bottom if one exists
   if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
-    paletteCanvas.setTextColor(TFT_BLACK);
+    paletteCanvas.setTextColor(currentTheme->text);
     paletteCanvas.setTextSize(1);
     paletteCanvas.setCursor(3, 124);
     paletteCanvas.print(statusMessage);
@@ -2101,19 +2189,18 @@ void drawPaletteView(bool fullRedraw = true) {
  * @param y Y position of the element (shadow will be at y+2)
  * @param w Width of the shadow
  * @param h Height of the shadow
- * @param shadowColor Color of the shadow (default: #C1C4D6)
  * @param cutCorners Whether to handle cut corners (default: false)
  */
-void drawShadow(int x, int y, int w, int h, uint16_t shadowColor = 0xC63A, bool cutCorners = false) {
+void drawShadow(int x, int y, int w, int h, bool cutCorners = false) {
   // Draw main shadow rectangle (offset 2px down and right)
   // This extends under the element and will show through any cut corners
-  M5Cardputer.Display.fillRect(x + 2, y + 2, w, h, shadowColor);
+  M5Cardputer.Display.fillRect(x + 2, y + 2, w, h, currentTheme->shadow);
 
   if (cutCorners) {
     // Cut the shadow's own visible corners (the parts that stick out beyond the element)
-    M5Cardputer.Display.fillRect(x + w, y + 2, 2, 2, COLOR_BACKGROUND);  // Cut shadow's TR
-    M5Cardputer.Display.fillRect(x + 2, y + h, 2, 2, COLOR_BACKGROUND);  // Cut shadow's BL
-    M5Cardputer.Display.fillRect(x + w, y + h, 2, 2, COLOR_BACKGROUND);  // Cut shadow's BR
+    M5Cardputer.Display.fillRect(x + w, y + 2, 2, 2, currentTheme->background);  // Cut shadow's TR
+    M5Cardputer.Display.fillRect(x + 2, y + h, 2, 2, currentTheme->background);  // Cut shadow's BL
+    M5Cardputer.Display.fillRect(x + w, y + h, 2, 2, currentTheme->background);  // Cut shadow's BR
   }
 }
 
@@ -2287,7 +2374,7 @@ void drawCell(int x, int y, bool isSelected = false) {
         int absX = screenX + px;
         int absY = screenY + py;
         bool isDark = ((absX / checkSize) + (absY / checkSize)) % 2 == 0;
-        uint16_t color = isDark ? COLOR_CELL_DARK : COLOR_CELL_LIGHT;
+        uint16_t color = isDark ? currentTheme->cellDark : currentTheme->cellLight;
 
         // Apply tint if this is the selected cell
         if (isSelected) {
@@ -2310,28 +2397,28 @@ void drawCell(int x, int y, bool isSelected = false) {
 
       if (centerX >= screenX && centerX < screenX + currentCellSize) {
         // Redraw the vertical line segment for this cell
-        M5Cardputer.Display.fillRect(centerX, screenY, 1, currentCellSize, COLOR_BACKGROUND);
+        M5Cardputer.Display.fillRect(centerX, screenY, 1, currentCellSize, currentTheme->centerLine);
       }
 
       if (centerY >= screenY && centerY < screenY + currentCellSize) {
         // Redraw the horizontal line segment for this cell
-        M5Cardputer.Display.fillRect(screenX, centerY, currentCellSize, 1, COLOR_BACKGROUND);
+        M5Cardputer.Display.fillRect(screenX, centerY, currentCellSize, 1, currentTheme->centerLine);
       }
     }
   }
 
   // LAYER 4: Apply corner masking for corner cells
   if (x == 0 && y == 0) {
-    M5Cardputer.Display.fillRect(screenX, screenY, 2, 2, COLOR_BACKGROUND);
+    M5Cardputer.Display.fillRect(screenX, screenY, 2, 2, currentTheme->background);
   }
   else if (x == currentGridSize - 1 && y == 0) {
-    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY, 2, 2, COLOR_BACKGROUND);
+    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY, 2, 2, currentTheme->background);
   }
   else if (x == 0 && y == currentGridSize - 1) {
-    M5Cardputer.Display.fillRect(screenX, screenY + currentCellSize - 2, 2, 2, COLOR_BACKGROUND);
+    M5Cardputer.Display.fillRect(screenX, screenY + currentCellSize - 2, 2, 2, currentTheme->background);
   }
   else if (x == currentGridSize - 1 && y == currentGridSize - 1) {
-    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY + currentCellSize - 2, 2, 2, 0xC63A);
+    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY + currentCellSize - 2, 2, 2, currentTheme->shadow);
   }
 }
 
@@ -2359,7 +2446,7 @@ void drawCursor() {
       lastCursorScreenY,
       ICON_CANVAS_CURSOR_WIDTH,
       ICON_CANVAS_CURSOR_HEIGHT,
-      COLOR_BACKGROUND
+      currentTheme->background
     );
 
     // Then redraw all cells that were covered by the old cursor
@@ -2406,7 +2493,7 @@ void drawPalette() {
     GRID_Y - 4,
     PALETTE_WIDTH + 8,
     (PALETTE_SWATCH_SIZE * 8) + 8,
-    COLOR_BACKGROUND
+    currentTheme->background
   );
 
   // Determine layout based on palette size
@@ -2418,7 +2505,7 @@ void drawPalette() {
   // Draw shadow behind the palette (with cut corners)
   int paletteWidth = (numColors <= 8) ? PALETTE_SWATCH_SIZE : PALETTE_WIDTH;
   int paletteHeight = (numColors <= 8) ? (numColors * PALETTE_SWATCH_SIZE) : (8 * PALETTE_SWATCH_SIZE);
-  drawShadow(startX, GRID_Y, paletteWidth, paletteHeight, 0xC63A, true);
+  drawShadow(startX, GRID_Y, paletteWidth, paletteHeight, true);
 
   // Draw color swatches
   for (int i = 0; i < numColors; i++) {
@@ -2444,44 +2531,44 @@ void drawPalette() {
         // 4-color: single column, right-aligned
         if (i == 0) {
           // Top: mask both top corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, COLOR_BACKGROUND);  // Top-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, COLOR_BACKGROUND);  // Top-right
+          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, currentTheme->background);  // Top-left
+          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, currentTheme->background);  // Top-right
         }
         else if (i == 3) {
           // Bottom: mask both bottom corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, COLOR_BACKGROUND);  // Bottom-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, 0xC63A);  // Bottom-right (shadow!)
+          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->background);  // Bottom-left
+          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->shadow);  // Bottom-right (shadow!)
         }
       }
       else if (numColors == 8) {
         // 8-color: single column, right-aligned
         if (i == 0) {
           // Top: mask both top corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, COLOR_BACKGROUND);  // Top-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, COLOR_BACKGROUND);  // Top-right
+          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, currentTheme->background);  // Top-left
+          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, currentTheme->background);  // Top-right
         }
         else if (i == 7) {
           // Bottom: mask both bottom corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, COLOR_BACKGROUND);  // Bottom-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, 0xC63A);  // Bottom-right (shadow!)
+          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->background);  // Bottom-left
+          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->shadow);  // Bottom-right (shadow!)
         }
       } else {
         // 16-color: two columns
         if (i == 0) {
           // Color 1 (index 0): top-left of left column - mask top-left corner
-          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, COLOR_BACKGROUND);
+          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, currentTheme->background);
         }
         else if (i == 7) {
           // Color 8 (index 7): bottom-left of left column - mask bottom-left corner
-          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, COLOR_BACKGROUND);
+          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->background);
         }
         else if (i == 8) {
           // Color 9 (index 8): top-right of right column - mask top-right corner
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, COLOR_BACKGROUND);
+          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, currentTheme->background);
         }
         else if (i == 15) {
           // Color 16 (index 15): bottom-right of right column - mask bottom-right corner
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, 0xC63A);  // Bottom-right (shadow!)
+          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->shadow);  // Bottom-right (shadow!)
         }
       }
     }
@@ -2592,14 +2679,14 @@ void drawMemoryViewGrid(bool fullRedraw = true) {
     // Memory allocation failed - show warning once to prevent flashing
     static bool memoryErrorShown = false;
     if (!memoryErrorShown) {
-      M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+      M5Cardputer.Display.fillScreen(currentTheme->background);
       M5Cardputer.Display.setTextColor(TFT_RED);
       M5Cardputer.Display.setCursor(10, 50);
       M5Cardputer.Display.println("WARNING: Low memory!");
       M5Cardputer.Display.setCursor(10, 65);
       M5Cardputer.Display.println("Cannot display sketches.");
       M5Cardputer.Display.setCursor(10, 85);
-      M5Cardputer.Display.setTextColor(TFT_BLACK);
+      M5Cardputer.Display.setTextColor(currentTheme->text);
       M5Cardputer.Display.println("Press ESC (`) to exit");
       M5Cardputer.Display.setCursor(10, 100);
       M5Cardputer.Display.println("Restart device to recover");
@@ -2607,11 +2694,11 @@ void drawMemoryViewGrid(bool fullRedraw = true) {
     }
     return;  // Skip drawing this frame, but allow keyboard handling
   }
-  memoryCanvas.fillSprite(COLOR_BACKGROUND);
+  memoryCanvas.fillSprite(currentTheme->background);
 
   // Draw title to canvas (scrollable position)
   if (titleY > -titleHeight && titleY < 135) {  // Only draw if at least partially visible
-    memoryCanvas.setTextColor(TFT_BLACK);
+    memoryCanvas.setTextColor(currentTheme->text);
     memoryCanvas.setTextSize(1);
     memoryCanvas.setCursor(4, titleY + 4);
     memoryCanvas.print("SKETCHES");
@@ -2650,7 +2737,7 @@ void drawMemoryViewGrid(bool fullRedraw = true) {
 
   // Draw status message at bottom if one exists
   if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
-    memoryCanvas.setTextColor(TFT_BLACK);
+    memoryCanvas.setTextColor(currentTheme->text);
     memoryCanvas.setTextSize(1);
     memoryCanvas.setCursor(3, 124);
     memoryCanvas.print(statusMessage);
@@ -2706,9 +2793,9 @@ void drawCreateNewSketchThumbnail(int x, int y, int thumbSize) {
   int plusThickness = 3;
 
   memoryCanvas.fillRect(centerX - plusThickness/2, centerY - plusSize/2,
-                        plusThickness, plusSize, TFT_BLACK);
+                        plusThickness, plusSize, currentTheme->text);
   memoryCanvas.fillRect(centerX - plusSize/2, centerY - plusThickness/2,
-                        plusSize, plusThickness, TFT_BLACK);
+                        plusSize, plusThickness, currentTheme->text);
 }
 
 // Helper function to draw sketch thumbnail using cached data
@@ -2790,7 +2877,7 @@ void drawSketchThumbnail(int sketchIndex, int x, int y, int thumbSize) {
 
   // Cut corners
   const int cutSize = 2;
-  uint16_t bgColor = COLOR_BACKGROUND;
+  uint16_t bgColor = currentTheme->background;
   memoryCanvas.fillRect(x, y, cutSize, cutSize, bgColor);
   memoryCanvas.fillRect(x + thumbSize - cutSize, y, cutSize, cutSize, bgColor);
   memoryCanvas.fillRect(x, y + thumbSize - cutSize, cutSize, cutSize, bgColor);
@@ -2838,7 +2925,7 @@ void drawMemoryViewCursor(int itemIndex, int x, int y, int thumbSize) {
 
   // Clear corners for cursor animation
   const int cutSize = 2;
-  uint16_t bgColor = COLOR_BACKGROUND;
+  uint16_t bgColor = currentTheme->background;
   memoryCanvas.fillRect(x, y, cutSize, cutSize, bgColor);
   memoryCanvas.fillRect(x + thumbSize - cutSize, y, cutSize, cutSize, bgColor);
   memoryCanvas.fillRect(x, y + thumbSize - cutSize, cutSize, cutSize, bgColor);
@@ -2865,10 +2952,10 @@ void drawMemoryView(bool fullRedraw) {
  * Draw Hint Screen - displays all keyboard controls
  */
 void drawHelpView() {
-  M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+  M5Cardputer.Display.fillScreen(currentTheme->background);
 
   // Title
-  M5Cardputer.Display.setTextColor(TFT_BLACK);
+  M5Cardputer.Display.setTextColor(currentTheme->text);
   M5Cardputer.Display.setTextSize(1);
   M5Cardputer.Display.setCursor(4, 4);
   M5Cardputer.Display.print("HINTS");
@@ -2957,7 +3044,7 @@ void drawHelpView() {
  */
 void drawGrid() {
   // Draw shadow behind the grid (with bottom-right cut corner)
-  drawShadow(GRID_X, GRID_Y, 128, 128, 0xC63A, true);
+  drawShadow(GRID_X, GRID_Y, 128, 128, true);
 
   // Draw each cell
   for (int y = 0; y < currentGridSize; y++) {
@@ -2969,10 +3056,10 @@ void drawGrid() {
   // Cut the corners by drawing background color over them
   // Canvas is 128×128, positioned at GRID_X, GRID_Y
   // BR corner shows shadow color (reveals the shadow underneath)
-  M5Cardputer.Display.fillRect(GRID_X, GRID_Y, 2, 2, COLOR_BACKGROUND);                          // Top-left
-  M5Cardputer.Display.fillRect(GRID_X + 128 - 2, GRID_Y, 2, 2, COLOR_BACKGROUND);                // Top-right
-  M5Cardputer.Display.fillRect(GRID_X, GRID_Y + 128 - 2, 2, 2, COLOR_BACKGROUND);                // Bottom-left
-  M5Cardputer.Display.fillRect(GRID_X + 128 - 2, GRID_Y + 128 - 2, 2, 2, 0xC63A);                // Bottom-right (shadow color!)
+  M5Cardputer.Display.fillRect(GRID_X, GRID_Y, 2, 2, currentTheme->background);                          // Top-left
+  M5Cardputer.Display.fillRect(GRID_X + 128 - 2, GRID_Y, 2, 2, currentTheme->background);                // Top-right
+  M5Cardputer.Display.fillRect(GRID_X, GRID_Y + 128 - 2, 2, 2, currentTheme->background);                // Bottom-left
+  M5Cardputer.Display.fillRect(GRID_X + 128 - 2, GRID_Y + 128 - 2, 2, 2, currentTheme->shadow);                // Bottom-right (shadow color!)
 }
 
 // ============================================================================
@@ -3199,6 +3286,11 @@ void setup() {
   // Default to 80% if never saved before
   preferences.begin("bitmap16dx", false);
   displayBrightness = preferences.getUChar("brightness", 80);
+
+  // Load theme preference (default to light mode)
+  bool darkMode = preferences.getBool("darkMode", false);
+  currentTheme = darkMode ? &THEME_DARK : &THEME_LIGHT;
+
   preferences.end();
 
   // Set initial display brightness
@@ -3237,11 +3329,11 @@ void setup() {
   createNewSketch();
 
   // Clear the screen to background color
-  M5Cardputer.Display.fillScreen(COLOR_BACKGROUND);
+  M5Cardputer.Display.fillScreen(currentTheme->background);
 
   // Pre-clear the status message area (left of grid) so future fillRects look consistent
   // Grid starts at x=56, so clear from x=3 to x=55 (width=53)
-  M5Cardputer.Display.fillRect(3, 124, 53, 11, COLOR_BACKGROUND);
+  M5Cardputer.Display.fillRect(3, 124, 53, 11, currentTheme->background);
 
   // Boot directly to Draw View (not Memory View)
   // Draw the grid first (fills the area)
@@ -3547,9 +3639,15 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
         enterPreviewView();  // Redraw with new background
         delay(150);  // Debounce
       }
-      // 3 key - Gray background
+      // 3 key - Light gray background
       else if (i == '3') {
         previewViewBackground = 2;
+        enterPreviewView();  // Redraw with new background
+        delay(150);  // Debounce
+      }
+      // 4 key - Dark gray background
+      else if (i == '4') {
+        previewViewBackground = 3;
         enterPreviewView();  // Redraw with new background
         delay(150);  // Debounce
       }
@@ -3815,6 +3913,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   bool undoPerformed = false;
   bool gridToggled = false;
   bool rulersToggled = false;
+  bool themeToggled = false;
   bool floodFilled = false;
   int oldX = cursorX;
   int oldY = cursorY;
@@ -3897,6 +3996,25 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           rulersVisible = !rulersVisible;
           rulersToggled = true;
           setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
+        }
+        // T key - Toggle theme
+        else if (i == 't' || i == 'T') {
+          // Toggle between light and dark themes
+          if (currentTheme == &THEME_LIGHT) {
+            currentTheme = &THEME_DARK;
+            setStatusMessage("Dark Mode");
+          } else {
+            currentTheme = &THEME_LIGHT;
+            setStatusMessage("Light Mode");
+          }
+
+          // Save theme preference to flash
+          preferences.begin("bitmap16dx", false);
+          preferences.putBool("darkMode", (currentTheme == &THEME_DARK));
+          preferences.end();
+
+          // Flag for full redraw
+          themeToggled = true;
         }
         // O key - Open Memory View
         else if (i == 'o' || i == 'O') {
@@ -4094,22 +4212,43 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   }
 
   // Redraw based on what changed
-  if (canvasCleared || undoPerformed || gridToggled || rulersToggled || floodFilled) {
+  if (canvasCleared || undoPerformed || gridToggled || rulersToggled || floodFilled || themeToggled) {
     // Redraw the entire canvas
     // (gridToggled needs full redraw because cell size changed)
     // (rulersToggled needs full redraw to show/hide rulers)
     // (floodFilled needs full redraw because many cells may have changed)
+    // (themeToggled needs full redraw with new background color)
 
-    drawGrid();
-    for (int y = 0; y < currentGridSize; y++) {
-      for (int x = 0; x < currentGridSize; x++) {
-        if (canvas[y][x] != 0) {
-          drawCell(x, y);
+    // If theme changed, clear entire screen with new background
+    if (themeToggled) {
+      M5Cardputer.Display.fillScreen(currentTheme->background);
+
+      // Redraw all UI elements
+      drawGrid();
+      drawPalette();
+      drawCursor();
+
+      // Redraw icons
+      drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
+      drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
+      drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
+
+      // Reset battery indicator for redraw
+      lastBatteryPercent = -1;
+      batteryFirstCheck = true;
+      drawBatteryIndicator();
+    } else {
+      drawGrid();
+      for (int y = 0; y < currentGridSize; y++) {
+        for (int x = 0; x < currentGridSize; x++) {
+          if (canvas[y][x] != 0) {
+            drawCell(x, y);
+          }
         }
       }
-    }
 
-    drawCursor();
+      drawCursor();
+    }
   }
   else if (moved) {
     // Erase the old cursor by redrawing that cell
@@ -4136,7 +4275,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
     // It overlaps background (x=3-55) AND grid (x=56+)
 
     // Clear the background area (left of grid)
-    M5Cardputer.Display.fillRect(3, 124, 53, 11, COLOR_BACKGROUND);
+    M5Cardputer.Display.fillRect(3, 124, 53, 11, currentTheme->background);
 
     // Redraw bottom grid rows that text might have overlapped
     int affectedStartY = 124 - GRID_Y;  // 120
@@ -4154,7 +4293,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
 
     // Draw current message (if any)
     if (statusMessage[0] != '\0') {
-      M5Cardputer.Display.setTextColor(TFT_BLACK);
+      M5Cardputer.Display.setTextColor(currentTheme->text);
       M5Cardputer.Display.setTextSize(1);
       M5Cardputer.Display.setCursor(3, 124);
       M5Cardputer.Display.print(statusMessage);
