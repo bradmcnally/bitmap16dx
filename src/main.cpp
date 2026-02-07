@@ -2007,12 +2007,12 @@ void drawPalettePreview(int x, int y, const uint16_t* palette, bool isCursor, bo
       drawCutCornerRect(px, py, colorWidth, colorHeight, cutSize, pgm_read_word(&palette[i]), corners, canvas);
     }
   } else {
-    // 16-color: 4×4 grid, 16×16 each (colors go ACROSS rows - HORIZONTAL LAYOUT)
+    // 16-color: 4×4 grid, 16×16 each (colors go DOWN columns - VERTICAL LAYOUT)
     const int colorSize = 16;
 
     for (int i = 0; i < 16; i++) {
-      int col = i % 4;  // Column cycles 0-3
-      int row = i / 4;  // Row changes every 4 colors
+      int col = i / 4;  // Column changes every 4 colors
+      int row = i % 4;  // Row cycles 0-3
       int px = swatchX + (col * colorSize);
       int py = swatchY + (row * colorSize);
 
