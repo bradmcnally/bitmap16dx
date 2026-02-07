@@ -144,6 +144,8 @@ struct ThemeColors {
   uint16_t shadow;
   uint16_t text;
   uint16_t centerLine;
+  uint16_t iconDark;
+  uint16_t iconLight;
 };
 
 // Light theme definition
@@ -153,17 +155,21 @@ const ThemeColors THEME_LIGHT = {
   RGB565(0xFC, 0xFD, 0xFF),  // cellLight #FCFDFF
   RGB565(0xC1, 0xC4, 0xD6),  // shadow #c1c4d6
   TFT_BLACK,                  // text #000000
-  RGB565(0xD3, 0xD3, 0xDD)   // centerLine (same as background)
+  RGB565(0xD3, 0xD3, 0xDD),  // centerLine (same as background)
+  TFT_BLACK,                  // iconDark #000000
+  TFT_WHITE                   // iconLight #ffffff
 };
 
 // Dark theme definition
 const ThemeColors THEME_DARK = {
-  RGB565(0x2C, 0x2C, 0x33),  // background #2c2c33
-  RGB565(0xD3, 0xD3, 0xDD),  // cellDark #d3d3dd (reuses light bg!)
-  RGB565(0xEE, 0xEF, 0xF4),  // cellLight #EEEFF4 (reuses light cellDark!)
-  RGB565(0x2D, 0x2A, 0x2A),  // shadow #2d2a2a
+  RGB565(0x20, 0x22, 0x26),  // background #202226
+  RGB565(0x50, 0x50, 0x52),  // cellDark #505052 (more neutral)
+  RGB565(0x58, 0x58, 0x5E),  // cellLight #58585E (more neutral)
+  RGB565(0x15, 0x17, 0x1A),  // shadow #15171A
   TFT_WHITE,                  // text #ffffff
-  RGB565(0x2C, 0x2C, 0x33)   // centerLine (same as background)
+  RGB565(0x20, 0x22, 0x26),  // centerLine (same as background)
+  TFT_BLACK,                  // iconDark #000000
+  RGB565(0xEE, 0xEF, 0xF4)   // iconLight #EEEFF4
 };
 
 // Active theme pointer (default to light)
@@ -399,7 +405,7 @@ const char* detectedBoardName = "Unknown";
 void drawIcon(int x, int y, const unsigned char* bitmap, int w, int h, bool indexed = false) {
   if (indexed) {
     // 2-bit indexed format: 4 pixels per byte
-    // 0 = transparent, 1 = black, 2 = white
+    // 0 = transparent, 1 = dark, 2 = light
     for (int row = 0; row < h; row++) {
       for (int col = 0; col < w; col++) {
         int pixelIndex = row * w + col;
@@ -410,22 +416,22 @@ void drawIcon(int x, int y, const unsigned char* bitmap, int w, int h, bool inde
         uint8_t value = (byte >> bitShift) & 0x03;
 
         if (value == 1) {
-          M5Cardputer.Display.drawPixel(x + col, y + row, TFT_BLACK);
+          M5Cardputer.Display.drawPixel(x + col, y + row, currentTheme->iconDark);
         } else if (value == 2) {
-          M5Cardputer.Display.drawPixel(x + col, y + row, TFT_WHITE);
+          M5Cardputer.Display.drawPixel(x + col, y + row, currentTheme->iconLight);
         }
         // value == 0 is transparent, skip
       }
     }
   } else {
-    // 1-bit format: 1 = black, 0 = transparent
+    // 1-bit format: 1 = dark, 0 = transparent
     int byteWidth = (w + 7) / 8;
     for (int row = 0; row < h; row++) {
       for (int col = 0; col < w; col++) {
         if (col % 8 == 0) {
           uint8_t byte = pgm_read_byte(&bitmap[row * byteWidth + col / 8]);
           if (byte & (0x80 >> (col % 8))) {
-            M5Cardputer.Display.drawPixel(x + col, y + row, TFT_BLACK);
+            M5Cardputer.Display.drawPixel(x + col, y + row, currentTheme->iconDark);
           }
         }
       }
@@ -1873,8 +1879,8 @@ inline uint16_t getCartridgeColor(uint16_t originalColor) {
     // Map light theme colors to dark theme
     const uint16_t LIGHT_BG = RGB565(0xD3, 0xD3, 0xDD);    // #d3d3dd
     const uint16_t LIGHT_SHADOW = RGB565(0xC1, 0xC4, 0xD6); // #c1c4d6
-    const uint16_t DARK_BG = RGB565(0x2C, 0x2C, 0x33);      // #2c2c33
-    const uint16_t DARK_SHADOW = RGB565(0x2D, 0x2A, 0x2A);  // #2d2a2a
+    const uint16_t DARK_BG = RGB565(0x20, 0x22, 0x26);      // #202226
+    const uint16_t DARK_SHADOW = RGB565(0x15, 0x17, 0x1A);  // #15171A
 
     if (originalColor == LIGHT_BG || originalColor == RGB565(0xD6, 0x9B, 0x00)) { // 0xD69B
       return DARK_BG;
