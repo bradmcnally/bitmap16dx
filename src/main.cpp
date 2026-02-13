@@ -28,6 +28,11 @@
  * - P to open palette menu (swap between color palettes)
  * - Hold B + press Plus (+) to increase brightness
  * - Hold B + press Minus (-) to decrease brightness
+#if ENABLE_LED_MATRIX
+ * - L + Enter to toggle LED matrix on/off
+ * - Hold L + press Plus (+) to increase LED brightness
+ * - Hold L + press Minus (-) to decrease LED brightness
+#endif
  * - G0 button (physical) to clear canvas
  */
 
@@ -48,8 +53,18 @@ Preferences preferences;
 // ============================================================================
 
 // Enable screenshot feature (Y key) - disable for release builds
-// Export feature (X key) always remains enabled for users
 #define ENABLE_SCREENSHOTS 1  // Set to 0 to disable screenshots in release
+
+// Enable external 8×8 WS2812 LED matrix support
+// Set to 0 to disable LED matrix features and save memory (~9KB flash, 880 bytes RAM)
+#define ENABLE_LED_MATRIX 1  // Set to 0 to disable
+
+// Macro for LED matrix canvas updates (no-op when feature disabled)
+#if ENABLE_LED_MATRIX
+  #define LED_CANVAS_UPDATED() canvasNeedsUpdate = true
+#else
+  #define LED_CANVAS_UPDATED() ((void)0)
+#endif
 
 // ============================================================================
 // CONFIGURATION
@@ -215,6 +230,28 @@ bool rulersVisible = false;  // Toggle with R key
 // Display brightness level (stored as percentage: 10-100%)
 // Converted to hardware range (0-255) when setting display
 uint8_t displayBrightness = 80;  // Start at 80% brightness
+
+#if ENABLE_LED_MATRIX
+// ============================================================================
+// LED MATRIX CONFIGURATION (8×8 WS2812 RGB LEDs)
+// ============================================================================
+
+#include <FastLED.h>
+
+// 8×8 WS2812E RGB LED matrix (64 LEDs)
+// Mirrors the 8×8 canvas in real-time when enabled
+// Connected to Port A: Yellow wire (G2) = GPIO2
+#define LED_PIN 2                     // GPIO2 (Port A - Yellow wire)
+#define NUM_LEDS 64                   // 8×8 matrix
+#define DEFAULT_LED_BRIGHTNESS 10     // 10% brightness (132mA)
+#define MIN_LED_BRIGHTNESS 5          // Minimum 5%
+#define MAX_LED_BRIGHTNESS 20         // Maximum 20% (for battery safety)
+
+CRGB leds[NUM_LEDS];                  // LED array for FastLED
+bool ledMatrixEnabled = false;        // User must explicitly enable
+uint8_t ledBrightness = DEFAULT_LED_BRIGHTNESS;  // 5-20%
+bool canvasNeedsUpdate = false;       // Flag to trigger LED update
+#endif // ENABLE_LED_MATRIX
 
 // Undo state - stores a single previous canvas state
 uint8_t undoCanvas[16][16] = {0};
@@ -461,6 +498,18 @@ bool isBKeyHeld(Keyboard_Class::KeysState& status) {
   }
   return false;
 }
+
+#if ENABLE_LED_MATRIX
+// Helper function to check if 'L' key is in the word buffer
+bool isLKeyHeld(Keyboard_Class::KeysState& status) {
+  for (auto i : status.word) {
+    if (i == 'l' || i == 'L') {
+      return true;
+    }
+  }
+  return false;
+}
+#endif // ENABLE_LED_MATRIX
 
 // ============================================================================
 // ANIMATION HELPER FUNCTIONS
@@ -1451,6 +1500,10 @@ void restoreUndo() {
   }
 
   undoAvailable = false;
+
+  // Update LED matrix with restored canvas
+  LED_CANVAS_UPDATED();
+
   setStatusMessage(StatusMsg::UNDO);
 }
 
@@ -1574,6 +1627,8 @@ void toggleGridSize() {
   if (cursorX >= currentGridSize) cursorX = currentGridSize - 1;
   if (cursorY >= currentGridSize) cursorY = currentGridSize - 1;
 
+  // Update LED matrix (turn off in 16×16 mode, turn on in 8×8 mode)
+  LED_CANVAS_UPDATED();
 }
 
 /**
@@ -1604,6 +1659,9 @@ void openSketch(String filename) {
   if (cursorY >= currentGridSize) cursorY = currentGridSize - 1;
 
   selectedColor = 1;
+
+  // Update LED matrix with newly loaded canvas
+  LED_CANVAS_UPDATED();
 
   setStatusMessage(StatusMsg::LOADED);
 }
@@ -3285,6 +3343,158 @@ void updatePaletteFilter() {
   }
 }
 
+#if ENABLE_LED_MATRIX
+// ============================================================================
+// LED MATRIX FUNCTIONS (8×8 WS2812 RGB LEDs)
+// ============================================================================
+
+/**
+ * Convert 2D canvas coordinates to linear LED index.
+ * Simple linear mapping - no mirroring, no serpentine.
+ */
+uint8_t getLEDIndex(uint8_t x, uint8_t y) {
+    // Straight linear mapping: left to right, top to bottom
+    return y * 8 + x;
+}
+
+/**
+ * Convert RGB565 color to RGB888 for WS2812 LEDs.
+ * RGB565: 5 bits red, 6 bits green, 5 bits blue (16-bit)
+ * RGB888: 8 bits per channel (24-bit)
+ * This expands the color depth from 65K to 16.7M colors.
+ */
+CRGB rgb565ToRGB888(uint16_t rgb565) {
+    uint8_t r = ((rgb565 >> 11) & 0x1F) * 255 / 31;  // 5-bit → 8-bit
+    uint8_t g = ((rgb565 >> 5) & 0x3F) * 255 / 63;   // 6-bit → 8-bit
+    uint8_t b = (rgb565 & 0x1F) * 255 / 31;          // 5-bit → 8-bit
+    return CRGB(r, g, b);
+}
+
+/**
+ * Update the LED matrix to mirror the 8×8 canvas.
+ * Only updates when:
+ *   - LED matrix is enabled
+ *   - Grid size is 8×8 (not 16×16)
+ *   - Canvas has changed since last update
+ */
+void updateLEDMatrix() {
+    // Only update in 8×8 mode (16×16 mode doesn't fit on 8×8 matrix)
+    if (!ledMatrixEnabled || currentGridSize != 8) {
+        // Turn off all LEDs if disabled or in 16×16 mode
+        FastLED.clear();
+        FastLED.show();
+        return;
+    }
+
+    // Mirror each canvas cell to the corresponding LED
+    for (uint8_t y = 0; y < 8; y++) {
+        for (uint8_t x = 0; x < 8; x++) {
+            uint8_t pixelValue = canvas[y][x];
+            uint8_t ledIndex = getLEDIndex(x, y);
+            bool isCursor = (x == cursorX && y == cursorY);
+
+            if (pixelValue == 0) {
+                // Empty cell: show dim white for cursor, black otherwise
+                leds[ledIndex] = isCursor ? CRGB(40, 40, 40) : CRGB::Black;
+            } else {
+                // Filled cell: use palette color (index 1-16)
+                uint16_t rgb565 = activeSketch.paletteColors[pixelValue - 1];
+                CRGB color = rgb565ToRGB888(rgb565);
+
+                // Brighten cursor position by adding white
+                if (isCursor) {
+                    color.r = min(255, color.r + 80);
+                    color.g = min(255, color.g + 80);
+                    color.b = min(255, color.b + 80);
+                }
+
+                leds[ledIndex] = color;
+            }
+        }
+    }
+
+    // Update the physical LEDs
+    FastLED.show();
+}
+
+/**
+ * Toggle LED matrix on/off with visual feedback.
+ * Shows brief status message on main display.
+ */
+void toggleLEDMatrix() {
+    ledMatrixEnabled = !ledMatrixEnabled;
+
+    // Save preference
+    preferences.begin("bitmap16dx", false);
+    preferences.putBool("ledEnabled", ledMatrixEnabled);
+    preferences.end();
+
+    // Visual feedback
+    if (ledMatrixEnabled) {
+        // Show a brief "DX" pattern to confirm hardware is working
+        // Pattern displays as a simple checkmark/confirmation graphic
+        FastLED.clear();
+
+        // Set brightness to 10% for startup pattern
+        FastLED.setBrightness((10 * 255) / 100);
+
+        // Define the "DX" pattern LEDs
+        // Pattern:  . X X .   X . X .
+        //           . X . X   . X . .
+        //           . X X .   X . X .
+        const int dxPattern[] = {9, 10, 17, 19, 25, 26, 36, 38, 45, 52, 54};
+        const int patternSize = 11;
+
+        // Light up the pattern with white
+        for (int i = 0; i < patternSize; i++) {
+            leds[dxPattern[i]] = CRGB::White;
+        }
+        FastLED.show();
+        delay(1000);  // Hold pattern for 1 second
+
+        // Restore user's brightness setting
+        FastLED.setBrightness((ledBrightness * 255) / 100);
+
+        // Turn on: immediately update LEDs with current canvas
+        LED_CANVAS_UPDATED();
+        updateLEDMatrix();
+    } else {
+        // Turn off: clear all LEDs
+        FastLED.clear();
+        FastLED.show();
+    }
+}
+
+/**
+ * Adjust LED matrix brightness.
+ * @param delta: +5 to increase, -5 to decrease
+ */
+void adjustLEDBrightness(int8_t delta) {
+    if (!ledMatrixEnabled) return;  // No-op if disabled
+
+    // Adjust brightness in 5% increments
+    int16_t newBrightness = ledBrightness + delta;
+
+    // Clamp to valid range
+    if (newBrightness < MIN_LED_BRIGHTNESS) {
+        newBrightness = MIN_LED_BRIGHTNESS;
+    } else if (newBrightness > MAX_LED_BRIGHTNESS) {
+        newBrightness = MAX_LED_BRIGHTNESS;
+    }
+
+    ledBrightness = (uint8_t)newBrightness;
+
+    // Apply new brightness (FastLED uses 0-255 scale)
+    FastLED.setBrightness((ledBrightness * 255) / 100);
+    FastLED.show();  // Refresh LEDs with new brightness
+
+    // Save preference
+    preferences.begin("bitmap16dx", false);
+    preferences.putUChar("ledBright", ledBrightness);
+    preferences.end();
+}
+#endif // ENABLE_LED_MATRIX
+
 // setup() runs once when the device boots
 void setup() {
   // Initialize the M5Cardputer hardware
@@ -3321,6 +3531,21 @@ void setup() {
   // displayBrightness is stored as percentage (10-100%), convert to hardware range (0-255)
   uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
   M5Cardputer.Display.setBrightness(hardwareBrightness);
+
+#if ENABLE_LED_MATRIX
+  // Initialize LED matrix (8×8 WS2812E RGB LEDs)
+  preferences.begin("bitmap16dx", true);  // Read-only
+  ledMatrixEnabled = preferences.getBool("ledEnabled", false);  // Default: OFF
+  ledBrightness = preferences.getUChar("ledBright", DEFAULT_LED_BRIGHTNESS);
+  preferences.end();
+
+  // Configure FastLED for WS2812 LEDs
+  // WS2812E uses GRB color order
+  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.setBrightness((ledBrightness * 255) / 100);
+  FastLED.clear();
+  FastLED.show();
+#endif // ENABLE_LED_MATRIX
 
   // Initialize palette system
   initStockPalettes();
@@ -3757,6 +3982,9 @@ void handlePaletteView(Keyboard_Class::KeysState& status) {
       for (int i = 0; i < 16; i++) {
         activeSketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
       }
+
+      // Update LED matrix with new palette colors
+      LED_CANVAS_UPDATED();
     }
 
     // Check for character keys
@@ -3951,6 +4179,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   if (M5Cardputer.BtnA.wasPressed()) {
     clearCanvas();
     canvasCleared = true;
+    LED_CANVAS_UPDATED();  // Update LED matrix
   }
 
   // Check if enter or delete are currently held
@@ -3967,12 +4196,14 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
         saveUndo();  // Save state before placing pixel
         canvas[cursorY][cursorX] = selectedColor;
         pixelPlaced = true;
+        LED_CANVAS_UPDATED();  // Update LED matrix
       }
       else if (status.del) {
         // Backspace/Delete key - erase pixel
         saveUndo();  // Save state before erasing
         canvas[cursorY][cursorX] = 0;
         pixelPlaced = true;
+        LED_CANVAS_UPDATED();  // Update LED matrix
       }
 
       // Check for non-arrow keys (number keys, commands, etc.)
@@ -4068,6 +4299,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           saveUndo();  // Save state before flood fill
           floodFill(cursorX, cursorY, selectedColor);
           floodFilled = true;  // Trigger full canvas redraw
+          LED_CANVAS_UPDATED();  // Update LED matrix
           setStatusMessage(StatusMsg::FILL);
           }
         // I key - Enter Hint Screen
@@ -4138,6 +4370,26 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           snprintf(brightnessMsg, sizeof(brightnessMsg), "BRIGHT: %d%%", displayBrightness);
           setStatusMessage(brightnessMsg);
         }
+#if ENABLE_LED_MATRIX
+        // L key + Enter - Toggle LED matrix on/off
+        else if ((i == 'l' || i == 'L') && status.enter) {
+          toggleLEDMatrix();
+          char ledMsg[30];
+          snprintf(ledMsg, sizeof(ledMsg), "LED: %s", ledMatrixEnabled ? "ON" : "OFF");
+          setStatusMessage(ledMsg);
+        }
+        // L key + Plus/Minus - LED matrix brightness control
+        // Hold L and press + to increase brightness
+        // Hold L and press - to decrease brightness
+        else if ((i == '+' || i == '=' || i == '-') && isLKeyHeld(status)) {
+          adjustLEDBrightness((i == '-') ? -5 : +5);
+
+          // Show LED matrix brightness level
+          char ledBrightMsg[30];
+          snprintf(ledBrightMsg, sizeof(ledBrightMsg), "LED: %d%%", ledBrightness);
+          setStatusMessage(ledBrightMsg);
+        }
+#endif // ENABLE_LED_MATRIX
         // Arrow keys - handle first press
         else if (i == ';' || i == '.' || i == ',' || i == '/') {
           lastKey = i;
@@ -4165,10 +4417,12 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           if (moved && enterHeld) {
             canvas[cursorY][cursorX] = selectedColor;
             pixelPlaced = true;
+            LED_CANVAS_UPDATED();  // Update LED matrix
               }
           else if (moved && deleteHeld) {
             canvas[cursorY][cursorX] = 0;
             pixelPlaced = true;
+            LED_CANVAS_UPDATED();  // Update LED matrix
               }
         }
       }
@@ -4223,16 +4477,23 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
       if (moved && enterHeld) {
         canvas[cursorY][cursorX] = selectedColor;
         pixelPlaced = true;
+        LED_CANVAS_UPDATED();  // Update LED matrix
       }
       else if (moved && deleteHeld) {
         canvas[cursorY][cursorX] = 0;
         pixelPlaced = true;
+        LED_CANVAS_UPDATED();  // Update LED matrix
       }
     }
   } else {
     // No arrow key held - reset repeat state
     lastKey = 0;
     keyRepeating = false;
+  }
+
+  // Update LED matrix when cursor moves (to highlight current position)
+  if (moved) {
+    LED_CANVAS_UPDATED();
   }
 
   // Redraw based on what changed
@@ -4345,6 +4606,14 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
       setStatusMessage(warningMsg);
     }
   }
+
+#if ENABLE_LED_MATRIX
+  // Update LED matrix if canvas has changed
+  if (canvasNeedsUpdate) {
+    updateLEDMatrix();
+    canvasNeedsUpdate = false;  // Clear flag
+  }
+#endif // ENABLE_LED_MATRIX
 
   // Small delay to prevent the loop from running too fast
   delay(10);
