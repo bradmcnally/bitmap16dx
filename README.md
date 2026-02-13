@@ -10,8 +10,9 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 - Undo last action
 - Save/open sketches from SD card
 - Built-in 16, 8, and 4-color palettes
-  - Switching palettes remaps your canvas to the new colors, you can always switch back to restore the original palette.
+  - Switching palettes remaps your canvas to the new colors, clamping the palette down to the new size, you can always switch back to restore the original palette.
 - Export `.png` files to `bitmap16dx/exports/` (128x128 or logical size)
+- **Optional:** External 8×8 LED matrix support (mirrors canvas in real-time)
 
 ![Drawing](img/photo_drawing.jpg)
 
@@ -36,6 +37,23 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 4. Access custom palettes in the Palette Menu
 
 *Supports 4, 8, or 16-color palettes. Maximum 32 total (12 built-in + 20 custom).*
+
+### Optional: LED Matrix Add-on
+
+BitMap16 DX supports an external 8×8 WS2812 RGB LED matrix that displays your canvas in real-time as you draw.
+
+**Hardware Setup:**
+1. Connect an 8×8 WS2812/WS2812E LED matrix to GPIO2 (Port A - Yellow wire)
+2. Use the INPUT port on devices like the M5Stack Puzzle Unit
+3. The matrix mirrors your 8×8 canvas with cursor highlighting
+4. Automatically turns off in 16×16 mode
+
+**Controls:**
+- `L` + `ok`/`enter` - Toggle LED matrix on/off
+- `L` + `+` - Increase brightness
+- `L` + `-` - Decrease brightness
+
+**Note:** This feature is optional and can be disabled by setting `#define ENABLE_LED_MATRIX 0` in `src/main.cpp` (line 56) to save ~9KB flash and 880 bytes RAM.
 
 ## How to Use
 
@@ -66,6 +84,8 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 | `O` | **O**pen Sketches Menu |
 | `V` | Open Pre**v**iew Mode |
 | `B` + `+/-` | Adjust **b**rightness |
+| `L` + `ok`/`enter` | Toggle **L**ED matrix on/off |
+| `L` + `+/-` | Adjust **L**ED matrix brightness |
 
 ### Palette Menu *(P)*
 
