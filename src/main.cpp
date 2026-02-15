@@ -19,7 +19,13 @@
  * - O to open Memory View (browse/load saved snapshots)
  * - I to open Controls/Help screen
  * - V to view canvas (128×128, centered)
- *   - In view mode: 1=black bg, 2=white bg, 3=gray bg
+ *   - In view mode: 1=black bg, 2=white bg, 3=gray bg, 4=dark gray bg
+ *   - In view mode: B + Plus/Minus to adjust brightness
+ *   - In Memory View: V opens gallery preview with navigation
+ *     - Left/Right arrows: navigate sketches
+ *     - Space: toggle auto-advance slideshow (3 sec interval)
+ *     - B + Plus/Minus: adjust brightness
+ *     - V or ESC: exit back to Memory View
  * - X to export PNG (128×128 scaled)
  * - Fn+X to export PNG (logical size: 8×8 or 16×16)
 #if ENABLE_SCREENSHOTS
@@ -363,6 +369,13 @@ bool helpViewFromMemoryView = false;  // Track if hint screen was opened from me
 // View mode state
 bool inPreviewView = false;
 uint8_t previewViewBackground = 0;  // 0=black, 1=white, 2=light gray, 3=dark gray
+
+// Gallery mode state (preview from Memory View with navigation)
+bool galleryMode = false;                   // Gallery browsing vs single sketch viewing
+int galleryCurrentIndex = 0;                // Current sketch in gallery (0-based index into sketchList)
+unsigned long galleryLastAdvanceTime = 0;   // Timer for auto-advance
+bool galleryAutoAdvance = false;            // Slideshow auto-advance active
+const unsigned long GALLERY_ADVANCE_INTERVAL = 3000;  // Auto-advance every 3 seconds
 
 // Palette menu state
 bool inPaletteView = false;
@@ -1491,6 +1504,7 @@ void drawCreateNewSketchThumbnail(int x, int y, int thumbSize);
 void drawSketchThumbnail(int sketchIndex, int x, int y, int thumbSize);
 void drawMemoryViewCursor(int itemIndex, int x, int y, int thumbSize);
 void updatePaletteFilter();
+void loadGallerySketch(int index);  // Load and display sketch in gallery preview mode
 
 #if ENABLE_JOYSTICK
 // Joystick support functions
@@ -1499,6 +1513,13 @@ bool handleJoystickMovement();
 bool isJoystickButtonPressed();
 bool joystickButtonJustPressed();
 void updateJoystickLED();
+#endif
+
+#if ENABLE_LED_MATRIX
+// LED matrix support functions
+void updateLEDMatrix(bool showCursor = true);
+void updateLEDMatrixFromSketch(Sketch& sketch);
+void toggleLEDMatrix();
 #endif
 
 // ============================================================================
@@ -1838,10 +1859,137 @@ void exitHelpView() {
 }
 
 /**
+ * Load and display a sketch from the gallery in fullscreen preview
+ * Uses lazy loading pattern from drawSketchThumbnail
+ */
+void loadGallerySketch(int index) {
+  if (index < 0 || index >= sketchList.size()) {
+    return;
+  }
+
+  SketchInfo& info = sketchList[index];
+
+  // Load data from SD if not already cached
+  if (!info.dataLoaded) {
+    String fullPath = "/bitmap16dx/sketches/" + info.filename;
+    File file = SD.open(fullPath.c_str(), FILE_READ);
+    if (!file) {
+      setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
+      return;
+    }
+
+    // Verify file size and detect format version
+    size_t fileSize = file.size();
+    uint8_t formatVersion = 1;
+
+    if (fileSize == SKETCH_FILE_SIZE_V2) {
+      // New format with version byte
+      formatVersion = file.read();
+      if (formatVersion != SKETCH_FORMAT_VERSION) {
+        file.close();
+        return;
+      }
+    } else if (fileSize == SKETCH_FILE_SIZE_V1) {
+      // Legacy format without version byte
+      formatVersion = 1;
+    } else {
+      // Invalid file size
+      file.close();
+      return;
+    }
+
+    // Read sketch data into cache
+    info.sketchData.gridSize = file.read();
+    info.sketchData.paletteSize = file.read();
+
+    for (int i = 0; i < 16; i++) {
+      uint8_t high = file.read();
+      uint8_t low = file.read();
+      info.sketchData.paletteColors[i] = (high << 8) | low;
+    }
+
+    for (int py = 0; py < 16; py++) {
+      for (int px = 0; px < 16; px++) {
+        info.sketchData.pixels[py][px] = file.read();
+      }
+    }
+
+    file.close();
+    info.dataLoaded = true;  // Mark as cached
+  }
+
+  // Now render the sketch fullscreen using preview rendering pattern
+  Sketch& sketch = info.sketchData;
+
+  // Get the background color
+  uint16_t bgColor;
+  switch (previewViewBackground) {
+    case 0: bgColor = VIEW_BG_BLACK; break;
+    case 1: bgColor = VIEW_BG_WHITE; break;
+    case 2: bgColor = VIEW_BG_GRAY; break;
+    case 3: bgColor = VIEW_BG_DARK; break;
+    default: bgColor = VIEW_BG_BLACK; break;
+  }
+
+  // Fill screen with background color
+  M5Cardputer.Display.fillScreen(bgColor);
+
+  // Calculate position to center 128×128 canvas on 240×135 screen
+  const int viewX = 56;
+  const int viewY = 4;
+  const int viewSize = 128;
+  const int viewCellSize = 128 / sketch.gridSize;  // 16px for 8×8, 8px for 16×16
+
+  // Draw each cell
+  for (int y = 0; y < sketch.gridSize; y++) {
+    for (int x = 0; x < sketch.gridSize; x++) {
+      int screenX = viewX + (x * viewCellSize);
+      int screenY = viewY + (y * viewCellSize);
+
+      // Get color for this cell
+      if (sketch.pixels[y][x] != 0) {
+        uint16_t cellColor = sketch.paletteColors[sketch.pixels[y][x] - 1];
+        M5Cardputer.Display.fillRect(screenX, screenY, viewCellSize, viewCellSize, cellColor);
+      }
+      // If empty (pixels[y][x] == 0), it stays the background color
+    }
+  }
+
+#if ENABLE_LED_MATRIX
+  // Update LED matrix to mirror the sketch (8×8 only)
+  updateLEDMatrixFromSketch(sketch);
+#endif
+}
+
+/**
  * Enter View Mode - display canvas at 128×128 with selected background
+ * Context-aware: detects if coming from Memory View for gallery mode
  */
 void enterPreviewView() {
   inPreviewView = true;
+
+  // Check if we're coming from Memory View (gallery mode)
+  if (inMemoryView) {
+    galleryMode = true;
+    galleryAutoAdvance = false;  // Start paused
+    inMemoryView = false;  // Clear Memory View flag so preview handler runs
+
+    // Start at selected sketch (memoryViewCursor - 1 because cursor 0 is "+")
+    if (memoryViewCursor > 0 && memoryViewCursor - 1 < sketchList.size()) {
+      galleryCurrentIndex = memoryViewCursor - 1;
+    } else {
+      galleryCurrentIndex = 0;  // Fallback to first sketch
+    }
+
+    galleryLastAdvanceTime = millis();
+
+    // Load and display sketch from gallery
+    loadGallerySketch(galleryCurrentIndex);
+    return;  // Exit early - loadGallerySketch handles rendering
+  }
+
+  // Canvas preview mode (not from Memory View)
+  galleryMode = false;
 
   // Get the background color based on current selection
   uint16_t bgColor;
@@ -1879,15 +2027,41 @@ void enterPreviewView() {
       // If empty (canvas[y][x] == 0), it stays the background color
     }
   }
+
+#if ENABLE_LED_MATRIX
+  // Update LED matrix to mirror the live canvas (8×8 only, no cursor)
+  updateLEDMatrix(false);
+#endif
 }
 
 /**
- * Exit View Mode and return to canvas
+ * Exit View Mode and return to canvas or Memory View
+ * Context-aware: returns to Memory View if in gallery mode
  */
 void exitPreviewView() {
   inPreviewView = false;
 
-  // Redraw the canvas view
+  if (galleryMode) {
+    // Return to Memory View at current gallery position
+    memoryViewCursor = galleryCurrentIndex + 1;  // +1 for "+" button offset
+    galleryMode = false;
+    galleryAutoAdvance = false;
+    inMemoryView = true;  // Re-enable Memory View so handler runs
+
+    // Redraw Memory View
+    M5Cardputer.Display.fillScreen(currentTheme->background);
+    drawMemoryView(true);
+
+#if ENABLE_LED_MATRIX
+    // Turn off LED matrix when returning to Memory View
+    FastLED.clear();
+    FastLED.show();
+#endif
+
+    return;  // Exit early
+  }
+
+  // Return to canvas view (existing behavior)
   M5Cardputer.Display.fillScreen(currentTheme->background);
   drawGrid();
   drawPalette();
@@ -1903,6 +2077,11 @@ void exitPreviewView() {
   lastBatteryPercent = -1;  // Force redraw
   batteryFirstCheck = true;  // Force immediate check
   drawBatteryIndicator();
+
+#if ENABLE_LED_MATRIX
+  // Restore canvas display on LED matrix
+  updateLEDMatrix();
+#endif
 }
 
 /**
@@ -3455,8 +3634,10 @@ CRGB rgb565ToRGB888(uint16_t rgb565) {
  *   - LED matrix is enabled
  *   - Grid size is 8×8 (not 16×16)
  *   - Canvas has changed since last update
+ *
+ * @param showCursor If true, highlights cursor position (default). If false, shows clean canvas.
  */
-void updateLEDMatrix() {
+void updateLEDMatrix(bool showCursor) {
     // Only update in 8×8 mode (16×16 mode doesn't fit on 8×8 matrix)
     if (!ledMatrixEnabled || currentGridSize != 8) {
         // Turn off all LEDs if disabled or in 16×16 mode
@@ -3470,7 +3651,7 @@ void updateLEDMatrix() {
         for (uint8_t x = 0; x < 8; x++) {
             uint8_t pixelValue = canvas[y][x];
             uint8_t ledIndex = getLEDIndex(x, y);
-            bool isCursor = (x == cursorX && y == cursorY);
+            bool isCursor = showCursor && (x == cursorX && y == cursorY);
 
             if (pixelValue == 0) {
                 // Empty cell: show dim white for cursor, black otherwise
@@ -3487,6 +3668,44 @@ void updateLEDMatrix() {
                     color.b = min(255, color.b + 80);
                 }
 
+                leds[ledIndex] = color;
+            }
+        }
+    }
+
+    // Update the physical LEDs
+    FastLED.show();
+}
+
+/**
+ * Update the LED matrix to display a sketch (for preview mode).
+ * Only updates when:
+ *   - LED matrix is enabled
+ *   - Sketch is 8×8 (not 16×16)
+ * Used for both canvas preview and gallery preview modes.
+ */
+void updateLEDMatrixFromSketch(Sketch& sketch) {
+    // Only update in 8×8 mode (16×16 mode doesn't fit on 8×8 matrix)
+    if (!ledMatrixEnabled || sketch.gridSize != 8) {
+        // Turn off all LEDs if disabled or in 16×16 mode
+        FastLED.clear();
+        FastLED.show();
+        return;
+    }
+
+    // Mirror each sketch cell to the corresponding LED
+    for (uint8_t y = 0; y < 8; y++) {
+        for (uint8_t x = 0; x < 8; x++) {
+            uint8_t pixelValue = sketch.pixels[y][x];
+            uint8_t ledIndex = getLEDIndex(x, y);
+
+            if (pixelValue == 0) {
+                // Empty cell: black (no cursor in preview mode)
+                leds[ledIndex] = CRGB::Black;
+            } else {
+                // Filled cell: use palette color (index 1-16)
+                uint16_t rgb565 = sketch.paletteColors[pixelValue - 1];
+                CRGB color = rgb565ToRGB888(rgb565);
                 leds[ledIndex] = color;
             }
         }
@@ -3941,6 +4160,17 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
         delay(200);  // Debounce
         return;  // Exit memory view loop to enter help view mode
       }
+      // V key - View selected sketch in gallery preview
+      else if (i == 'v' || i == 'V') {
+        if (sketchList.size() > 0) {
+          enterPreviewView();  // Will detect inMemoryView and set galleryMode
+          delay(200);
+          return;
+        } else {
+          setStatusMessage("No sketches to show");
+          delay(200);
+        }
+      }
 #if ENABLE_SCREENSHOTS
       // Y key - Take Screenshot
       else if (i == 'y' || i == 'Y') {
@@ -3994,7 +4224,21 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
  * Handle Preview View input and rendering
  */
 void handlePreviewView(Keyboard_Class::KeysState& status) {
-  // Handle preview view controls - ESC or V to exit, 1/2/3 to change background
+  // Auto-advance logic (ONLY in gallery mode)
+  if (galleryMode && galleryAutoAdvance) {
+    unsigned long now = millis();
+    if (now - galleryLastAdvanceTime >= GALLERY_ADVANCE_INTERVAL) {
+      // Advance to next sketch
+      galleryCurrentIndex++;
+      if (galleryCurrentIndex >= sketchList.size()) {
+        galleryCurrentIndex = 0;  // Wrap to start
+      }
+      galleryLastAdvanceTime = now;
+      loadGallerySketch(galleryCurrentIndex);  // Redraw with new sketch
+    }
+  }
+
+  // Handle preview view controls - ESC or V to exit, 1/2/3/4 to change background
   if (M5Cardputer.Keyboard.isPressed()) {
     // Check for character keys
     for (auto i : status.word) {
@@ -4004,35 +4248,137 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
         delay(200);  // Debounce
         return;
       }
+
+      // Gallery navigation (ONLY in gallery mode)
+      if (galleryMode) {
+        // Left arrow (,) - previous sketch
+        if (i == ',') {
+          galleryCurrentIndex--;
+          if (galleryCurrentIndex < 0) {
+            galleryCurrentIndex = sketchList.size() - 1;  // Wrap to end
+          }
+          galleryLastAdvanceTime = millis();  // Reset timer
+          loadGallerySketch(galleryCurrentIndex);
+          delay(150);
+        }
+        // Right arrow (/) - next sketch
+        else if (i == '/') {
+          galleryCurrentIndex++;
+          if (galleryCurrentIndex >= sketchList.size()) {
+            galleryCurrentIndex = 0;  // Wrap to start
+          }
+          galleryLastAdvanceTime = millis();  // Reset timer
+          loadGallerySketch(galleryCurrentIndex);
+          delay(150);
+        }
+        // Space - toggle auto-advance
+        else if (i == ' ') {
+          galleryAutoAdvance = !galleryAutoAdvance;
+          if (galleryAutoAdvance) {
+            galleryLastAdvanceTime = millis();
+          }
+          delay(200);
+        }
+      }
+
+      // Background changes (works in both modes)
       // 1 key - Black background
-      else if (i == '1') {
+      if (i == '1') {
         previewViewBackground = 0;
-        enterPreviewView();  // Redraw with new background
+        if (galleryMode) {
+          loadGallerySketch(galleryCurrentIndex);  // Redraw gallery sketch
+        } else {
+          enterPreviewView();  // Redraw canvas preview
+        }
         delay(150);  // Debounce
       }
       // 2 key - White background
       else if (i == '2') {
         previewViewBackground = 1;
-        enterPreviewView();  // Redraw with new background
+        if (galleryMode) {
+          loadGallerySketch(galleryCurrentIndex);
+        } else {
+          enterPreviewView();
+        }
         delay(150);  // Debounce
       }
       // 3 key - Light gray background
       else if (i == '3') {
         previewViewBackground = 2;
-        enterPreviewView();  // Redraw with new background
+        if (galleryMode) {
+          loadGallerySketch(galleryCurrentIndex);
+        } else {
+          enterPreviewView();
+        }
         delay(150);  // Debounce
       }
       // 4 key - Dark gray background
       else if (i == '4') {
         previewViewBackground = 3;
-        enterPreviewView();  // Redraw with new background
+        if (galleryMode) {
+          loadGallerySketch(galleryCurrentIndex);
+        } else {
+          enterPreviewView();
+        }
         delay(150);  // Debounce
+      }
+      // Brightness control - B key + Plus/Minus
+      // Hold B and press + to increase brightness
+      // Hold B and press - to decrease brightness
+      else if ((i == '+' || i == '=' || i == '-') && isBKeyHeld(status)) {
+        const int BRIGHTNESS_STEP = 10;  // Adjust brightness by 10% each press
+        const int MIN_BRIGHTNESS = 10;   // Minimum brightness (10%)
+        const int MAX_BRIGHTNESS = 100;  // Maximum brightness (100%)
+
+        if (i == '+' || i == '=') {
+          // Increase brightness by 10% (cap at 100%)
+          if (displayBrightness <= MAX_BRIGHTNESS - BRIGHTNESS_STEP) {
+            displayBrightness += BRIGHTNESS_STEP;
+          } else {
+            displayBrightness = MAX_BRIGHTNESS;
+          }
+        } else if (i == '-') {
+          // Decrease brightness by 10% (don't go below minimum)
+          if (displayBrightness > MIN_BRIGHTNESS + BRIGHTNESS_STEP) {
+            displayBrightness -= BRIGHTNESS_STEP;
+          } else {
+            displayBrightness = MIN_BRIGHTNESS;  // Keep minimum usable brightness
+          }
+        }
+
+        // Convert percentage (10-100) to hardware range (0-255)
+        uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
+
+        // Apply the new brightness setting to the display
+        M5Cardputer.Display.setBrightness(hardwareBrightness);
+
+        // Save brightness setting to preferences so it persists across reboots
+        preferences.begin("bitmap16dx", false);
+        preferences.putUChar("brightness", displayBrightness);
+        preferences.end();
+
+        // Show brightness level as clean percentage
+        char brightnessMsg[20];
+        snprintf(brightnessMsg, sizeof(brightnessMsg), "BRIGHT: %d%%", displayBrightness);
+        setStatusMessage(brightnessMsg);
+
+        // Redraw view to show status message
+        if (galleryMode) {
+          loadGallerySketch(galleryCurrentIndex);
+        } else {
+          enterPreviewView();  // Redraw preview
+        }
+        delay(150);
       }
 #if ENABLE_SCREENSHOTS
       // Y key - Take Screenshot
       else if (i == 'y' || i == 'Y') {
         takeScreenshot();
-        enterPreviewView();  // Redraw preview view after screenshot status message
+        if (galleryMode) {
+          loadGallerySketch(galleryCurrentIndex);
+        } else {
+          enterPreviewView();  // Redraw preview view after screenshot status message
+        }
       }
 #endif
     }
