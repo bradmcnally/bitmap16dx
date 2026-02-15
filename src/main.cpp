@@ -192,14 +192,14 @@ const ThemeColors THEME_LIGHT = {
 
 // Dark theme definition
 const ThemeColors THEME_DARK = {
-  0x2105,                    // background #202226
-  RGB565(0x9E, 0x9E, 0x9E),  // cellDark #9c9c9c
-  RGB565(0xBD, 0xBA, 0xBA),  // cellLight #bdbaba
-  RGB565(0x15, 0x17, 0x1A),  // shadow #15171A
+  RGB565(0x0e, 0x0e, 0x0e),  // background #0e0e0e
+  RGB565(0x17, 0x17, 0x17),  // cellDark #171717
+  RGB565(0x2c, 0x2c, 0x2c),  // cellLight #2c2c2c
+  RGB565(0x05, 0x05, 0x05),  // shadow #050505
   TFT_WHITE,                 // text #ffffff
-  0x2105,                    // centerLine (same as background)
+  RGB565(0x0e, 0x0e, 0x0e),  // centerLine (same as background)
   TFT_BLACK,                 // iconDark #000000
-  RGB565(0xEE, 0xEF, 0xF4)   // iconLight #EEEFF4
+  RGB565(0xD3, 0xD3, 0xDD)   // iconLight #d3d3dd
 };
 
 // Active theme pointer (default to light)
@@ -2173,8 +2173,8 @@ inline uint16_t getCartridgeColor(uint16_t originalColor) {
     // Map light theme colors to dark theme
     const uint16_t LIGHT_BG = RGB565(0xD3, 0xD3, 0xDD);    // #d3d3dd
     const uint16_t LIGHT_SHADOW = RGB565(0xC1, 0xC4, 0xD6); // #c1c4d6
-    const uint16_t DARK_BG = 0x2105;                        // #202226
-    const uint16_t DARK_SHADOW = RGB565(0x15, 0x17, 0x1A);  // #15171A
+    const uint16_t DARK_BG = RGB565(0x0e, 0x0e, 0x0e);      // #0e0e0e
+    const uint16_t DARK_SHADOW = TFT_BLACK;                 // #000000
 
     if (originalColor == LIGHT_BG || originalColor == RGB565(0xD6, 0x9B, 0x00)) { // 0xD69B
       return DARK_BG;
@@ -2657,19 +2657,11 @@ void drawCell(int x, int y, bool isSelected = false) {
 
     // Apply tint if this is the selected cell
     if (isSelected) {
-      if (currentTheme == &THEME_DARK) {
-        // In dark mode, darken the cell (but less than light mode)
-        uint8_t r = ((cellColor >> 11) & 0x1F) * 0.7;
-        uint8_t g = ((cellColor >> 5) & 0x3F) * 0.7;
-        uint8_t b = (cellColor & 0x1F) * 0.7;
-        cellColor = (r << 11) | (g << 5) | b;
-      } else {
-        // In light mode, darken the cell more
-        uint8_t r = ((cellColor >> 11) & 0x1F) * 0.8;
-        uint8_t g = ((cellColor >> 5) & 0x3F) * 0.8;
-        uint8_t b = (cellColor & 0x1F) * 0.8;
-        cellColor = (r << 11) | (g << 5) | b;
-      }
+      // Darken the cell in both themes
+      uint8_t r = ((cellColor >> 11) & 0x1F) * 0.8;
+      uint8_t g = ((cellColor >> 5) & 0x3F) * 0.8;
+      uint8_t b = (cellColor & 0x1F) * 0.8;
+      cellColor = (r << 11) | (g << 5) | b;
     }
 
     M5Cardputer.Display.fillRect(screenX, screenY, currentCellSize, currentCellSize, cellColor);
@@ -2688,13 +2680,16 @@ void drawCell(int x, int y, bool isSelected = false) {
         // Apply tint if this is the selected cell
         if (isSelected) {
           if (currentTheme == &THEME_DARK) {
-            // In dark mode, darken the cell (but less than light mode)
-            uint8_t r = ((color >> 11) & 0x1F) * 0.7;
-            uint8_t g = ((color >> 5) & 0x3F) * 0.7;
-            uint8_t b = (color & 0x1F) * 0.7;
+            // In dark mode, darken each square differently to maintain checkerboard visibility
+            // Dark squares: darken less (0.5) - already very dark, don't over-darken
+            // Light squares: darken more (0.3) - bring them closer to dark squares
+            float multiplier = isDark ? 0.4 : 0.2;
+            uint8_t r = ((color >> 11) & 0x1F) * multiplier;
+            uint8_t g = ((color >> 5) & 0x3F) * multiplier;
+            uint8_t b = (color & 0x1F) * multiplier;
             color = (r << 11) | (g << 5) | b;
           } else {
-            // In light mode, darken the cell more
+            // In light mode, darken the cell uniformly
             uint8_t r = ((color >> 11) & 0x1F) * 0.8;
             uint8_t g = ((color >> 5) & 0x3F) * 0.8;
             uint8_t b = (color & 0x1F) * 0.8;
@@ -2772,6 +2767,22 @@ void drawCursor() {
       for (int x = startCellX; x <= endCellX && x < currentGridSize; x++) {
         drawCell(x, y);
       }
+    }
+
+    // Redraw shadow edges if cursor overlapped them (shadow extends 2px beyond grid)
+    // Right edge shadow: from GRID_X+128 to GRID_X+130
+    if (oldCursorEndX > GRID_X + 128) {
+      M5Cardputer.Display.fillRect(GRID_X + 128, GRID_Y + 2, 2, 128, currentTheme->shadow);
+    }
+    // Bottom edge shadow: from GRID_Y+128 to GRID_Y+130
+    if (oldCursorEndY > GRID_Y + 128) {
+      M5Cardputer.Display.fillRect(GRID_X + 2, GRID_Y + 128, 128, 2, currentTheme->shadow);
+    }
+    // Restore corner cuts if we redrew shadow
+    if (oldCursorEndX > GRID_X + 128 || oldCursorEndY > GRID_Y + 128) {
+      M5Cardputer.Display.fillRect(GRID_X + 128, GRID_Y + 2, 2, 2, currentTheme->background);  // Shadow's TR cut
+      M5Cardputer.Display.fillRect(GRID_X + 2, GRID_Y + 128, 2, 2, currentTheme->background);  // Shadow's BL cut
+      M5Cardputer.Display.fillRect(GRID_X + 128, GRID_Y + 128, 2, 2, currentTheme->background); // Shadow's BR cut
     }
   }
 
