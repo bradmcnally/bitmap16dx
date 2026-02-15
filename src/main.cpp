@@ -4268,7 +4268,7 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
           if (galleryCurrentIndex < 0) {
             galleryCurrentIndex = sketchList.size() - 1;  // Wrap to end
           }
-          galleryLastAdvanceTime = millis();  // Reset timer
+          galleryAutoAdvance = false;  // Pause autoplay on manual navigation
           loadGallerySketch(galleryCurrentIndex);
           delay(150);
         }
@@ -4278,7 +4278,7 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
           if (galleryCurrentIndex >= sketchList.size()) {
             galleryCurrentIndex = 0;  // Wrap to start
           }
-          galleryLastAdvanceTime = millis();  // Reset timer
+          galleryAutoAdvance = false;  // Pause autoplay on manual navigation
           loadGallerySketch(galleryCurrentIndex);
           delay(150);
         }
