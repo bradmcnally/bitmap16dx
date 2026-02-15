@@ -66,6 +66,15 @@ Preferences preferences;
   #define LED_CANVAS_UPDATED() ((void)0)
 #endif
 
+// Enable M5Unit-Joystick2 support (optional I2C accessory)
+// Set to 0 to disable joystick features and save memory (~10KB flash, 60 bytes RAM)
+#define ENABLE_JOYSTICK 1  // Set to 0 to disable
+
+#if ENABLE_JOYSTICK
+  #include <Wire.h>
+  #include <m5_unit_joystick2.hpp>
+#endif
+
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
@@ -252,6 +261,45 @@ bool ledMatrixEnabled = false;        // User must explicitly enable
 uint8_t ledBrightness = DEFAULT_LED_BRIGHTNESS;  // 5-20%
 bool canvasNeedsUpdate = false;       // Flag to trigger LED update
 #endif // ENABLE_LED_MATRIX
+
+#if ENABLE_JOYSTICK
+// ============================================================================
+// M5UNIT-JOYSTICK2 SUPPORT (Optional I2C Accessory)
+// ============================================================================
+
+// Hardware connection: Port B (NOT Port A - GPIO2 is used by LED matrix)
+// Recommended GPIO pins: SDA=GPIO13, SCL=GPIO15 (Port B on M5Cardputer ADV)
+#define JOYSTICK_SDA 13
+#define JOYSTICK_SCL 15
+#define JOYSTICK_I2C_ADDR 0x63
+
+M5UnitJoystick2 joystick;
+bool joystickEnabled = false;        // User preference (persistent via NVS)
+bool joystickConnected = false;      // Hardware detection status
+unsigned long lastJoystickCheck = 0; // For periodic connection checks (60s)
+
+// Joystick state
+int8_t joystickX = 0;                // Raw offset (-128 to 127)
+int8_t joystickY = 0;                // Raw offset (-128 to 127)
+bool joystickButton = false;         // Button state (true=pressed)
+bool lastJoystickButton = false;     // Previous button state (for edge detection)
+bool joystickButtonPressedThisFrame = false;  // Flag to prevent double-draw in same frame
+
+// Movement timing for repeat behavior (matches keyboard timing)
+unsigned long lastJoystickMoveTime = 0;
+bool joystickRepeating = false;
+int8_t lastJoystickDir = 0;          // 0=none, 1=up, 2=down, 3=left, 4=right
+
+// Calibration and sensitivity
+const int8_t JOYSTICK_DEADZONE = 15;      // Ignore movements < 15
+const int8_t JOYSTICK_THRESHOLD = 40;     // Movement required for direction
+const unsigned long JOYSTICK_REPEAT_DELAY = 300;  // Match keyboard delay
+const unsigned long JOYSTICK_REPEAT_RATE = 100;   // Match keyboard rate
+
+// LED feedback
+bool joystickLEDNeedsUpdate = false;
+
+#endif // ENABLE_JOYSTICK
 
 // Undo state - stores a single previous canvas state
 uint8_t undoCanvas[16][16] = {0};
@@ -1443,6 +1491,15 @@ void drawCreateNewSketchThumbnail(int x, int y, int thumbSize);
 void drawSketchThumbnail(int sketchIndex, int x, int y, int thumbSize);
 void drawMemoryViewCursor(int itemIndex, int x, int y, int thumbSize);
 void updatePaletteFilter();
+
+#if ENABLE_JOYSTICK
+// Joystick support functions
+void updateJoystickState();
+bool handleJoystickMovement();
+bool isJoystickButtonPressed();
+bool joystickButtonJustPressed();
+void updateJoystickLED();
+#endif
 
 // ============================================================================
 // CANVAS OPERATIONS
@@ -3116,6 +3173,28 @@ void drawHelpView() {
   M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
   M5Cardputer.Display.print("Clear: G0");
   currentLine++;
+
+  // Space between sections
+  currentLine++;
+
+  // Joystick section (bottom of screen)
+  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
+  M5Cardputer.Display.print("JOYSTICK");
+  currentLine++;
+
+#if ENABLE_JOYSTICK
+  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
+  M5Cardputer.Display.print("J: ");
+  M5Cardputer.Display.print(joystickEnabled ? "[ON]" : "[OFF]");
+  if (joystickEnabled) {
+    M5Cardputer.Display.print(joystickConnected ? " (OK)" : " (-)");
+  }
+  currentLine++;
+#else
+  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
+  M5Cardputer.Display.print("Feature disabled");
+  currentLine++;
+#endif
 }
 
 /**
@@ -3547,6 +3626,29 @@ void setup() {
   FastLED.show();
 #endif // ENABLE_LED_MATRIX
 
+#if ENABLE_JOYSTICK
+  // ============================================================================
+  // JOYSTICK INITIALIZATION (Optional)
+  // ============================================================================
+
+  // Load joystick preference
+  preferences.begin("bitmap16dx", true);  // Read-only
+  joystickEnabled = preferences.getBool("joystickEn", false);
+  preferences.end();
+
+  // Initialize I2C and test connection
+  if (joystickEnabled) {
+    Wire.begin(JOYSTICK_SDA, JOYSTICK_SCL);
+    Wire.setClock(100000);  // 100kHz standard mode
+    joystickConnected = joystick.begin(&Wire, JOYSTICK_I2C_ADDR, JOYSTICK_SDA, JOYSTICK_SCL);
+    lastJoystickCheck = millis();
+
+    if (joystickConnected) {
+      updateJoystickLED();  // Sync LED with current color
+    }
+  }
+#endif // ENABLE_JOYSTICK
+
   // Initialize palette system
   initStockPalettes();
 
@@ -3627,6 +3729,32 @@ void handleHelpView(Keyboard_Class::KeysState& status) {
       else if (i == 'y' || i == 'Y') {
         takeScreenshot();
         enterHelpView();  // Redraw help view after screenshot status message
+      }
+#endif
+#if ENABLE_JOYSTICK
+      // J key - Toggle joystick support
+      else if (i == 'j' || i == 'J') {
+        joystickEnabled = !joystickEnabled;
+
+        // Save preference
+        preferences.begin("bitmap16dx", false);
+        preferences.putBool("joystickEn", joystickEnabled);
+        preferences.end();
+
+        // Initialize or disconnect
+        if (joystickEnabled) {
+          Wire.begin(JOYSTICK_SDA, JOYSTICK_SCL);
+          Wire.setClock(100000);
+          joystickConnected = joystick.begin(&Wire, JOYSTICK_I2C_ADDR, JOYSTICK_SDA, JOYSTICK_SCL);
+          lastJoystickCheck = millis();
+          if (joystickConnected) {
+            updateJoystickLED();
+          }
+        } else {
+          joystickConnected = false;
+        }
+
+        drawHelpView();
       }
 #endif
     }
@@ -4110,10 +4238,134 @@ void handlePaletteView(Keyboard_Class::KeysState& status) {
  */
 void handleCanvasView(Keyboard_Class::KeysState& status);
 
+#if ENABLE_JOYSTICK
+// ============================================================================
+// JOYSTICK SUPPORT FUNCTIONS
+// ============================================================================
+
+/**
+ * Poll M5Unit-Joystick2 and update state
+ * Called once per frame in loop()
+ */
+void updateJoystickState() {
+    if (!joystickEnabled) return;
+
+    // Periodic connection check (every 60 seconds)
+    unsigned long now = millis();
+    if (now - lastJoystickCheck > 60000) {
+        lastJoystickCheck = now;
+        joystickConnected = (joystick.begin(&Wire, JOYSTICK_I2C_ADDR, JOYSTICK_SDA, JOYSTICK_SCL));
+    }
+
+    if (!joystickConnected) return;
+
+    // Save previous button state for edge detection
+    lastJoystickButton = joystickButton;
+
+    // Read raw values (-128 to 127, centered at 0)
+    joystickX = joystick.get_joy_adc_8bits_offset_value_x();
+    joystickY = joystick.get_joy_adc_8bits_offset_value_y();
+    joystickButton = (joystick.get_button_value() == 0);  // 0=pressed
+
+    // Apply deadzone filter
+    if (abs(joystickX) < JOYSTICK_DEADZONE) joystickX = 0;
+    if (abs(joystickY) < JOYSTICK_DEADZONE) joystickY = 0;
+}
+
+/**
+ * Process joystick movement with key-repeat behavior
+ * Returns true if cursor moved
+ */
+bool handleJoystickMovement() {
+    if (!joystickEnabled || !joystickConnected) return false;
+
+    bool moved = false;
+    unsigned long now = millis();
+    int8_t currentDir = 0;
+
+    // Determine direction based on threshold
+    if (joystickY < -JOYSTICK_THRESHOLD) currentDir = 1;      // Up
+    else if (joystickY > JOYSTICK_THRESHOLD) currentDir = 2;  // Down
+    else if (joystickX < -JOYSTICK_THRESHOLD) currentDir = 3; // Left
+    else if (joystickX > JOYSTICK_THRESHOLD) currentDir = 4;  // Right
+
+    // No movement
+    if (currentDir == 0) {
+        lastJoystickDir = 0;
+        joystickRepeating = false;
+        return false;
+    }
+
+    // New direction or repeat timing reached
+    if (currentDir != lastJoystickDir) {
+        lastJoystickDir = currentDir;
+        lastJoystickMoveTime = now;
+        joystickRepeating = false;
+        moved = true;
+    } else {
+        unsigned long threshold = joystickRepeating ? JOYSTICK_REPEAT_RATE : JOYSTICK_REPEAT_DELAY;
+        if (now - lastJoystickMoveTime >= threshold) {
+            joystickRepeating = true;
+            lastJoystickMoveTime = now;
+            moved = true;
+        }
+    }
+
+    // Apply movement
+    if (moved) {
+        switch (currentDir) {
+            case 1: if (cursorY > 0) cursorY--; break;                      // Up
+            case 2: if (cursorY < currentGridSize - 1) cursorY++; break;    // Down
+            case 3: if (cursorX > 0) cursorX--; break;                      // Left
+            case 4: if (cursorX < currentGridSize - 1) cursorX++; break;    // Right
+        }
+    }
+
+    return moved;
+}
+
+/**
+ * Check if joystick button is pressed
+ */
+bool isJoystickButtonPressed() {
+    return (joystickEnabled && joystickConnected && joystickButton);
+}
+
+/**
+ * Check if joystick button was just pressed (rising edge detection)
+ */
+bool joystickButtonJustPressed() {
+    return (joystickEnabled && joystickConnected && joystickButton && !lastJoystickButton);
+}
+
+/**
+ * Update joystick RGB LED to show current drawing color
+ */
+void updateJoystickLED() {
+    if (!joystickEnabled || !joystickConnected) return;
+
+    // Get current palette color
+    uint16_t rgb565 = activeSketch.paletteColors[selectedColor - 1];
+
+    // Convert RGB565 to RGB888
+    uint8_t r = ((rgb565 >> 11) & 0x1F) << 3;
+    uint8_t g = ((rgb565 >> 5) & 0x3F) << 2;
+    uint8_t b = (rgb565 & 0x1F) << 3;
+
+    // Send to joystick
+    joystick.set_rgb_color((r << 16) | (g << 8) | b);
+}
+#endif // ENABLE_JOYSTICK
+
 // loop() runs over and over again forever
 void loop() {
   // Update the M5 hardware state (this checks for keyboard input)
   M5Cardputer.update();
+
+#if ENABLE_JOYSTICK
+  // Poll joystick hardware (if enabled)
+  updateJoystickState();
+#endif
 
   // Get current keyboard state
   Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
@@ -4186,6 +4438,11 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   enterHeld = status.enter;
   deleteHeld = status.del;
 
+#if ENABLE_JOYSTICK
+  // Merge joystick button with Enter key
+  enterHeld = enterHeld || isJoystickButtonPressed();
+#endif
+
   // Check if any key was pressed (for non-repeating actions)
   if (M5Cardputer.Keyboard.isChange()) {
     if (M5Cardputer.Keyboard.isPressed()) {
@@ -4220,6 +4477,9 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           if (newColor <= activeSketch.paletteSize && selectedColor != newColor) {
             selectedColor = newColor;
             colorChanged = true;
+#if ENABLE_JOYSTICK
+            joystickLEDNeedsUpdate = true;
+#endif
             char colorMsg[20];
             snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
             setStatusMessage(colorMsg);
@@ -4232,6 +4492,9 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
             selectedColor = 1;  // Loop back to first color
           }
           colorChanged = true;
+#if ENABLE_JOYSTICK
+          joystickLEDNeedsUpdate = true;
+#endif
           char colorMsg[20];
           snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
           setStatusMessage(colorMsg);
@@ -4429,6 +4692,18 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
     }
   }
 
+#if ENABLE_JOYSTICK
+  // Handle joystick button press (similar to Enter key)
+  joystickButtonPressedThisFrame = false;  // Reset flag each frame
+  if (joystickButtonJustPressed()) {
+    saveUndo();  // Save state before placing pixel
+    canvas[cursorY][cursorX] = selectedColor;
+    pixelPlaced = true;
+    LED_CANVAS_UPDATED();  // Update LED matrix
+    joystickButtonPressedThisFrame = true;  // Mark that button was just pressed
+  }
+#endif
+
   // Handle key repeat for arrow keys when held
   // Check if an arrow key is currently being held
   bool arrowKeyHeld = false;
@@ -4490,6 +4765,26 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
     lastKey = 0;
     keyRepeating = false;
   }
+
+#if ENABLE_JOYSTICK
+  // Process joystick movement (uses same repeat timing as keyboard)
+  if (handleJoystickMovement()) {
+      moved = true;
+
+      // Support draw-while-moving with joystick button
+      // Skip if button was just pressed this frame (to avoid double-draw)
+      if (enterHeld && moved && !joystickButtonPressedThisFrame) {
+          canvas[cursorY][cursorX] = selectedColor;
+          pixelPlaced = true;
+          LED_CANVAS_UPDATED();
+      }
+      else if (deleteHeld && moved) {
+          canvas[cursorY][cursorX] = 0;
+          pixelPlaced = true;
+          LED_CANVAS_UPDATED();
+      }
+  }
+#endif
 
   // Update LED matrix when cursor moves (to highlight current position)
   if (moved) {
@@ -4614,6 +4909,14 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
     canvasNeedsUpdate = false;  // Clear flag
   }
 #endif // ENABLE_LED_MATRIX
+
+#if ENABLE_JOYSTICK
+  // Update joystick LED if color has changed
+  if (joystickLEDNeedsUpdate) {
+    updateJoystickLED();
+    joystickLEDNeedsUpdate = false;
+  }
+#endif // ENABLE_JOYSTICK
 
   // Small delay to prevent the loop from running too fast
   delay(10);
