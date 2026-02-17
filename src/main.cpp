@@ -63,7 +63,7 @@ Preferences preferences;
 
 // Enable external 8×8 WS2812 LED matrix support
 // Set to 0 to disable LED matrix features and save memory (~9KB flash, 880 bytes RAM)
-#define ENABLE_LED_MATRIX 1  // Set to 0 to disable
+#define ENABLE_LED_MATRIX 0  // Set to 0 to disable
 
 // Macro for LED matrix canvas updates (no-op when feature disabled)
 #if ENABLE_LED_MATRIX
@@ -3364,15 +3364,20 @@ void drawHelpView() {
   M5Cardputer.Display.print("Clear: G0");
   currentLine++;
 
+#if ENABLE_JOYSTICK
+  // === JOYSTICK SECTION (Optional Hardware Feature) ===
+  // Only shown when ENABLE_JOYSTICK is enabled in feature flags.
+  // When disabled, this entire section is omitted from the hint screen.
+
   // Space between sections
   currentLine++;
 
-  // Joystick section (bottom of screen)
+  // Joystick section header
   M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
   M5Cardputer.Display.print("JOYSTICK");
   currentLine++;
 
-#if ENABLE_JOYSTICK
+  // Joystick status and toggle hint (J key)
   M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
   M5Cardputer.Display.print("J: ");
   M5Cardputer.Display.print(joystickEnabled ? "[ON]" : "[OFF]");
@@ -3380,11 +3385,7 @@ void drawHelpView() {
     M5Cardputer.Display.print(joystickConnected ? " (OK)" : " (-)");
   }
   currentLine++;
-#else
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Feature disabled");
-  currentLine++;
-#endif
+#endif // ENABLE_JOYSTICK
 }
 
 /**
