@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - v0.5.0
+ * BitMap16 DX - v0.6.0
  *
  * Working pixel sketch station for Cardputer ADV!
  *
@@ -85,6 +85,9 @@ Preferences preferences;
 // CONFIGURATION
 // ============================================================================
 
+
+// Firmware version displayed on boot screen
+const char* FIRMWARE_VERSION = "v0.6.0";
 
 // File format version for sketch files
 // Version 1: gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 290 bytes
@@ -3439,6 +3442,12 @@ void showBootScreen() {
     }
     free(lineBuffer);
   }
+
+  // Display version number in lower left corner
+  M5Cardputer.Display.setTextColor(TFT_WHITE);
+  M5Cardputer.Display.setTextSize(1);
+  M5Cardputer.Display.setCursor(4, 135 - 12);  // 4px from left, 12px from bottom
+  M5Cardputer.Display.print(FIRMWARE_VERSION);
 
   // Wait for ESC key (`) press to continue, or timeout after 5 seconds
   bool waiting = true;
