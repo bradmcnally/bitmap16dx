@@ -3,6 +3,7 @@
 BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channeling the vibe of 2000s handheld gaming consoles.
 
 ![Logo](img/bitmap16dx.png)![Drawing](img/drawing.png)
+![Dark mode drawing](img/drawingdark.png)
 
 ## Features
 - 8×8 and 16×16 canvas modes
@@ -12,7 +13,7 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 - Built-in 16, 8, and 4-color palettes
   - Switching palettes remaps your canvas to the new colors, clamping the palette down to the new size, you can always switch back to restore the original palette.
 - Export `.png` files to `bitmap16dx/exports/` (128x128 or logical size)
-- **Optional:** External 8×8 LED matrix support (mirrors canvas in real-time)
+- Dark mode!
 
 ![Drawing](img/photo_drawing.jpg)
 
@@ -38,28 +39,11 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 
 *Supports 4, 8, or 16-color palettes. Maximum 32 total (12 built-in + 20 custom).*
 
-### Optional: LED Matrix Add-on
-
-BitMap16 DX supports an external 8×8 WS2812 RGB LED matrix that displays your canvas in real-time as you draw.
-
-**Hardware Setup:**
-1. Connect an 8×8 WS2812/WS2812E LED matrix to GPIO2 (Port A - Yellow wire)
-2. Use the INPUT port on devices like the M5Stack Puzzle Unit
-3. The matrix mirrors your 8×8 canvas with cursor highlighting
-4. Automatically turns off in 16×16 mode
-
-**Controls:**
-- `L` + `ok`/`enter` - Toggle LED matrix on/off
-- `L` + `+` - Increase brightness
-- `L` + `-` - Decrease brightness
-
-**Note:** This feature is optional and can be disabled by setting `#define ENABLE_LED_MATRIX 0` in `src/main.cpp` (line 56) to save ~9KB flash and 880 bytes RAM.
-
 ## How to Use
 
 ### Drawing Mode
 
-![Drawing Interface Link](img/drawing_link.png)
+![Drawing Interface Link](img/drawing_link.png)![Drawing Interface pattern](img/artdark.png)
 
 | Key | Function |
 |-----|----------|
@@ -84,8 +68,16 @@ BitMap16 DX supports an external 8×8 WS2812 RGB LED matrix that displays your c
 | `O` | **O**pen Sketches Menu |
 | `V` | Open Pre**v**iew Mode |
 | `B` + `+/-` | Adjust **b**rightness |
-| `L` + `ok`/`enter` | Toggle **L**ED matrix on/off |
-| `L` + `+/-` | Adjust **L**ED matrix brightness |
+
+### Preview *(V)*
+
+| Key | Function |
+|-----|----------|
+| `1` | Black background |
+| `2` | White background |
+| `3` | Light gray background |
+| `4` | Dark gray background |
+| `esc` | Dismiss |
 
 ### Palette Menu *(P)*
 
@@ -108,19 +100,25 @@ BitMap16 DX supports an external 8×8 WS2812 RGB LED matrix that displays your c
 |-----|----------|
 | Arrow keys (`↑` `←` `↓` `→`) | Navigate sketch grid |
 | `ok`/`enter` | Load selected sketch |
+| `V` | Open slideshow **v**iew |
 | `esc` | Dismiss |
 | `g0` button | Delete focused sketch |
 | `z`  | undo |
 
-### Preview Mode *(V)*
+### Slideshow View *(V from Sketches Menu)*
+
+View your saved sketches in fullscreen with optional auto-advance.
 
 | Key | Function |
 |-----|----------|
+| `←`/`→` | Navigate previous/next sketch |
+| `space` | Toggle auto-advance (3 second intervals) |
 | `1` | Black background |
 | `2` | White background |
 | `3` | Light gray background |
 | `4` | Dark gray background |
-| `esc` | Dismiss |
+| `B` + `+/-` | Adjust **b**rightness |
+| `esc` | Return to Sketches |
 
 ### Project Structure
 
