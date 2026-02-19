@@ -14,6 +14,7 @@
  * - Hold Backspace + Arrow keys to erase lines
  * - G to toggle between 8×8 and 16×16 grid
  * - Z to undo last action
+ * - Shake device to undo (IMU gesture)
  * - S to save current canvas as snapshot
  * - Fn+S to save as new sketch
  * - O to open Memory View (browse/load saved snapshots)
@@ -74,7 +75,7 @@ Preferences preferences;
 
 // Enable M5Unit-Joystick2 support (optional I2C accessory)
 // Set to 0 to disable joystick features and save memory (~10KB flash, 60 bytes RAM)
-#define ENABLE_JOYSTICK 1  // Set to 0 to disable
+#define ENABLE_JOYSTICK 0  // Set to 0 to disable
 
 #if ENABLE_JOYSTICK
   #include <Wire.h>
@@ -318,6 +319,18 @@ bool undoAvailable = false;
 uint8_t undoPaletteSize = 0;
 uint16_t undoPaletteColors[16] = {0};
 uint8_t undoGridSize = 0;
+
+// ============================================================================
+// SHAKE DETECTION (IMU-based undo)
+// ============================================================================
+// Shake detection state for gesture-based undo
+// Uses the BMI270 accelerometer to detect shake gestures
+unsigned long lastShakeTime = 0;        // When last shake was detected (for debouncing)
+const float SHAKE_THRESHOLD = 6.0f;     // Acceleration threshold in G-forces
+                                        // 6.0G requires very firm deliberate shake
+                                        // prevents accidental triggers
+const unsigned long SHAKE_COOLDOWN = 500;  // Debounce time in milliseconds
+                                           // Prevents accidental double-triggers
 
 // ============================================================================
 // SKETCH SYSTEM
@@ -3826,6 +3839,10 @@ void setup() {
 
   M5Cardputer.begin(cfg);
 
+  // Initialize the IMU (accelerometer/gyro sensor)
+  // This is required for shake detection to work
+  M5.Imu.begin();
+
   // Detect which Cardputer model is running
   // This helps with debugging and user support
   auto boardType = M5.getBoard();
@@ -3899,7 +3916,6 @@ void setup() {
 
   // Show boot screen with logo
   showBootScreen();
-
 
   // Create off-screen buffer for palette menu (eliminates screen tearing)
   // Size: 240×135 pixels (full screen for easy coordinate mapping)
@@ -4724,15 +4740,111 @@ void updateJoystickLED() {
 }
 #endif // ENABLE_JOYSTICK
 
+// ============================================================================
+// SHAKE DETECTION
+// ============================================================================
+
+/**
+ * Detect shake gesture using IMU accelerometer
+ *
+ * Reads accelerometer data from the BMI270 sensor and calculates total
+ * acceleration magnitude. A shake is detected when acceleration exceeds
+ * the threshold and the cooldown period has elapsed.
+ *
+ * How it works:
+ * 1. Get IMU data (x, y, z acceleration in G-forces)
+ * 2. Calculate magnitude using: sqrt(x² + y² + z²)
+ * 3. Check if magnitude exceeds threshold (2.5G)
+ * 4. Ensure cooldown period has passed (500ms)
+ * 5. Return true if shake detected
+ *
+ * The threshold of 2.5G is calibrated to:
+ * - Be intentional (won't trigger from gentle movements)
+ * - Not be exhausting (doesn't require violent shaking)
+ * - Feel natural for a handheld device
+ *
+ * @return true if shake gesture detected, false otherwise
+ */
+bool detectShakeGesture() {
+  // Check if IMU is available (some Cardputer models don't have it)
+  if (!M5.Imu.isEnabled()) {
+    return false;
+  }
+
+  // Check cooldown timer (prevent double-triggers)
+  unsigned long currentTime = millis();
+  if (currentTime - lastShakeTime < SHAKE_COOLDOWN) {
+    return false;
+  }
+
+  // Update IMU sensor data
+  M5.Imu.update();
+
+  // Get IMU data from the BMI270 accelerometer
+  // The sensor provides acceleration in G-forces (1G = 9.8 m/s²)
+  // When device is stationary, magnitude ≈ 1G (gravity)
+  auto imuData = M5.Imu.getImuData();
+
+  // Calculate total acceleration magnitude
+  // Formula: magnitude = sqrt(x² + y² + z²)
+  // This gives us the total acceleration in all directions
+  float accelX = imuData.accel.x;
+  float accelY = imuData.accel.y;
+  float accelZ = imuData.accel.z;
+
+  float magnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
+
+  // Detect shake when acceleration exceeds our threshold
+  // A shake produces sudden, high acceleration (> 2.5G)
+  if (magnitude > SHAKE_THRESHOLD) {
+    // Shake detected! Update timestamp and return true
+    lastShakeTime = currentTime;
+    return true;
+  }
+
+  // No shake detected
+  return false;
+}
+
+// ============================================================================
+// MAIN LOOP
+// ============================================================================
+
 // loop() runs over and over again forever
 void loop() {
   // Update the M5 hardware state (this checks for keyboard input)
   M5Cardputer.update();
 
+  // Update M5Unified (needed for IMU data)
+  M5.update();
+
 #if ENABLE_JOYSTICK
   // Poll joystick hardware (if enabled)
   updateJoystickState();
 #endif
+
+  // ============================================================================
+  // SHAKE-TO-UNDO DETECTION (IMU)
+  // ============================================================================
+  // Check for shake gesture ONLY in canvas view
+  if (!inHelpView && !inMemoryView && !inPreviewView && !inPaletteView) {
+    if (detectShakeGesture() && undoAvailable) {
+      // Shake detected and undo is available!
+      restoreUndo();  // Perform the undo operation
+
+      // Force full canvas redraw since undo may have changed many cells
+      // This ensures the display matches the restored state
+      drawGrid();
+      for (int y = 0; y < currentGridSize; y++) {
+        for (int x = 0; x < currentGridSize; x++) {
+          if (canvas[y][x] != 0) {
+            drawCell(x, y);
+          }
+        }
+      }
+      drawCursor();
+    }
+  }
 
   // Get current keyboard state
   Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
