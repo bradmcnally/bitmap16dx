@@ -4815,9 +4815,6 @@ void loop() {
   // Update the M5 hardware state (this checks for keyboard input)
   M5Cardputer.update();
 
-  // Update M5Unified (needed for IMU data)
-  M5.update();
-
 #if ENABLE_JOYSTICK
   // Poll joystick hardware (if enabled)
   updateJoystickState();
