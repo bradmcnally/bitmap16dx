@@ -57,7 +57,7 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 | `G` | Toggle between 8×8 and 16×16 **g**rid |
 | `R` | Toggle **r**ulers (center guide lines) |
 | `T` | Toggle **t**heme (light/dark mode) |
-| `Z` | Undo last action |
+| `Z` | Undo last action (or just shake to undo)|
 | `g0` button | Clear canvas |
 | `S` | **S**ave sketch (update current or create new) |
 | `FN` + `S` | **S**ave as new sketch (always creates new file) |
@@ -69,7 +69,7 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 | `V` | Open Pre**v**iew Mode |
 | `B` + `+/-` | Adjust **b**rightness |
 
-### Preview *(V)*
+### Drawing Preview *(V)*
 
 | Key | Function |
 |-----|----------|
@@ -105,9 +105,9 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 | `g0` button | Delete focused sketch |
 | `z`  | undo |
 
-### Slideshow View *(V from Sketches Menu)*
+### Sketch Slideshow View *(V from Sketches Menu)*
 
-View your saved sketches in fullscreen with optional auto-advance.
+View your saved sketches in a fullscreen slideshow with optional auto-advance.
 
 | Key | Function |
 |-----|----------|
@@ -134,6 +134,7 @@ BitMap16DX/
 ```
 
 ### What's Next
+- Puzzle unit rgb matrix support
 - I2C module support (joystick/buttons)
 - Bluetooth keyboard/controller support
 - Background music/UI sound exploration
