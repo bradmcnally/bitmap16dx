@@ -19,6 +19,7 @@
  * - Fn+S to save as new sketch
  * - O to open Memory View (browse/load saved snapshots)
  * - I to open Controls/Help screen
+ * - T to open Settings menu (theme, RGB matrix, export, shake undo)
  * - V to view canvas (128×128, centered)
  *   - In view mode: 1=black bg, 2=white bg, 3=gray bg, 4=dark gray bg
  *   - In view mode: B + Plus/Minus to adjust brightness
@@ -64,7 +65,7 @@ Preferences preferences;
 
 // Enable external 8×8 WS2812 LED matrix support
 // Set to 0 to disable LED matrix features and save memory (~9KB flash, 880 bytes RAM)
-#define ENABLE_LED_MATRIX 0  // Set to 0 to disable
+#define ENABLE_LED_MATRIX 1  // Set to 0 to disable
 
 // Macro for LED matrix canvas updates (no-op when feature disabled)
 #if ENABLE_LED_MATRIX
@@ -257,16 +258,17 @@ uint8_t displayBrightness = 80;  // Start at 80% brightness
 
 #include <FastLED.h>
 
-// 8×8 WS2812E RGB LED matrix (64 LEDs)
-// Mirrors the 8×8 canvas in real-time when enabled
+// WS2812E RGB LED matrix (8×8 or 16×16)
+// Supports 1 Puzzle Unit (64 LEDs) or 4 Units (256 LEDs)
+// Mirrors the canvas in real-time when enabled
 // Connected to Port A: Yellow wire (G2) = GPIO2
 #define LED_PIN 2                     // GPIO2 (Port A - Yellow wire)
-#define NUM_LEDS 64                   // 8×8 matrix
+#define NUM_LEDS 256                  // Max size: 16×16 matrix (4 units)
 #define DEFAULT_LED_BRIGHTNESS 10     // 10% brightness (132mA)
 #define MIN_LED_BRIGHTNESS 5          // Minimum 5%
 #define MAX_LED_BRIGHTNESS 20         // Maximum 20% (for battery safety)
 
-CRGB leds[NUM_LEDS];                  // LED array for FastLED
+CRGB leds[256];                       // LED array for FastLED (max 4 units)
 bool ledMatrixEnabled = false;        // User must explicitly enable
 uint8_t ledBrightness = DEFAULT_LED_BRIGHTNESS;  // 5-20%
 bool canvasNeedsUpdate = false;       // Flag to trigger LED update
@@ -419,6 +421,21 @@ M5Canvas paletteCanvas(&M5Cardputer.Display);
 
 // Canvas for smooth memory view rendering (eliminates screen tearing)
 M5Canvas memoryCanvas(&M5Cardputer.Display);
+
+// Settings view state
+bool inSettingsView = false;
+int settingsViewCursor = 0;  // 0-4 for the 5 menu items
+const int SETTINGS_ITEM_COUNT = 5;
+
+// Settings preferences (loaded from NVS)
+uint8_t defaultGridSize = 8;        // 8 or 16 (default grid size on boot/new sketch)
+uint8_t rgbMatrixUnits = 1;         // 1 or 4 (64 or 256 LEDs)
+bool exportRGB565 = false;           // false=RGB888, true=RGB565
+bool shakeUndoEnabled = true;        // true=enabled, false=disabled
+
+// Settings canvas for tear-free rendering
+M5Canvas settingsCanvas(&M5Cardputer.Display);
+bool settingsCanvasAvailable = false;
 
 // Battery display
 int lastBatteryPercent = -1;  // Track last drawn battery % to avoid unnecessary redraws
@@ -622,8 +639,8 @@ void initializeActiveSketch() {
     }
   }
 
-  // Default to 16×16 grid with 16-color palette
-  activeSketch.gridSize = 16;
+  // Use default grid size from settings, 16-color palette
+  activeSketch.gridSize = defaultGridSize;
   activeSketch.paletteSize = 16;
 
   // Copy the default palette (first palette in catalog: SWEETIE-16)
@@ -1158,14 +1175,22 @@ bool exportCanvasToPNG(bool scale) {
         // Get palette color from the active sketch's palette
         uint16_t color565 = activeSketch.paletteColors[colorIndex - 1];
 
-        // Convert RGB565 to RGB888 (using proper conversion with bit expansion)
-        r = ((color565 >> 11) & 0x1F);
-        r = (r << 3) | (r >> 2);  // Expand 5 bits to 8 bits
-        g = ((color565 >> 5) & 0x3F);
-        g = (g << 2) | (g >> 4);  // Expand 6 bits to 8 bits
-        b = (color565 & 0x1F);
-        b = (b << 3) | (b >> 2);  // Expand 5 bits to 8 bits
-        a = 255;  // Fully opaque
+        if (exportRGB565) {
+          // Export as RGB565 (simple bit shift, faster but less accurate)
+          r = ((color565 >> 11) & 0x1F) << 3;  // 5-bit red → 8-bit
+          g = ((color565 >> 5) & 0x3F) << 2;   // 6-bit green → 8-bit
+          b = (color565 & 0x1F) << 3;          // 5-bit blue → 8-bit
+          a = 255;  // Fully opaque
+        } else {
+          // Export as RGB888 (using proper conversion with bit expansion)
+          r = ((color565 >> 11) & 0x1F);
+          r = (r << 3) | (r >> 2);  // Expand 5 bits to 8 bits
+          g = ((color565 >> 5) & 0x3F);
+          g = (g << 2) | (g >> 4);  // Expand 6 bits to 8 bits
+          b = (color565 & 0x1F);
+          b = (b << 3) | (b >> 2);  // Expand 5 bits to 8 bits
+          a = 255;  // Fully opaque
+        }
       }
 
       // Write RGBA to buffer
@@ -1772,8 +1797,10 @@ void createNewSketch() {
     }
   }
 
-  currentGridSize = 16;
-  currentCellSize = 8;
+  // Use default grid size from settings instead of hardcoded 16
+  currentGridSize = defaultGridSize;
+  currentCellSize = (currentGridSize == 16) ? 8 : 16;
+  activeSketch.gridSize = currentGridSize;
   cursorX = 0;
   cursorY = 0;
   selectedColor = 1;
@@ -2163,6 +2190,320 @@ void exitPaletteView() {
   lastBatteryPercent = -1;  // Force redraw
   batteryFirstCheck = true;  // Force immediate check
   drawBatteryIndicator();
+}
+
+// ============================================================================
+// SETTINGS VIEW
+// ============================================================================
+
+/**
+ * Enter Settings Menu - vertical list of persistent preferences
+ */
+void enterSettingsView() {
+  inSettingsView = true;
+  settingsViewCursor = 0;  // Start at top
+
+  // Clear screen
+  M5Cardputer.Display.fillScreen(currentTheme->background);
+}
+
+/**
+ * Exit Settings Menu and return to canvas
+ */
+void exitSettingsView() {
+  inSettingsView = false;
+
+  // Redraw the canvas view (same pattern as exitPaletteView)
+  M5Cardputer.Display.fillScreen(currentTheme->background);
+  drawGrid();
+  drawPalette();
+  drawCursor();
+
+  // Redraw icons
+  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
+  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
+  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
+
+  // Redraw battery indicator
+  lastBatteryPercent = -1;
+  batteryFirstCheck = true;
+  drawBatteryIndicator();
+}
+
+/**
+ * Calculate a dimmed color by blending with background (for 60% opacity effect)
+ */
+uint16_t getDimmedColor(uint16_t foreground, uint16_t background, float alpha) {
+  // Extract RGB565 components from foreground
+  uint8_t fgR = (foreground >> 11) & 0x1F;
+  uint8_t fgG = (foreground >> 5) & 0x3F;
+  uint8_t fgB = foreground & 0x1F;
+
+  // Extract RGB565 components from background
+  uint8_t bgR = (background >> 11) & 0x1F;
+  uint8_t bgG = (background >> 5) & 0x3F;
+  uint8_t bgB = background & 0x1F;
+
+  // Blend (alpha blend formula)
+  uint8_t blendR = (uint8_t)(fgR * alpha + bgR * (1.0f - alpha));
+  uint8_t blendG = (uint8_t)(fgG * alpha + bgG * (1.0f - alpha));
+  uint8_t blendB = (uint8_t)(fgB * alpha + bgB * (1.0f - alpha));
+
+  // Reconstruct RGB565
+  return (blendR << 11) | (blendG << 5) | blendB;
+}
+
+/**
+ * Draw Settings Menu UI to canvas
+ */
+void drawSettingsView() {
+  // Check if canvas is available
+  if (!settingsCanvasAvailable) {
+    M5Cardputer.Display.fillScreen(currentTheme->background);
+    M5Cardputer.Display.setTextColor(TFT_RED);
+    M5Cardputer.Display.setCursor(10, 50);
+    M5Cardputer.Display.println("WARNING: Low memory!");
+    M5Cardputer.Display.setCursor(10, 65);
+    M5Cardputer.Display.println("Cannot show settings.");
+    M5Cardputer.Display.setCursor(10, 85);
+    M5Cardputer.Display.setTextColor(currentTheme->text);
+    M5Cardputer.Display.println("Press ESC (`) to exit");
+    return;
+  }
+
+  // Clear canvas
+  settingsCanvas.fillSprite(currentTheme->background);
+
+  // Draw title
+  settingsCanvas.setTextColor(currentTheme->text);
+  settingsCanvas.setTextSize(1);
+  settingsCanvas.setCursor(4, 4);
+  settingsCanvas.print("SETTINGS");
+
+  // Menu item positions
+  const int itemStartY = 30;
+  const int itemHeight = 15;
+  const int labelX = 20;
+  const int valueX = 110;
+
+  // Draw each menu item
+  const char* menuItems[SETTINGS_ITEM_COUNT] = {
+    "Theme:",
+    "Default Grid:",
+    "RGB Matrix:",
+    "Export:",
+    "Shake undo:"
+  };
+
+  for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
+    int itemY = itemStartY + (i * itemHeight);
+
+    // Draw cursor arrow for selected item
+    if (i == settingsViewCursor) {
+      settingsCanvas.setCursor(4, itemY);
+      settingsCanvas.print(">");
+    }
+
+    // Draw label
+    settingsCanvas.setCursor(labelX, itemY);
+    settingsCanvas.print(menuItems[i]);
+
+    // Draw value with both options at fixed positions
+    // Use fixed X coordinates so text doesn't shift when brackets move
+    const int option1X = valueX;
+    const int option2X = valueX + 60;  // Fixed spacing between options
+
+    // Calculate dimmed color for unselected options (60% opacity)
+    uint16_t dimmedColor = getDimmedColor(currentTheme->text, currentTheme->background, 0.6f);
+
+    switch(i) {
+      case 0:  // Theme
+        settingsCanvas.setCursor(option1X, itemY);
+        settingsCanvas.setTextColor(currentTheme == &THEME_LIGHT ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(currentTheme == &THEME_LIGHT ? "[Light]" : " Light ");
+        settingsCanvas.setCursor(option2X, itemY);
+        settingsCanvas.setTextColor(currentTheme == &THEME_DARK ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(currentTheme == &THEME_DARK ? "[Dark]" : " Dark ");
+        break;
+      case 1:  // Default Grid Size
+        settingsCanvas.setCursor(option1X, itemY);
+        settingsCanvas.setTextColor(defaultGridSize == 8 ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(defaultGridSize == 8 ? "[8x8]" : " 8x8 ");
+        settingsCanvas.setCursor(option2X, itemY);
+        settingsCanvas.setTextColor(defaultGridSize == 16 ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(defaultGridSize == 16 ? "[16x16]" : " 16x16 ");
+        break;
+      case 2:  // RGB Matrix
+        settingsCanvas.setCursor(option1X, itemY);
+        settingsCanvas.setTextColor(rgbMatrixUnits == 1 ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(rgbMatrixUnits == 1 ? "[1 Unit]" : " 1 Unit ");
+        settingsCanvas.setCursor(option2X, itemY);
+        settingsCanvas.setTextColor(rgbMatrixUnits == 4 ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(rgbMatrixUnits == 4 ? "[4 Units]" : " 4 Units ");
+        break;
+      case 3:  // Export Format
+        settingsCanvas.setCursor(option1X, itemY);
+        settingsCanvas.setTextColor(exportRGB565 == false ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(exportRGB565 == false ? "[RGB888]" : " RGB888 ");
+        settingsCanvas.setCursor(option2X, itemY);
+        settingsCanvas.setTextColor(exportRGB565 ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(exportRGB565 ? "[RGB565]" : " RGB565 ");
+        break;
+      case 4:  // Shake Undo
+        settingsCanvas.setCursor(option1X, itemY);
+        settingsCanvas.setTextColor(shakeUndoEnabled ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(shakeUndoEnabled ? "[ON]" : " ON ");
+        settingsCanvas.setCursor(option2X, itemY);
+        settingsCanvas.setTextColor(shakeUndoEnabled == false ? currentTheme->text : dimmedColor);
+        settingsCanvas.print(shakeUndoEnabled == false ? "[OFF]" : " OFF ");
+        break;
+    }
+
+    // Reset text color for next items
+    settingsCanvas.setTextColor(currentTheme->text);
+  }
+
+  // Draw status message if one exists (lower left, matching canvas view)
+  if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
+    settingsCanvas.setTextColor(currentTheme->text);
+    settingsCanvas.setTextSize(1);
+    settingsCanvas.setCursor(3, 124);
+    settingsCanvas.print(statusMessage);
+  }
+
+  // Push canvas to display
+  settingsCanvas.pushSprite(0, 0);
+}
+
+/**
+ * Handle Settings Menu input and navigation
+ */
+void handleSettingsView(Keyboard_Class::KeysState& status) {
+  // Track if we need to redraw
+  static bool settingsViewNeedsRedraw = true;
+  static int lastSettingsViewCursor = -1;
+
+  // Redraw if cursor changed or first time
+  if (settingsViewNeedsRedraw || lastSettingsViewCursor != settingsViewCursor) {
+    drawSettingsView();
+    settingsViewNeedsRedraw = false;
+    lastSettingsViewCursor = settingsViewCursor;
+  }
+
+  if (M5Cardputer.Keyboard.isPressed()) {
+    // Enter key - toggle selected setting
+    if (status.enter) {
+      bool needsFullRedraw = false;
+
+      switch(settingsViewCursor) {
+        case 0:  // Theme
+          // Toggle theme
+          if (currentTheme == &THEME_LIGHT) {
+            currentTheme = &THEME_DARK;
+            setStatusMessage("Dark Mode");
+          } else {
+            currentTheme = &THEME_LIGHT;
+            setStatusMessage("Light Mode");
+          }
+
+          // Save preference
+          preferences.begin("bitmap16dx", false);
+          preferences.putBool("darkMode", (currentTheme == &THEME_DARK));
+          preferences.end();
+
+          needsFullRedraw = true;
+          break;
+
+        case 1:  // Default Grid Size
+          // Toggle between 8×8 and 16×16
+          defaultGridSize = (defaultGridSize == 8) ? 16 : 8;
+
+          // Save preference
+          preferences.begin("bitmap16dx", false);
+          preferences.putUChar("defaultGrid", defaultGridSize);
+          preferences.end();
+
+          setStatusMessage(defaultGridSize == 8 ? "Default: 8x8" : "Default: 16x16");
+          break;
+
+        case 2:  // RGB Matrix Units
+          // Toggle between 1 and 4 units
+          rgbMatrixUnits = (rgbMatrixUnits == 1) ? 4 : 1;
+
+          // Save preference
+          preferences.begin("bitmap16dx", false);
+          preferences.putUChar("puzzleUnits", rgbMatrixUnits);
+          preferences.end();
+
+          setStatusMessage("Restart required");
+          break;
+
+        case 3:  // Export Format
+          // Toggle between RGB888 and RGB565
+          exportRGB565 = !exportRGB565;
+
+          // Save preference
+          preferences.begin("bitmap16dx", false);
+          preferences.putBool("exportRGB565", exportRGB565);
+          preferences.end();
+
+          setStatusMessage(exportRGB565 ? "Export: RGB565" : "Export: RGB888");
+          break;
+
+        case 4:  // Shake Undo
+          // Toggle shake-to-undo
+          shakeUndoEnabled = !shakeUndoEnabled;
+
+          // Save preference
+          preferences.begin("bitmap16dx", false);
+          preferences.putBool("shakeUndo", shakeUndoEnabled);
+          preferences.end();
+
+          setStatusMessage(shakeUndoEnabled ? "Shake: ON" : "Shake: OFF");
+          break;
+      }
+
+      // Force redraw (especially important for theme changes)
+      settingsViewNeedsRedraw = true;
+
+      // Debounce
+      delay(200);
+    }
+
+    // Check for character keys
+    for (auto i : status.word) {
+      // ESC key - exit settings
+      if (i == '`') {
+        exitSettingsView();
+        settingsViewNeedsRedraw = true;
+        lastSettingsViewCursor = -1;
+        delay(200);
+        return;
+      }
+      // Arrow keys: ; (up), . (down)
+      else if (i == ';') {
+        // Up arrow - move cursor up
+        if (settingsViewCursor > 0) {
+          settingsViewCursor--;
+          settingsViewNeedsRedraw = true;
+          delay(150);  // Debounce to prevent rapid scrolling
+        }
+      }
+      else if (i == '.') {
+        // Down arrow - move cursor down
+        if (settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
+          settingsViewCursor++;
+          settingsViewNeedsRedraw = true;
+          delay(150);  // Debounce to prevent rapid scrolling
+        }
+      }
+      // Space bar - also toggle (alternative to Enter)
+      else if (i == ' ') {
+        // Simulate Enter key press
+        status.enter = true;
+      }
+    }
+  }
 }
 
 // ============================================================================
@@ -3104,7 +3445,7 @@ void drawMemorySketchThumbnail(int sketchIndex, int x, int y, int thumbSize) {
 // Helper function to draw "+" create new sketch button
 void drawCreateNewSketchThumbnail(int x, int y, int thumbSize) {
   // Draw dashed outline
-  uint16_t outlineColor = currentTheme->shadow;
+  uint16_t outlineColor = currentTheme->cellDark;
   const int cutSize = 2;
   const int dashLength = 4;
   const int gapLength = 4;
@@ -3380,6 +3721,28 @@ void drawHelpView() {
   M5Cardputer.Display.print("Clear: G0");
   currentLine++;
 
+#if ENABLE_LED_MATRIX
+  // === LED MATRIX SECTION (Optional Hardware Feature) ===
+  // Space between sections
+  currentLine++;
+
+  // LED Matrix section header
+  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
+  M5Cardputer.Display.print("LED MATRIX");
+  currentLine++;
+
+  // LED toggle hint (L + Enter)
+  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
+  M5Cardputer.Display.print("Toggle: L+Ok ");
+  M5Cardputer.Display.print(ledMatrixEnabled ? "[ON]" : "[OFF]");
+  currentLine++;
+
+  // LED brightness hint (L + +/-)
+  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
+  M5Cardputer.Display.print("Brightness: L+/-");
+  currentLine++;
+#endif // ENABLE_LED_MATRIX
+
 #if ENABLE_JOYSTICK
   // === JOYSTICK SECTION (Optional Hardware Feature) ===
   // Only shown when ENABLE_JOYSTICK is enabled in feature flags.
@@ -3641,12 +4004,56 @@ void updatePaletteFilter() {
 // ============================================================================
 
 /**
- * Convert 2D canvas coordinates to linear LED index.
- * Simple linear mapping - no mirroring, no serpentine.
+ * Convert 2D LED grid coordinates to linear LED index.
+ * Supports both 1 unit (8×8) and 4 units (16×16) configurations.
+ *
+ * For 4 units, they're arranged in a 2×2 grid:
+ *   [Unit 0] [Unit 1]    Each unit is 8×8 LEDs (64 LEDs each)
+ *   [Unit 3] [Unit 2]    Total: 256 LEDs in 16×16 grid
+ *
+ * Physical layout: 0=top-left, 1=top-right, 2=bottom-right, 3=bottom-left
+ * Units 0 and 3 are rotated 90° clockwise due to physical connector alignment
  */
 uint8_t getLEDIndex(uint8_t x, uint8_t y) {
-    // Straight linear mapping: left to right, top to bottom
-    return y * 8 + x;
+    if (rgbMatrixUnits == 1) {
+        // Single 8×8 unit: apply same 180° rotation as unit 0
+        uint8_t rotatedX = 7 - x;
+        uint8_t rotatedY = 7 - y;
+        return rotatedY * 8 + rotatedX;
+    } else {
+        // Four 8×8 units in 16×16 grid
+        // Determine which unit and position within that unit
+        uint8_t unitX = x / 8;  // 0 (left) or 1 (right)
+        uint8_t unitY = y / 8;  // 0 (top) or 1 (bottom)
+        uint8_t localX = x % 8; // Position within unit (0-7)
+        uint8_t localY = y % 8;
+
+        // Unit number based on physical layout:
+        // Top row: 0 (left), 1 (right)
+        // Bottom row: 3 (left), 2 (right)
+        uint8_t unit;
+        if (unitY == 0) {
+            // Top row: units 0 and 1
+            unit = unitX;  // 0 or 1
+        } else {
+            // Bottom row: units 3 and 2
+            unit = (unitX == 0) ? 3 : 2;
+        }
+
+        // Apply rotation corrections for units based on physical orientation
+        uint8_t rotatedX = localX;
+        uint8_t rotatedY = localY;
+
+        if (unit == 0 || unit == 3) {
+            // Units 0 and 3: 180° rotation (horizontal + vertical flip)
+            // Rotation formula: (x, y) → (7-x, 7-y)
+            rotatedX = 7 - localX;
+            rotatedY = 7 - localY;
+        }
+
+        // LED index = (unit offset) + (position within unit)
+        return (unit * 64) + (rotatedY * 8) + rotatedX;
+    }
 }
 
 /**
@@ -3663,37 +4070,56 @@ CRGB rgb565ToRGB888(uint16_t rgb565) {
 }
 
 /**
- * Update the LED matrix to mirror the 8×8 canvas.
- * Only updates when:
- *   - LED matrix is enabled
- *   - Grid size is 8×8 (not 16×16)
- *   - Canvas has changed since last update
+ * Update the LED matrix to mirror the current canvas.
+ * Supports three display modes:
+ *   1. 8×8 canvas + 1 unit → 1:1 mapping (8×8 LEDs)
+ *   2. 8×8 canvas + 4 units → scaled 2× (16×16 LEDs, each pixel = 2×2 block)
+ *   3. 16×16 canvas + 4 units → 1:1 mapping (16×16 LEDs)
+ *
+ * LED matrix is disabled when:
+ *   - LED matrix setting is OFF
+ *   - 16×16 canvas with only 1 unit (can't fit)
  *
  * @param showCursor If true, highlights cursor position (default). If false, shows clean canvas.
  */
 void updateLEDMatrix(bool showCursor) {
-    // Only update in 8×8 mode (16×16 mode doesn't fit on 8×8 matrix)
-    if (!ledMatrixEnabled || currentGridSize != 8) {
-        // Turn off all LEDs if disabled or in 16×16 mode
+    if (!ledMatrixEnabled) {
+        // LED matrix is disabled - turn off all LEDs
         FastLED.clear();
         FastLED.show();
         return;
     }
 
-    // Mirror each canvas cell to the corresponding LED
-    for (uint8_t y = 0; y < 8; y++) {
-        for (uint8_t x = 0; x < 8; x++) {
-            uint8_t pixelValue = canvas[y][x];
-            uint8_t ledIndex = getLEDIndex(x, y);
-            bool isCursor = showCursor && (x == cursorX && y == cursorY);
+    // Check if current grid size fits on available LED matrix
+    if (currentGridSize == 16 && rgbMatrixUnits == 1) {
+        // Can't fit 16×16 canvas on 8×8 LED matrix (1 unit)
+        FastLED.clear();
+        FastLED.show();
+        return;
+    }
 
+    // Mirror each canvas cell to the LED matrix
+    // Three display modes:
+    //   1. 8×8 canvas + 1 unit → 1:1 (8×8 LEDs)
+    //   2. 8×8 canvas + 4 units → scaled 2× (16×16 LEDs, each pixel = 2×2 block)
+    //   3. 16×16 canvas + 4 units → 1:1 (16×16 LEDs)
+
+    uint8_t gridSize = currentGridSize;  // 8 or 16
+
+    for (uint8_t cy = 0; cy < gridSize; cy++) {
+        for (uint8_t cx = 0; cx < gridSize; cx++) {
+            uint8_t pixelValue = canvas[cy][cx];
+            bool isCursor = showCursor && (cx == cursorX && cy == cursorY);
+
+            // Determine color for this canvas pixel
+            CRGB color;
             if (pixelValue == 0) {
                 // Empty cell: show dim white for cursor, black otherwise
-                leds[ledIndex] = isCursor ? CRGB(40, 40, 40) : CRGB::Black;
+                color = isCursor ? CRGB(40, 40, 40) : CRGB::Black;
             } else {
                 // Filled cell: use palette color (index 1-16)
                 uint16_t rgb565 = activeSketch.paletteColors[pixelValue - 1];
-                CRGB color = rgb565ToRGB888(rgb565);
+                color = rgb565ToRGB888(rgb565);
 
                 // Brighten cursor position by adding white
                 if (isCursor) {
@@ -3701,8 +4127,28 @@ void updateLEDMatrix(bool showCursor) {
                     color.g = min(255, color.g + 80);
                     color.b = min(255, color.b + 80);
                 }
+            }
 
+            // Map canvas pixel to LED(s)
+            if (gridSize == 16 && rgbMatrixUnits == 4) {
+                // Mode 3: 16×16 canvas → 16×16 LEDs (1:1 mapping)
+                uint8_t ledIndex = getLEDIndex(cx, cy);
                 leds[ledIndex] = color;
+            } else if (gridSize == 8 && rgbMatrixUnits == 1) {
+                // Mode 1: 8×8 canvas → 8×8 LEDs (1:1 mapping)
+                uint8_t ledIndex = getLEDIndex(cx, cy);
+                leds[ledIndex] = color;
+            } else if (gridSize == 8 && rgbMatrixUnits == 4) {
+                // Mode 2: 8×8 canvas → 16×16 LEDs (scale 2×)
+                // Each canvas pixel becomes a 2×2 block of LEDs
+                for (uint8_t dy = 0; dy < 2; dy++) {
+                    for (uint8_t dx = 0; dx < 2; dx++) {
+                        uint8_t ledX = cx * 2 + dx;
+                        uint8_t ledY = cy * 2 + dy;
+                        uint8_t ledIndex = getLEDIndex(ledX, ledY);
+                        leds[ledIndex] = color;
+                    }
+                }
             }
         }
     }
@@ -3713,34 +4159,76 @@ void updateLEDMatrix(bool showCursor) {
 
 /**
  * Update the LED matrix to display a sketch (for preview mode).
- * Only updates when:
- *   - LED matrix is enabled
- *   - Sketch is 8×8 (not 16×16)
+ * Supports three display modes:
+ *   1. 8×8 sketch + 1 unit → 1:1 mapping (8×8 LEDs)
+ *   2. 8×8 sketch + 4 units → scaled 2× (16×16 LEDs, each pixel = 2×2 block)
+ *   3. 16×16 sketch + 4 units → 1:1 mapping (16×16 LEDs)
+ *
+ * LED matrix is disabled when:
+ *   - LED matrix setting is OFF
+ *   - 16×16 sketch with only 1 unit (can't fit)
+ *
  * Used for both canvas preview and gallery preview modes.
  */
 void updateLEDMatrixFromSketch(Sketch& sketch) {
-    // Only update in 8×8 mode (16×16 mode doesn't fit on 8×8 matrix)
-    if (!ledMatrixEnabled || sketch.gridSize != 8) {
-        // Turn off all LEDs if disabled or in 16×16 mode
+    if (!ledMatrixEnabled) {
+        // LED matrix is disabled - turn off all LEDs
         FastLED.clear();
         FastLED.show();
         return;
     }
 
-    // Mirror each sketch cell to the corresponding LED
-    for (uint8_t y = 0; y < 8; y++) {
-        for (uint8_t x = 0; x < 8; x++) {
-            uint8_t pixelValue = sketch.pixels[y][x];
-            uint8_t ledIndex = getLEDIndex(x, y);
+    // Check if sketch grid size fits on available LED matrix
+    if (sketch.gridSize == 16 && rgbMatrixUnits == 1) {
+        // Can't fit 16×16 sketch on 8×8 LED matrix (1 unit)
+        FastLED.clear();
+        FastLED.show();
+        return;
+    }
 
+    // Mirror each sketch cell to the LED matrix
+    // Three display modes:
+    //   1. 8×8 sketch + 1 unit → 1:1 (8×8 LEDs)
+    //   2. 8×8 sketch + 4 units → scaled 2× (16×16 LEDs, each pixel = 2×2 block)
+    //   3. 16×16 sketch + 4 units → 1:1 (16×16 LEDs)
+
+    uint8_t gridSize = sketch.gridSize;  // 8 or 16
+
+    for (uint8_t sy = 0; sy < gridSize; sy++) {
+        for (uint8_t sx = 0; sx < gridSize; sx++) {
+            uint8_t pixelValue = sketch.pixels[sy][sx];
+
+            // Determine color for this sketch pixel
+            CRGB color;
             if (pixelValue == 0) {
                 // Empty cell: black (no cursor in preview mode)
-                leds[ledIndex] = CRGB::Black;
+                color = CRGB::Black;
             } else {
                 // Filled cell: use palette color (index 1-16)
                 uint16_t rgb565 = sketch.paletteColors[pixelValue - 1];
-                CRGB color = rgb565ToRGB888(rgb565);
+                color = rgb565ToRGB888(rgb565);
+            }
+
+            // Map sketch pixel to LED(s)
+            if (gridSize == 16 && rgbMatrixUnits == 4) {
+                // Mode 3: 16×16 sketch → 16×16 LEDs (1:1 mapping)
+                uint8_t ledIndex = getLEDIndex(sx, sy);
                 leds[ledIndex] = color;
+            } else if (gridSize == 8 && rgbMatrixUnits == 1) {
+                // Mode 1: 8×8 sketch → 8×8 LEDs (1:1 mapping)
+                uint8_t ledIndex = getLEDIndex(sx, sy);
+                leds[ledIndex] = color;
+            } else if (gridSize == 8 && rgbMatrixUnits == 4) {
+                // Mode 2: 8×8 sketch → 16×16 LEDs (scale 2×)
+                // Each sketch pixel becomes a 2×2 block of LEDs
+                for (uint8_t dy = 0; dy < 2; dy++) {
+                    for (uint8_t dx = 0; dx < 2; dx++) {
+                        uint8_t ledX = sx * 2 + dx;
+                        uint8_t ledY = sy * 2 + dy;
+                        uint8_t ledIndex = getLEDIndex(ledX, ledY);
+                        leds[ledIndex] = color;
+                    }
+                }
             }
         }
     }
@@ -3770,7 +4258,7 @@ void toggleLEDMatrix() {
         // Set brightness to 10% for startup pattern
         FastLED.setBrightness((10 * 255) / 100);
 
-        // Define the "DX" pattern LEDs
+        // Define the "DX" pattern LEDs (in non-rotated coordinates)
         // Pattern:  . X X .   X . X .
         //           . X . X   . X . .
         //           . X X .   X . X .
@@ -3778,8 +4266,22 @@ void toggleLEDMatrix() {
         const int patternSize = 11;
 
         // Light up the pattern with white
+        // Apply the same rotation used for unit 0 to keep pattern oriented correctly
         for (int i = 0; i < patternSize; i++) {
-            leds[dxPattern[i]] = CRGB::White;
+            int index = dxPattern[i];
+
+            // Convert linear index to x, y coordinates (8×8 grid)
+            uint8_t x = index % 8;
+            uint8_t y = index / 8;
+
+            // Apply 180° rotation (same as unit 0 in getLEDIndex)
+            uint8_t rotatedX = 7 - x;
+            uint8_t rotatedY = 7 - y;
+
+            // Convert back to linear index
+            int rotatedIndex = rotatedY * 8 + rotatedX;
+
+            leds[rotatedIndex] = CRGB::White;
         }
         FastLED.show();
         delay(1000);  // Hold pattern for 1 second
@@ -3861,6 +4363,12 @@ void setup() {
   bool darkMode = preferences.getBool("darkMode", false);
   currentTheme = darkMode ? &THEME_DARK : &THEME_LIGHT;
 
+  // Load settings preferences
+  defaultGridSize = preferences.getUChar("defaultGrid", 8);      // Default: 8×8
+  rgbMatrixUnits = preferences.getUChar("puzzleUnits", 1);       // Default: 1 unit (64 LEDs)
+  exportRGB565 = preferences.getBool("exportRGB565", false);     // Default: RGB888
+  shakeUndoEnabled = preferences.getBool("shakeUndo", true);     // Default: enabled
+
   preferences.end();
 
   // Set initial display brightness
@@ -3877,7 +4385,9 @@ void setup() {
 
   // Configure FastLED for WS2812 LEDs
   // WS2812E uses GRB color order
-  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, NUM_LEDS);
+  // Calculate LED count based on Puzzle Unit configuration
+  int actualNumLeds = (rgbMatrixUnits == 1) ? 64 : 256;
+  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, actualNumLeds);
   FastLED.setBrightness((ledBrightness * 255) / 100);
   FastLED.clear();
   FastLED.show();
@@ -3929,10 +4439,18 @@ void setup() {
     paletteCanvasAvailable = true;
   }
 
+  // Create off-screen buffer for settings menu (240×135 pixels)
+  // Memory required: 240×135×2 = 64,800 bytes (~64KB)
+  if (!settingsCanvas.createSprite(240, 135)) {
+    settingsCanvasAvailable = false;
+  } else {
+    settingsCanvasAvailable = true;
+  }
+
   // Initialize active sketch as blank
   initializeActiveSketch();
 
-  // Create new blank sketch (always start with empty canvas)
+  // Create new blank sketch (will use defaultGridSize from settings)
   createNewSketch();
 
   // Clear the screen to background color
@@ -4824,8 +5342,8 @@ void loop() {
   // SHAKE-TO-UNDO DETECTION (IMU)
   // ============================================================================
   // Check for shake gesture ONLY in canvas view
-  if (!inHelpView && !inMemoryView && !inPreviewView && !inPaletteView) {
-    if (detectShakeGesture() && undoAvailable) {
+  if (!inHelpView && !inMemoryView && !inPreviewView && !inPaletteView && !inSettingsView) {
+    if (shakeUndoEnabled && detectShakeGesture() && undoAvailable) {
       // Shake detected and undo is available!
       restoreUndo();  // Perform the undo operation
 
@@ -4875,6 +5393,14 @@ void loop() {
   // ============================================================================
   if (inPaletteView) {
     handlePaletteView(status);
+    return;
+  }
+
+  // ============================================================================
+  // SETTINGS VIEW
+  // ============================================================================
+  if (inSettingsView) {
+    handleSettingsView(status);
     return;
   }
 
@@ -4991,25 +5517,6 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           rulersToggled = true;
           setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
         }
-        // T key - Toggle theme
-        else if (i == 't' || i == 'T') {
-          // Toggle between light and dark themes
-          if (currentTheme == &THEME_LIGHT) {
-            currentTheme = &THEME_DARK;
-            setStatusMessage("Dark Mode");
-          } else {
-            currentTheme = &THEME_LIGHT;
-            setStatusMessage("Light Mode");
-          }
-
-          // Save theme preference to flash
-          preferences.begin("bitmap16dx", false);
-          preferences.putBool("darkMode", (currentTheme == &THEME_DARK));
-          preferences.end();
-
-          // Flag for full redraw
-          themeToggled = true;
-        }
         // O key - Open Memory View
         else if (i == 'o' || i == 'O') {
           enterMemoryView();
@@ -5044,6 +5551,11 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
         // I key - Enter Hint Screen
         else if (i == 'i' || i == 'I') {
           enterHelpView();
+          delay(200);  // Debounce to prevent immediate close
+        }
+        // T key - Open Settings Menu
+        else if (i == 't' || i == 'T') {
+          enterSettingsView();
           delay(200);  // Debounce to prevent immediate close
         }
         // V key - Enter View Mode
