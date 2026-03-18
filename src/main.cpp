@@ -264,13 +264,13 @@ uint8_t displayBrightness = 80;  // Start at 80% brightness
 // Connected to Port A: Yellow wire (G2) = GPIO2
 #define LED_PIN 2                     // GPIO2 (Port A - Yellow wire)
 #define NUM_LEDS 256                  // Max size: 16×16 matrix (4 units)
-#define DEFAULT_LED_BRIGHTNESS 10     // 10% brightness (132mA)
-#define MIN_LED_BRIGHTNESS 5          // Minimum 5%
+#define DEFAULT_LED_BRIGHTNESS 5      // 5% brightness default
+#define MIN_LED_BRIGHTNESS 1          // Minimum 1% (very dim)
 #define MAX_LED_BRIGHTNESS 20         // Maximum 20% (for battery safety)
 
 CRGB leds[256];                       // LED array for FastLED (max 4 units)
 bool ledMatrixEnabled = false;        // User must explicitly enable
-uint8_t ledBrightness = DEFAULT_LED_BRIGHTNESS;  // 5-20%
+uint8_t ledBrightness = DEFAULT_LED_BRIGHTNESS;  // 1-20%
 bool canvasNeedsUpdate = false;       // Flag to trigger LED update
 #endif // ENABLE_LED_MATRIX
 
@@ -4301,12 +4301,12 @@ void toggleLEDMatrix() {
 
 /**
  * Adjust LED matrix brightness.
- * @param delta: +5 to increase, -5 to decrease
+ * @param delta: +1 to increase, -1 to decrease
  */
 void adjustLEDBrightness(int8_t delta) {
     if (!ledMatrixEnabled) return;  // No-op if disabled
 
-    // Adjust brightness in 5% increments
+    // Adjust brightness in 1% increments
     int16_t newBrightness = ledBrightness + delta;
 
     // Clamp to valid range
@@ -5633,7 +5633,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
         // Hold L and press + to increase brightness
         // Hold L and press - to decrease brightness
         else if ((i == '+' || i == '=' || i == '-') && isLKeyHeld(status)) {
-          adjustLEDBrightness((i == '-') ? -5 : +5);
+          adjustLEDBrightness((i == '-') ? -1 : +1);
 
           // Show LED matrix brightness level
           char ledBrightMsg[30];
