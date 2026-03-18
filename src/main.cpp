@@ -1855,6 +1855,11 @@ void exitMemoryView() {
   batteryFirstCheck = true;  // Force immediate check
   drawBatteryIndicator();
 
+#if ENABLE_LED_MATRIX
+  // Restore active canvas on LED matrix
+  updateLEDMatrix();
+#endif
+
 }
 
 /**
@@ -2096,9 +2101,21 @@ void exitPreviewView() {
     drawMemoryView(true);
 
 #if ENABLE_LED_MATRIX
-    // Turn off LED matrix when returning to Memory View
-    FastLED.clear();
-    FastLED.show();
+    // Keep displaying the currently viewed sketch on LED matrix
+    if (galleryCurrentIndex >= 0 && galleryCurrentIndex < sketchList.size()) {
+      SketchInfo& info = sketchList[galleryCurrentIndex];
+      if (info.dataLoaded) {
+        updateLEDMatrixFromSketch(info.sketchData);
+      } else {
+        // If data not loaded, clear LED matrix
+        FastLED.clear();
+        FastLED.show();
+      }
+    } else {
+      // Invalid index, clear LED matrix
+      FastLED.clear();
+      FastLED.show();
+    }
 #endif
 
     return;  // Exit early
@@ -2435,7 +2452,12 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
           preferences.putUChar("puzzleUnits", rgbMatrixUnits);
           preferences.end();
 
-          setStatusMessage("Restart required");
+          // Clear unused LEDs and update display immediately
+          FastLED.clear();
+          FastLED.show();
+          LED_CANVAS_UPDATED();  // Mark canvas for LED update
+
+          setStatusMessage(rgbMatrixUnits == 1 ? "1 Unit" : "4 Units");
           break;
 
         case 3:  // Export Format
@@ -4385,9 +4407,9 @@ void setup() {
 
   // Configure FastLED for WS2812 LEDs
   // WS2812E uses GRB color order
-  // Calculate LED count based on Puzzle Unit configuration
-  int actualNumLeds = (rgbMatrixUnits == 1) ? 64 : 256;
-  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, actualNumLeds);
+  // Always initialize with maximum LED count (256)
+  // Active LEDs are controlled by rgbMatrixUnits setting
+  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, 256);
   FastLED.setBrightness((ledBrightness * 255) / 100);
   FastLED.clear();
   FastLED.show();
