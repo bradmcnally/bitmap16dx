@@ -47,8 +47,20 @@
 #include <M5Cardputer.h>
 #include <SD.h>
 #include <SPI.h>
-#include <PNGENC.h>
 #include <Preferences.h>
+
+// Include NimBLE before PNGENC to avoid macro conflicts
+#define ENABLE_BLUETOOTH 1  // Early define for conditional include
+#if ENABLE_BLUETOOTH
+  #include <NimBLEDevice.h>
+#endif
+
+// Workaround for NimBLE/PNGENC 'local' macro conflict
+#ifdef local
+  #undef local
+#endif
+
+#include <PNGENC.h>
 #include <vector>
 #include <algorithm>
 #include "boot_image.h"
@@ -74,13 +86,16 @@ Preferences preferences;
   #define LED_CANVAS_UPDATED() ((void)0)
 #endif
 
+// Note: ENABLE_BLUETOOTH is defined near top of file (before PNGENC include)
+// to avoid macro conflicts. Set to 0 there to disable BT features.
+
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
 
 // Firmware version displayed on boot screen
-const char* FIRMWARE_VERSION = "v0.6.0";
+const char* FIRMWARE_VERSION = "v0.7.0";
 
 // File format version for sketch files
 // Version 1: gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 290 bytes
@@ -265,6 +280,66 @@ uint8_t ledBrightness = DEFAULT_LED_BRIGHTNESS;  // 1-20%
 bool canvasNeedsUpdate = false;       // Flag to trigger LED update
 #endif // ENABLE_LED_MATRIX
 
+#if ENABLE_BLUETOOTH
+// ============================================================================
+// BLUETOOTH KEYBOARD SUPPORT
+// ============================================================================
+// Connects to external BLE HID keyboards for wireless input
+// Uses NimBLE library for low-memory BLE stack
+
+// Connection state
+bool btEnabled = false;               // User preference (persistent)
+bool btConnected = false;             // Currently connected to a keyboard
+bool btScanning = false;              // Scan in progress
+NimBLEClient* btClient = nullptr;
+NimBLEAdvertisedDevice* btAdvDevice = nullptr;
+
+// Bonded device for auto-reconnect
+uint8_t btBondedAddr[6] = {0};        // Stored MAC address
+bool btHasBondedDevice = false;
+
+// Input state (updated from HID reports)
+bool btArrowUp = false;
+bool btArrowDown = false;
+bool btArrowLeft = false;
+bool btArrowRight = false;
+bool btEnter = false;
+bool btBackspace = false;
+bool btEscape = false;
+bool btSpace = false;                 // Space key for drawing (BT only)
+bool btFnHeld = false;                // Alt key maps to Fn
+
+// Character queue for letters/numbers
+#define BT_QUEUE_SIZE 16
+char btInputQueue[BT_QUEUE_SIZE];
+uint8_t btQueueHead = 0;
+uint8_t btQueueTail = 0;
+
+// HID report tracking
+uint8_t btPrevReport[8] = {0};
+
+// Last scan results (for debugging)
+int btLastScanCount = 0;
+int btScanCountdown = 0;  // Countdown timer during scan
+
+// HID keycodes
+#define HID_KEY_ENTER       0x28
+#define HID_KEY_ESCAPE      0x29
+#define HID_KEY_BACKSPACE   0x2A
+#define HID_KEY_SPACE       0x2C
+#define HID_KEY_RIGHT_ARROW 0x4F
+#define HID_KEY_LEFT_ARROW  0x50
+#define HID_KEY_DOWN_ARROW  0x51
+#define HID_KEY_UP_ARROW    0x52
+#define HID_KEY_LEFT_ALT    0xE2
+#define HID_KEY_RIGHT_ALT   0xE6
+
+// Notification message timing
+unsigned long btNotifyTime = 0;
+const unsigned long BT_NOTIFY_DURATION = 1500;  // 1.5 seconds
+char btNotifyMsg[32] = "";
+#endif // ENABLE_BLUETOOTH
+
 // Undo state - stores a single previous canvas state
 uint8_t undoCanvas[16][16] = {0};
 bool undoAvailable = false;
@@ -376,8 +451,12 @@ M5Canvas memoryCanvas(&M5Cardputer.Display);
 
 // Settings view state
 bool inSettingsView = false;
-int settingsViewCursor = 0;  // 0-4 for the 5 menu items
+int settingsViewCursor = 0;  // 0-4 for the 5 menu items (0-5 with BT)
+#if ENABLE_BLUETOOTH
+const int SETTINGS_ITEM_COUNT = 6;
+#else
 const int SETTINGS_ITEM_COUNT = 5;
+#endif
 
 // Settings preferences (loaded from NVS)
 uint8_t defaultGridSize = 8;        // 8 or 16 (default grid size on boot/new sketch)
@@ -1506,6 +1585,23 @@ void updateLEDMatrixFromSketch(Sketch& sketch);
 void toggleLEDMatrix();
 #endif
 
+#if ENABLE_BLUETOOTH
+// Bluetooth keyboard support functions
+void btInit();
+void btDeinit();
+void btStartScan();
+bool btConnect();
+bool btReconnect();
+void btDisconnect();
+void btProcessHIDReport(uint8_t* data, size_t len);
+char btHidToChar(uint8_t keycode, bool shift);
+void btQueuePush(char c);
+bool btQueuePop(char& c);
+void btClearInputState();
+void btShowNotify(const char* msg);
+void btUpdateNotify();
+#endif
+
 // ============================================================================
 // CANVAS OPERATIONS
 // ============================================================================
@@ -2093,6 +2189,13 @@ void exitPreviewView() {
 void enterPaletteView() {
   inPaletteView = true;
 
+  // Create canvas sprite on-demand (64KB)
+  if (!paletteCanvas.createSprite(240, 135)) {
+    paletteCanvasAvailable = false;
+  } else {
+    paletteCanvasAvailable = true;
+  }
+
   // Reset filters to "all" when entering palette menu
   paletteFilterSize = 0;
   paletteFilterUser = false;
@@ -2134,6 +2237,10 @@ void enterPaletteView() {
 void exitPaletteView() {
   inPaletteView = false;
 
+  // Free canvas sprite memory (64KB)
+  paletteCanvas.deleteSprite();
+  paletteCanvasAvailable = false;
+
   // Redraw the canvas view
   M5Cardputer.Display.fillScreen(currentTheme->background);
   drawGrid();
@@ -2163,6 +2270,13 @@ void enterSettingsView() {
   inSettingsView = true;
   settingsViewCursor = 0;  // Start at top
 
+  // Create canvas sprite on-demand (64KB)
+  if (!settingsCanvas.createSprite(240, 135)) {
+    settingsCanvasAvailable = false;
+  } else {
+    settingsCanvasAvailable = true;
+  }
+
   // Clear screen
   M5Cardputer.Display.fillScreen(currentTheme->background);
 }
@@ -2172,6 +2286,10 @@ void enterSettingsView() {
  */
 void exitSettingsView() {
   inSettingsView = false;
+
+  // Free canvas sprite memory (64KB)
+  settingsCanvas.deleteSprite();
+  settingsCanvasAvailable = false;
 
   // Redraw the canvas view (same pattern as exitPaletteView)
   M5Cardputer.Display.fillScreen(currentTheme->background);
@@ -2252,7 +2370,10 @@ void drawSettingsView() {
     "Default Grid:",
     "RGB Matrix:",
     "Export:",
-    "Shake undo:"
+    "Shake undo:",
+#if ENABLE_BLUETOOTH
+    "Bluetooth:"
+#endif
   };
 
   for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
@@ -2317,6 +2438,31 @@ void drawSettingsView() {
         settingsCanvas.setTextColor(shakeUndoEnabled == false ? currentTheme->text : dimmedColor);
         settingsCanvas.print(shakeUndoEnabled == false ? "[OFF]" : " OFF ");
         break;
+#if ENABLE_BLUETOOTH
+      case 5:  // Bluetooth
+        settingsCanvas.setCursor(option1X, itemY);
+        if (btConnected) {
+          settingsCanvas.setTextColor(currentTheme->text);
+          settingsCanvas.print("[PAIRED]");
+        } else if (btScanning) {
+          settingsCanvas.setTextColor(currentTheme->text);
+          char scanMsg[16];
+          snprintf(scanMsg, sizeof(scanMsg), "[SCAN %d]", btScanCountdown);
+          settingsCanvas.print(scanMsg);
+        } else if (btEnabled && btHasBondedDevice) {
+          // Show "Reconnect" when there's a bonded device
+          settingsCanvas.setTextColor(currentTheme->text);
+          settingsCanvas.print("[RECONNECT]");
+        } else if (btEnabled) {
+          // Show "Scan" option when BT is on but no bonded device
+          settingsCanvas.setTextColor(currentTheme->text);
+          settingsCanvas.print("[SCAN]");
+        } else {
+          settingsCanvas.setTextColor(dimmedColor);
+          settingsCanvas.print("[OFF]");
+        }
+        break;
+#endif
     }
 
     // Reset text color for next items
@@ -2350,9 +2496,18 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
     lastSettingsViewCursor = settingsViewCursor;
   }
 
-  if (M5Cardputer.Keyboard.isPressed()) {
+  // Check for BT enter (edge-triggered)
+#if ENABLE_BLUETOOTH
+  static bool btPrevEnterSettings = false;
+  bool btEnterPressed = btEnter && !btPrevEnterSettings;
+  btPrevEnterSettings = btEnter;
+#else
+  bool btEnterPressed = false;
+#endif
+
+  if (M5Cardputer.Keyboard.isPressed() || btEnterPressed) {
     // Enter key - toggle selected setting
-    if (status.enter) {
+    if (status.enter || btEnterPressed) {
       bool needsFullRedraw = false;
 
       switch(settingsViewCursor) {
@@ -2426,6 +2581,72 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
 
           setStatusMessage(shakeUndoEnabled ? "Shake: ON" : "Shake: OFF");
           break;
+
+#if ENABLE_BLUETOOTH
+        case 5:  // Bluetooth
+          if (btConnected) {
+            // Disconnect if connected (Fn+Enter forgets pairing too)
+            btDisconnect();
+            btDeinit();  // Free BLE memory
+            if (status.fn) {
+              // Fn held - forget bonded device
+              btHasBondedDevice = false;
+              preferences.begin("bitmap16dx", false);
+              preferences.putBool("btHasBonded", false);
+              preferences.end();
+              setStatusMessage("BT Forgotten");
+            } else {
+              setStatusMessage("BT Disconnected");
+            }
+          } else if (btScanning) {
+            // Already scanning, do nothing
+          } else if (btEnabled && btHasBondedDevice && !status.fn) {
+            // Try to reconnect to bonded device (no scan needed)
+            // Fn bypasses this to force new scan
+            if (btReconnect()) {
+              setStatusMessage("BT Connected!");
+            } else {
+              setStatusMessage("Reconnect failed");
+            }
+          } else if (btEnabled) {
+            // Start scanning for keyboard (no bonded device, or Fn held to force scan)
+            if (status.fn && btHasBondedDevice) {
+              // Forget old pairing first
+              btHasBondedDevice = false;
+              preferences.begin("bitmap16dx", false);
+              preferences.putBool("btHasBonded", false);
+              preferences.end();
+            }
+            btStartScan();
+            if (btAdvDevice) {
+              btConnect();
+              if (btConnected) {
+                // Save bonded device
+                preferences.begin("bitmap16dx", false);
+                preferences.putBytes("btBonded", btBondedAddr, 6);
+                preferences.putBool("btHasBonded", true);
+                preferences.end();
+                setStatusMessage("BT Connected!");
+              } else {
+                btDeinit();  // Free BLE memory on connect failure
+                setStatusMessage("Connect failed");
+              }
+            } else {
+              btDeinit();  // Free BLE memory - no keyboard found
+              char msg[32];
+              snprintf(msg, sizeof(msg), "No kbd (%d devices)", btLastScanCount);
+              setStatusMessage(msg);
+            }
+          } else {
+            // Enable Bluetooth (stack will init on scan/reconnect)
+            btEnabled = true;
+            preferences.begin("bitmap16dx", false);
+            preferences.putBool("btEnabled", btEnabled);
+            preferences.end();
+            setStatusMessage(btHasBondedDevice ? "BT On - Reconnect" : "BT On - Scan");
+          }
+          break;
+#endif
       }
 
       // Force redraw (especially important for theme changes)
@@ -2469,6 +2690,29 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
       }
     }
   }
+
+#if ENABLE_BLUETOOTH
+  // BT keyboard navigation (arrows and escape - enter handled above)
+  static bool btPrevUpSettings = false, btPrevDownSettings = false;
+  static bool btPrevEscSettings = false;
+
+  if (btArrowUp && !btPrevUpSettings && settingsViewCursor > 0) {
+    settingsViewCursor--;
+    settingsViewNeedsRedraw = true;
+  }
+  if (btArrowDown && !btPrevDownSettings && settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
+    settingsViewCursor++;
+    settingsViewNeedsRedraw = true;
+  }
+  if (btEscape && !btPrevEscSettings) {
+    exitSettingsView();
+    settingsViewNeedsRedraw = true;
+    lastSettingsViewCursor = -1;
+  }
+
+  btPrevUpSettings = btArrowUp; btPrevDownSettings = btArrowDown;
+  btPrevEscSettings = btEscape;
+#endif
 }
 
 // ============================================================================
@@ -4336,6 +4580,21 @@ void setup() {
   FastLED.show();
 #endif // ENABLE_LED_MATRIX
 
+#if ENABLE_BLUETOOTH
+  // Initialize Bluetooth if it was enabled
+  preferences.begin("bitmap16dx", true);  // Read-only
+  btEnabled = preferences.getBool("btEnabled", false);  // Default: OFF
+  btHasBondedDevice = preferences.getBool("btHasBonded", false);
+  if (btHasBondedDevice) {
+    preferences.getBytes("btBonded", btBondedAddr, 6);
+  }
+  preferences.end();
+
+  // Note: BLE stack is only initialized when scanning to save memory
+  // Auto-reconnect would require async scanning which blocks
+  // For now, user must manually scan from Settings
+#endif // ENABLE_BLUETOOTH
+
   // Initialize palette system
   initStockPalettes();
 
@@ -4347,25 +4606,10 @@ void setup() {
   // Show boot screen with logo
   showBootScreen();
 
-  // Create off-screen buffer for palette menu (eliminates screen tearing)
-  // Size: 240×135 pixels (full screen for easy coordinate mapping)
-  // Using 16-bit color for accurate colors (frame limiting handles performance)
-  // Memory required: 240×135×2 = 64,800 bytes (~64KB)
-  if (!paletteCanvas.createSprite(240, 135)) {
-    // Memory allocation failed - set flag and continue without canvas
-    paletteCanvasAvailable = false;
-    // Device will boot normally, palette menu will show error if accessed
-  } else {
-    paletteCanvasAvailable = true;
-  }
-
-  // Create off-screen buffer for settings menu (240×135 pixels)
-  // Memory required: 240×135×2 = 64,800 bytes (~64KB)
-  if (!settingsCanvas.createSprite(240, 135)) {
-    settingsCanvasAvailable = false;
-  } else {
-    settingsCanvasAvailable = true;
-  }
+  // Note: Canvas sprites (palette, settings, memory) are created on-demand
+  // when entering each view to conserve memory (~64KB each)
+  paletteCanvasAvailable = false;
+  settingsCanvasAvailable = false;
 
   // Initialize active sketch as blank
   initializeActiveSketch();
@@ -4427,6 +4671,15 @@ void handleHelpView(Keyboard_Class::KeysState& status) {
 #endif
     }
   }
+
+#if ENABLE_BLUETOOTH
+  // BT keyboard - escape exits help
+  static bool btPrevEscHelp = false;
+  if (btEscape && !btPrevEscHelp) {
+    exitHelpView();
+  }
+  btPrevEscHelp = btEscape;
+#endif
 
   delay(10);
 }
@@ -4666,6 +4919,58 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
     }
   }
 
+#if ENABLE_BLUETOOTH
+  // BT keyboard navigation for memory view
+  static bool btPrevUpMem = false, btPrevDownMem = false;
+  static bool btPrevLeftMem = false, btPrevRightMem = false;
+  static bool btPrevEnterMem = false, btPrevEscMem = false;
+
+  const int COLS = 4;
+  int totalItems = 1 + sketchList.size();
+
+  if (btArrowUp && !btPrevUpMem && memoryViewCursor >= COLS) {
+    memoryViewCursor -= COLS;
+  }
+  if (btArrowDown && !btPrevDownMem) {
+    int currentCol = memoryViewCursor % COLS;
+    int nextRow = memoryViewCursor + COLS;
+    if (nextRow >= totalItems) {
+      int lastRowStart = ((totalItems - 1) / COLS) * COLS;
+      int targetPos = lastRowStart + currentCol;
+      if (targetPos >= totalItems) targetPos = totalItems - 1;
+      memoryViewCursor = targetPos;
+    } else {
+      memoryViewCursor = nextRow;
+    }
+  }
+  if (btArrowLeft && !btPrevLeftMem && memoryViewCursor % COLS != 0) {
+    memoryViewCursor--;
+  }
+  if (btArrowRight && !btPrevRightMem && memoryViewCursor % COLS != (COLS - 1) && memoryViewCursor < totalItems - 1) {
+    memoryViewCursor++;
+  }
+  if (btEnter && !btPrevEnterMem) {
+    if (memoryViewCursor == 0) {
+      createNewSketch();
+    } else {
+      int sketchIndex = memoryViewCursor - 1;
+      if (sketchIndex < sketchList.size()) {
+        openSketch(sketchList[sketchIndex].filename);
+      }
+    }
+    exitMemoryView();
+    memoryViewNeedsRedraw = true;
+  }
+  if (btEscape && !btPrevEscMem) {
+    exitMemoryView();
+    memoryViewNeedsRedraw = true;
+  }
+
+  btPrevUpMem = btArrowUp; btPrevDownMem = btArrowDown;
+  btPrevLeftMem = btArrowLeft; btPrevRightMem = btArrowRight;
+  btPrevEnterMem = btEnter; btPrevEscMem = btEscape;
+#endif
+
   delay(10);
 }
 
@@ -4832,6 +5137,33 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
 #endif
     }
   }
+
+#if ENABLE_BLUETOOTH
+  // BT keyboard navigation for preview/gallery view
+  static bool btPrevLeftPrev = false, btPrevRightPrev = false;
+  static bool btPrevEscPrev = false;
+
+  if (btEscape && !btPrevEscPrev) {
+    exitPreviewView();
+  }
+  if (galleryMode) {
+    if (btArrowLeft && !btPrevLeftPrev) {
+      galleryCurrentIndex--;
+      if (galleryCurrentIndex < 0) galleryCurrentIndex = sketchList.size() - 1;
+      galleryAutoAdvance = false;
+      loadGallerySketch(galleryCurrentIndex);
+    }
+    if (btArrowRight && !btPrevRightPrev) {
+      galleryCurrentIndex++;
+      if (galleryCurrentIndex >= sketchList.size()) galleryCurrentIndex = 0;
+      galleryAutoAdvance = false;
+      loadGallerySketch(galleryCurrentIndex);
+    }
+  }
+
+  btPrevLeftPrev = btArrowLeft; btPrevRightPrev = btArrowRight;
+  btPrevEscPrev = btEscape;
+#endif
 
   delay(10);
 }
@@ -5025,6 +5357,39 @@ void handlePaletteView(Keyboard_Class::KeysState& status) {
     }
   }
 
+#if ENABLE_BLUETOOTH
+  // BT keyboard navigation for palette view
+  static bool btPrevLeftPal = false, btPrevRightPal = false;
+  static bool btPrevEnterPal = false, btPrevEscPal = false;
+
+  if (btArrowLeft && !btPrevLeftPal && paletteViewCursor > 0) {
+    paletteViewCursor--;
+  }
+  if (btArrowRight && !btPrevRightPal && paletteViewCursor < filteredPaletteCount - 1) {
+    paletteViewCursor++;
+  }
+  if (btEnter && !btPrevEnterPal) {
+    // Start insertion animation
+    paletteInsertionFrozenScrollPos = paletteViewScrollPos;
+    paletteInsertionAnimating = true;
+    paletteInsertionProgress = 0.0f;
+    uint8_t selectedPaletteIdx = filteredPaletteIndices[paletteViewCursor];
+    activeSketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
+    for (int i = 0; i < 16; i++) {
+      activeSketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
+    }
+    LED_CANVAS_UPDATED();
+  }
+  if (btEscape && !btPrevEscPal) {
+    exitPaletteView();
+    paletteViewNeedsRedraw = true;
+    lastPaletteViewCursor = -1;
+  }
+
+  btPrevLeftPal = btArrowLeft; btPrevRightPal = btArrowRight;
+  btPrevEnterPal = btEnter; btPrevEscPal = btEscape;
+#endif
+
   delay(10);
 }
 
@@ -5032,6 +5397,495 @@ void handlePaletteView(Keyboard_Class::KeysState& status) {
  * Handle Canvas View input and rendering
  */
 void handleCanvasView(Keyboard_Class::KeysState& status);
+
+#if ENABLE_BLUETOOTH
+// ============================================================================
+// BLUETOOTH KEYBOARD SUPPORT FUNCTIONS
+// ============================================================================
+
+// NimBLE callback classes
+class BtClientCallbacks : public NimBLEClientCallbacks {
+  void onConnect(NimBLEClient* pClient) override {
+    btConnected = true;
+    btShowNotify("BT Connected");
+  }
+
+  void onDisconnect(NimBLEClient* pClient) override {
+    btConnected = false;
+    btClearInputState();
+    btShowNotify("BT Disconnected");
+  }
+};
+
+static BtClientCallbacks btClientCallbacks;
+
+// Notification callback for HID reports
+void btNotifyCallback(NimBLERemoteCharacteristic* pChar, uint8_t* pData, size_t length, bool isNotify) {
+  btProcessHIDReport(pData, length);
+}
+
+// Track if BLE stack is initialized
+static bool btStackInitialized = false;
+
+/**
+ * Initialize NimBLE stack
+ */
+void btInit() {
+  if (btStackInitialized) return;
+  NimBLEDevice::init("BitMap16 DX");
+  NimBLEDevice::setSecurityAuth(true, false, true);  // bonding, no MITM, secure conn
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);  // Max power for better range
+  btStackInitialized = true;
+}
+
+/**
+ * Deinitialize NimBLE stack to free memory (~60-80KB)
+ */
+void btDeinit() {
+  if (!btStackInitialized) return;
+  if (btConnected) return;  // Don't deinit while connected
+
+  if (btClient) {
+    NimBLEDevice::deleteClient(btClient);
+    btClient = nullptr;
+  }
+  if (btAdvDevice) {
+    delete btAdvDevice;
+    btAdvDevice = nullptr;
+  }
+
+  NimBLEDevice::deinit(true);  // true = release memory
+  btStackInitialized = false;
+}
+
+/**
+ * Start scanning for HID keyboards
+ */
+void btStartScan() {
+  if (btScanning) return;
+
+  btScanning = true;
+
+  // Initialize BLE stack if needed
+  btInit();
+
+  // Redraw settings view to show [SCANNING] before blocking
+  if (inSettingsView) {
+    drawSettingsView();
+  }
+
+  NimBLEScan* pScan = NimBLEDevice::getScan();
+  pScan->setActiveScan(true);
+  pScan->setInterval(100);
+  pScan->setWindow(99);
+
+  // Scan with countdown display
+  const int SCAN_SECONDS = 15;
+  for (int remaining = SCAN_SECONDS; remaining > 0; remaining--) {
+    // Update countdown and redraw
+    btScanCountdown = remaining;
+    if (inSettingsView) {
+      drawSettingsView();
+    }
+
+    // Scan for 1 second
+    pScan->start(1, false);
+  }
+  btScanCountdown = 0;
+
+  NimBLEScanResults results = pScan->getResults();
+
+  // Look for HID devices - try multiple detection methods
+  // Clean up previous device if any
+  if (btAdvDevice) {
+    delete btAdvDevice;
+    btAdvDevice = nullptr;
+  }
+  int deviceCount = results.getCount();
+  btLastScanCount = deviceCount;  // Store for settings UI
+
+  for (int i = 0; i < deviceCount; i++) {
+    NimBLEAdvertisedDevice device = results.getDevice(i);
+
+    // Method 1: Check for HID service UUID
+    if (device.isAdvertisingService(NimBLEUUID((uint16_t)0x1812))) {
+      btAdvDevice = new NimBLEAdvertisedDevice(device);
+      break;
+    }
+
+    // Method 2: Check device appearance (0x03C1 = 961 = keyboard)
+    if (device.getAppearance() == 961) {
+      btAdvDevice = new NimBLEAdvertisedDevice(device);
+      break;
+    }
+
+    // Method 3: Check if name contains keyboard-related strings (case insensitive)
+    if (device.haveName()) {
+      std::string name = device.getName();
+      // Convert to lowercase for comparison
+      for (auto& c : name) c = tolower(c);
+      if (name.find("keyboard") != std::string::npos ||
+          name.find("kbd") != std::string::npos ||
+          name.find("keychron") != std::string::npos ||
+          name.find("k8") != std::string::npos ||
+          name.find("k1") != std::string::npos ||
+          name.find("k2") != std::string::npos ||
+          name.find("k3") != std::string::npos ||
+          name.find("k4") != std::string::npos ||
+          name.find("k6") != std::string::npos ||
+          name.find("logitech") != std::string::npos ||
+          name.find("magic") != std::string::npos) {
+        btAdvDevice = new NimBLEAdvertisedDevice(device);
+        break;
+      }
+    }
+  }
+
+  pScan->clearResults();
+  btScanning = false;
+
+  if (btAdvDevice) {
+    btShowNotify("Found keyboard");
+  } else {
+    char msg[32];
+    snprintf(msg, sizeof(msg), "No kbd (%d found)", deviceCount);
+    btShowNotify(msg);
+  }
+}
+
+/**
+ * Connect to discovered HID keyboard
+ */
+bool btConnect() {
+  if (!btAdvDevice) return false;
+  if (btConnected) return true;
+
+  btShowNotify("Connecting...");
+
+  // Create client
+  btClient = NimBLEDevice::createClient();
+  btClient->setClientCallbacks(&btClientCallbacks, false);
+  btClient->setConnectionParams(12, 12, 0, 150);
+  btClient->setConnectTimeout(10);
+
+  // Connect to device
+  if (!btClient->connect(btAdvDevice)) {
+    btShowNotify("Connect failed");
+    return false;
+  }
+
+  // Secure the connection
+  if (!btClient->secureConnection()) {
+    btClient->disconnect();
+    btShowNotify("Pairing failed");
+    return false;
+  }
+
+  // Find HID service
+  NimBLERemoteService* hidService = btClient->getService(NimBLEUUID((uint16_t)0x1812));
+  if (!hidService) {
+    btClient->disconnect();
+    btShowNotify("No HID service");
+    return false;
+  }
+
+  // Find and subscribe to HID report characteristics
+  // Try standard report characteristic first (0x2A4D)
+  std::vector<NimBLERemoteCharacteristic*>* chars = hidService->getCharacteristics(true);
+  bool subscribed = false;
+
+  for (auto& chr : *chars) {
+    if (chr->getUUID() == NimBLEUUID((uint16_t)0x2A4D)) {
+      if (chr->canNotify()) {
+        chr->subscribe(true, btNotifyCallback);
+        subscribed = true;
+      }
+    }
+  }
+
+  // Also try boot keyboard input (0x2A22)
+  NimBLERemoteCharacteristic* bootChar = hidService->getCharacteristic(NimBLEUUID((uint16_t)0x2A22));
+  if (bootChar && bootChar->canNotify()) {
+    bootChar->subscribe(true, btNotifyCallback);
+    subscribed = true;
+  }
+
+  if (!subscribed) {
+    btClient->disconnect();
+    btShowNotify("Subscribe failed");
+    return false;
+  }
+
+  // Store bonded device address for auto-reconnect
+  memcpy(btBondedAddr, btAdvDevice->getAddress().getNative(), 6);
+  btHasBondedDevice = true;
+
+  // Clean up - we don't need the advertised device anymore
+  delete btAdvDevice;
+  btAdvDevice = nullptr;
+
+  return true;
+}
+
+/**
+ * Reconnect to previously bonded keyboard (no scan needed)
+ */
+bool btReconnect() {
+  if (!btHasBondedDevice) return false;
+  if (btConnected) return true;
+
+  // Initialize BLE stack if needed
+  btInit();
+
+  btShowNotify("Reconnecting...");
+
+  // Create client
+  btClient = NimBLEDevice::createClient();
+  btClient->setClientCallbacks(&btClientCallbacks, false);
+  btClient->setConnectionParams(12, 12, 0, 150);
+  btClient->setConnectTimeout(10);
+
+  // Connect directly to bonded address
+  NimBLEAddress addr(btBondedAddr);
+  if (!btClient->connect(addr)) {
+    btShowNotify("Reconnect failed");
+    NimBLEDevice::deleteClient(btClient);
+    btClient = nullptr;
+    btDeinit();
+    return false;
+  }
+
+  // Secure the connection
+  if (!btClient->secureConnection()) {
+    btClient->disconnect();
+    NimBLEDevice::deleteClient(btClient);
+    btClient = nullptr;
+    btShowNotify("Pairing failed");
+    btDeinit();
+    return false;
+  }
+
+  // Find HID service
+  NimBLERemoteService* hidService = btClient->getService(NimBLEUUID((uint16_t)0x1812));
+  if (!hidService) {
+    btClient->disconnect();
+    NimBLEDevice::deleteClient(btClient);
+    btClient = nullptr;
+    btShowNotify("No HID service");
+    btDeinit();
+    return false;
+  }
+
+  // Find and subscribe to HID report characteristics
+  std::vector<NimBLERemoteCharacteristic*>* chars = hidService->getCharacteristics(true);
+  bool subscribed = false;
+
+  for (auto& chr : *chars) {
+    if (chr->getUUID() == NimBLEUUID((uint16_t)0x2A4D)) {
+      if (chr->canNotify()) {
+        chr->subscribe(true, btNotifyCallback);
+        subscribed = true;
+      }
+    }
+  }
+
+  // Also try boot keyboard input
+  NimBLERemoteCharacteristic* bootChar = hidService->getCharacteristic(NimBLEUUID((uint16_t)0x2A22));
+  if (bootChar && bootChar->canNotify()) {
+    bootChar->subscribe(true, btNotifyCallback);
+    subscribed = true;
+  }
+
+  if (!subscribed) {
+    btClient->disconnect();
+    NimBLEDevice::deleteClient(btClient);
+    btClient = nullptr;
+    btShowNotify("Subscribe failed");
+    btDeinit();
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Disconnect from keyboard
+ */
+void btDisconnect() {
+  if (btClient) {
+    if (btClient->isConnected()) {
+      btClient->disconnect();
+    }
+    NimBLEDevice::deleteClient(btClient);
+    btClient = nullptr;
+  }
+  if (btAdvDevice) {
+    delete btAdvDevice;
+    btAdvDevice = nullptr;
+  }
+  btConnected = false;
+  btClearInputState();
+}
+
+/**
+ * Process incoming HID keyboard report
+ * Standard HID keyboard report format:
+ * Byte 0: Modifier keys (Ctrl, Shift, Alt, GUI)
+ * Byte 1: Reserved (always 0)
+ * Bytes 2-7: Up to 6 simultaneous key codes
+ */
+void btProcessHIDReport(uint8_t* data, size_t len) {
+  if (len < 3) return;
+
+  // Normalize to 8-byte report
+  uint8_t report[8] = {0};
+  memcpy(report, data, min(len, (size_t)8));
+
+  // Check modifier keys (byte 0)
+  bool shift = (report[0] & 0x22) != 0;  // Left or right shift
+  btFnHeld = (report[0] & 0x44) != 0;    // Left or right Alt = Fn
+
+  // Clear directional state (will be set if keys are held)
+  btArrowUp = false;
+  btArrowDown = false;
+  btArrowLeft = false;
+  btArrowRight = false;
+  btEnter = false;
+  btBackspace = false;
+  btEscape = false;
+  btSpace = false;
+
+  // Process key codes (bytes 2-7)
+  for (int i = 2; i < 8; i++) {
+    uint8_t keycode = report[i];
+    if (keycode == 0) continue;
+
+    // Check if this is a new key press (not in previous report)
+    bool isNewPress = true;
+    for (int j = 2; j < 8; j++) {
+      if (btPrevReport[j] == keycode) {
+        isNewPress = false;
+        break;
+      }
+    }
+
+    // Handle special keys (always update state for held keys)
+    switch (keycode) {
+      case HID_KEY_UP_ARROW:    btArrowUp = true; break;
+      case HID_KEY_DOWN_ARROW:  btArrowDown = true; break;
+      case HID_KEY_LEFT_ARROW:  btArrowLeft = true; break;
+      case HID_KEY_RIGHT_ARROW: btArrowRight = true; break;
+      case HID_KEY_ENTER:       btEnter = true; break;
+      case HID_KEY_BACKSPACE:   btBackspace = true; break;
+      case HID_KEY_ESCAPE:      btEscape = true; break;
+      case HID_KEY_SPACE:       btSpace = true; break;
+      default:
+        // For character keys, only queue on new press
+        if (isNewPress) {
+          char c = btHidToChar(keycode, shift);
+          if (c != 0) {
+            btQueuePush(c);
+          }
+        }
+        break;
+    }
+  }
+
+  // Save current report for next comparison
+  memcpy(btPrevReport, report, 8);
+}
+
+/**
+ * Convert HID keycode to ASCII character
+ * Simplified US keyboard layout
+ */
+char btHidToChar(uint8_t keycode, bool shift) {
+  // Letters (0x04-0x1D = a-z)
+  if (keycode >= 0x04 && keycode <= 0x1D) {
+    char c = 'a' + (keycode - 0x04);
+    return shift ? (c - 32) : c;  // Convert to uppercase if shift
+  }
+
+  // Numbers (0x1E-0x27 = 1-9, 0)
+  if (keycode >= 0x1E && keycode <= 0x27) {
+    if (shift) {
+      // Shifted number row symbols
+      const char* symbols = "!@#$%^&*()";
+      return symbols[keycode - 0x1E];
+    }
+    if (keycode == 0x27) return '0';
+    return '1' + (keycode - 0x1E);
+  }
+
+  // Common punctuation
+  switch (keycode) {
+    case 0x2C: return ' ';   // Space
+    case 0x2D: return shift ? '_' : '-';
+    case 0x2E: return shift ? '+' : '=';
+    case 0x2F: return shift ? '{' : '[';
+    case 0x30: return shift ? '}' : ']';
+    case 0x31: return shift ? '|' : '\\';
+    case 0x33: return shift ? ':' : ';';
+    case 0x34: return shift ? '"' : '\'';
+    case 0x35: return shift ? '~' : '`';
+    case 0x36: return shift ? '<' : ',';
+    case 0x37: return shift ? '>' : '.';
+    case 0x38: return shift ? '?' : '/';
+  }
+
+  return 0;  // Unknown keycode
+}
+
+/**
+ * Push character to input queue
+ */
+void btQueuePush(char c) {
+  uint8_t nextHead = (btQueueHead + 1) % BT_QUEUE_SIZE;
+  if (nextHead != btQueueTail) {  // Not full
+    btInputQueue[btQueueHead] = c;
+    btQueueHead = nextHead;
+  }
+}
+
+/**
+ * Pop character from input queue
+ */
+bool btQueuePop(char& c) {
+  if (btQueueHead == btQueueTail) return false;  // Empty
+  c = btInputQueue[btQueueTail];
+  btQueueTail = (btQueueTail + 1) % BT_QUEUE_SIZE;
+  return true;
+}
+
+/**
+ * Clear all BT input state
+ */
+void btClearInputState() {
+  btArrowUp = btArrowDown = btArrowLeft = btArrowRight = false;
+  btEnter = btBackspace = btEscape = btSpace = btFnHeld = false;
+  btQueueHead = btQueueTail = 0;
+  memset(btPrevReport, 0, 8);
+}
+
+/**
+ * Show notification message (flashes briefly)
+ */
+void btShowNotify(const char* msg) {
+  strncpy(btNotifyMsg, msg, sizeof(btNotifyMsg) - 1);
+  btNotifyMsg[sizeof(btNotifyMsg) - 1] = '\0';
+  btNotifyTime = millis();
+}
+
+/**
+ * Update/clear notification display
+ */
+void btUpdateNotify() {
+  if (btNotifyTime > 0 && millis() - btNotifyTime > BT_NOTIFY_DURATION) {
+    btNotifyTime = 0;
+    btNotifyMsg[0] = '\0';
+  }
+}
+#endif // ENABLE_BLUETOOTH
 
 // ============================================================================
 // SHAKE DETECTION
@@ -5107,6 +5961,11 @@ bool detectShakeGesture() {
 void loop() {
   // Update the M5 hardware state (this checks for keyboard input)
   M5Cardputer.update();
+
+#if ENABLE_BLUETOOTH
+  // Update BT notification display timer
+  btUpdateNotify();
+#endif
 
   // ============================================================================
   // SHAKE-TO-UNDO DETECTION (IMU)
@@ -5210,6 +6069,163 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   enterHeld = status.enter;
   deleteHeld = status.del;
 
+#if ENABLE_BLUETOOTH
+  // Merge BT input with keyboard input
+  // btSpace also acts as draw (BT only feature)
+  enterHeld = enterHeld || btEnter || btSpace;
+  deleteHeld = deleteHeld || btBackspace;
+
+  // Check for BT Fn modifier (Alt key)
+  bool fnHeld = status.fn || btFnHeld;
+
+  // Process BT arrow keys - detect new presses and set up for key repeat
+  static bool btPrevUp = false, btPrevDown = false, btPrevLeft = false, btPrevRight = false;
+
+  // Check for new BT arrow presses
+  if (btArrowUp && !btPrevUp) {
+    lastKey = ';';  // Use same codes as built-in keyboard
+    lastKeyTime = millis();
+    keyRepeating = false;
+    if (cursorY > 0) { cursorY--; moved = true; }
+  }
+  if (btArrowDown && !btPrevDown) {
+    lastKey = '.';
+    lastKeyTime = millis();
+    keyRepeating = false;
+    if (cursorY < currentGridSize - 1) { cursorY++; moved = true; }
+  }
+  if (btArrowLeft && !btPrevLeft) {
+    lastKey = ',';
+    lastKeyTime = millis();
+    keyRepeating = false;
+    if (cursorX > 0) { cursorX--; moved = true; }
+  }
+  if (btArrowRight && !btPrevRight) {
+    lastKey = '/';
+    lastKeyTime = millis();
+    keyRepeating = false;
+    if (cursorX < currentGridSize - 1) { cursorX++; moved = true; }
+  }
+
+  btPrevUp = btArrowUp; btPrevDown = btArrowDown;
+  btPrevLeft = btArrowLeft; btPrevRight = btArrowRight;
+
+  // Process BT Enter/Space/Backspace for pixel operations
+  // Space on BT keyboard also draws (BT-only feature)
+  if ((btEnter || btSpace) && !status.enter) {
+    saveUndo();
+    canvas[cursorY][cursorX] = selectedColor;
+    pixelPlaced = true;
+    LED_CANVAS_UPDATED();
+  }
+  if (btBackspace && !status.del) {
+    saveUndo();
+    canvas[cursorY][cursorX] = 0;
+    pixelPlaced = true;
+    LED_CANVAS_UPDATED();
+  }
+
+  // Process BT character queue
+  char btChar;
+  while (btQueuePop(btChar)) {
+    // Number keys 1-8 select colors
+    if (btChar >= '1' && btChar <= '8') {
+      uint8_t baseColor = btChar - '0';
+      uint8_t newColor = fnHeld ? (baseColor + 8) : baseColor;
+      if (newColor <= activeSketch.paletteSize && selectedColor != newColor) {
+        selectedColor = newColor;
+        colorChanged = true;
+        char colorMsg[20];
+        snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
+        setStatusMessage(colorMsg);
+      }
+    }
+    // C key - Cycle color
+    else if (btChar == 'c' || btChar == 'C') {
+      selectedColor++;
+      if (selectedColor > activeSketch.paletteSize) selectedColor = 1;
+      colorChanged = true;
+      char colorMsg[20];
+      snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
+      setStatusMessage(colorMsg);
+    }
+    // Z key - Undo
+    else if (btChar == 'z' || btChar == 'Z') {
+      restoreUndo();
+      undoPerformed = true;
+    }
+    // G key - Toggle grid
+    else if (btChar == 'g' || btChar == 'G') {
+      toggleGridSize();
+      gridToggled = true;
+    }
+    // R key - Toggle rulers
+    else if (btChar == 'r' || btChar == 'R') {
+      rulersVisible = !rulersVisible;
+      rulersToggled = true;
+      setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
+    }
+    // O key - Memory view
+    else if (btChar == 'o' || btChar == 'O') {
+      enterMemoryView();
+      delay(200);
+      return;
+    }
+    // P key - Palette view
+    else if (btChar == 'p' || btChar == 'P') {
+      enterPaletteView();
+      delay(200);
+      return;
+    }
+    // I key - Help view
+    else if (btChar == 'i' || btChar == 'I') {
+      enterHelpView();
+      delay(200);
+      return;
+    }
+    // S key - Save sketch (or Alt+S to save as new)
+    else if (btChar == 's' || btChar == 'S') {
+      // Copy canvas to active sketch before saving
+      for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+          activeSketch.pixels[y][x] = canvas[y][x];
+        }
+      }
+      activeSketch.gridSize = currentGridSize;
+      if (fnHeld) {
+        saveActiveSketchAsNew();
+      } else {
+        saveActiveSketchToSD();
+      }
+    }
+    // V key - Preview view
+    else if (btChar == 'v' || btChar == 'V') {
+      enterPreviewView();
+      delay(200);
+      return;
+    }
+    // T key - Settings view
+    else if (btChar == 't' || btChar == 'T') {
+      enterSettingsView();
+      delay(200);
+      return;
+    }
+    // F key - Flood fill
+    else if (btChar == 'f' || btChar == 'F') {
+      saveUndo();
+      floodFill(cursorX, cursorY, selectedColor);
+      floodFilled = true;
+      LED_CANVAS_UPDATED();
+      setStatusMessage(StatusMsg::FILL);
+    }
+  }
+
+  // Clear BT arrow state after processing (they're edge-triggered from HID reports)
+  // Note: We don't clear here because HID reports continuously update the state
+#else
+  bool fnHeld = status.fn;
+#endif
+
   // Check if any key was pressed (for non-repeating actions)
   if (M5Cardputer.Keyboard.isChange()) {
     if (M5Cardputer.Keyboard.isPressed()) {
@@ -5235,10 +6251,10 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
       for (auto i : status.word) {
         // Number keys 1-8 select colors
         // Without Shift: colors 1-8
-        // With Shift (fn): colors 9-16 (only if palette has 16 colors)
+        // With Fn (or BT Alt): colors 9-16 (only if palette has 16 colors)
         if (i >= '1' && i <= '8') {
           uint8_t baseColor = i - '0';  // Convert '1' to 1, '2' to 2, etc.
-          uint8_t newColor = status.fn ? (baseColor + 8) : baseColor;
+          uint8_t newColor = fnHeld ? (baseColor + 8) : baseColor;
 
           // Don't allow selecting colors beyond palette size
           if (newColor <= activeSketch.paletteSize && selectedColor != newColor) {
@@ -5291,8 +6307,8 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           }
           activeSketch.gridSize = currentGridSize;
 
-          if (status.fn) {
-            // Fn+S: Save as new sketch
+          if (fnHeld) {
+            // Fn+S (or BT Alt+S): Save as new sketch
             saveActiveSketchAsNew();
           } else {
             // S: Save to existing sketch (or save as new if unsaved)
@@ -5324,9 +6340,9 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
         }
         // X key - Export PNG
         // X alone = 128×128 scaled export
-        // Fn+X = logical size export (8×8 or 16×16)
+        // Fn+X (or BT Alt+X) = logical size export (8×8 or 16×16)
         else if (i == 'x' || i == 'X') {
-          bool scaleToFull = !status.fn;  // Scale unless Fn is held
+          bool scaleToFull = !fnHeld;  // Scale unless Fn/Alt is held
           exportCanvasToPNG(scaleToFull);
         }
 #if ENABLE_SCREENSHOTS
@@ -5440,7 +6456,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   }
 
   // Handle key repeat for arrow keys when held
-  // Check if an arrow key is currently being held
+  // Check if an arrow key is currently being held (keyboard or BT)
   bool arrowKeyHeld = false;
   char currentArrowKey = 0;
 
@@ -5451,6 +6467,16 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
       break;
     }
   }
+
+#if ENABLE_BLUETOOTH
+  // Also check BT arrow keys for repeat
+  if (!arrowKeyHeld) {
+    if (btArrowUp) { arrowKeyHeld = true; currentArrowKey = ';'; }
+    else if (btArrowDown) { arrowKeyHeld = true; currentArrowKey = '.'; }
+    else if (btArrowLeft) { arrowKeyHeld = true; currentArrowKey = ','; }
+    else if (btArrowRight) { arrowKeyHeld = true; currentArrowKey = '/'; }
+  }
+#endif
 
   if (arrowKeyHeld && currentArrowKey == lastKey) {
     // Key is still held - check if we should repeat
@@ -5508,6 +6534,9 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
 
   // Redraw based on what changed
   if (canvasCleared || undoPerformed || gridToggled || rulersToggled || floodFilled || themeToggled) {
+    // Update LED matrix for any canvas change
+    LED_CANVAS_UPDATED();
+
     // Redraw the entire canvas
     // (gridToggled needs full redraw because cell size changed)
     // (rulersToggled needs full redraw to show/hide rulers)
