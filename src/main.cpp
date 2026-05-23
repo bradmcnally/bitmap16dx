@@ -50,7 +50,7 @@
 #include <Preferences.h>
 
 // Include NimBLE before PNGENC to avoid macro conflicts
-#define ENABLE_BLUETOOTH 1  // Early define for conditional include
+#define ENABLE_BLUETOOTH 0  // DISABLED - crashes on init, debugging needed
 #if ENABLE_BLUETOOTH
   #include <NimBLEDevice.h>
 #endif
@@ -2357,22 +2357,24 @@ void drawSettingsView() {
   settingsCanvas.setTextSize(1);
   settingsCanvas.setCursor(4, 4);
   settingsCanvas.print("SETTINGS");
+  settingsCanvas.setTextSize(2);
 
   // Menu item positions
   const int itemStartY = 30;
-  const int itemHeight = 15;
+  const int itemHeight = 20;
   const int labelX = 20;
-  const int valueX = 110;
+  const int valueRight = 228;  // Right edge for value text (240 - 12px margin)
+  const int charWidth = 12;
 
   // Draw each menu item
-  const char* menuItems[SETTINGS_ITEM_COUNT] = {
-    "Theme:",
-    "Default Grid:",
-    "RGB Matrix:",
-    "Export:",
-    "Shake undo:",
+  const char* menuLabels[SETTINGS_ITEM_COUNT] = {
+    "UI Theme",
+    "Grid default",
+    "RGB matrix",
+    "Export",
+    "Shake undo",
 #if ENABLE_BLUETOOTH
-    "Bluetooth:"
+    "Bluetooth"
 #endif
   };
 
@@ -2386,86 +2388,57 @@ void drawSettingsView() {
     }
 
     // Draw label
+    settingsCanvas.setTextColor(currentTheme->text);
     settingsCanvas.setCursor(labelX, itemY);
-    settingsCanvas.print(menuItems[i]);
+    settingsCanvas.print(menuLabels[i]);
 
-    // Draw value with both options at fixed positions
-    // Use fixed X coordinates so text doesn't shift when brackets move
-    const int option1X = valueX;
-    const int option2X = valueX + 60;  // Fixed spacing between options
-
-    // Calculate dimmed color for unselected options (60% opacity)
-    uint16_t dimmedColor = getDimmedColor(currentTheme->text, currentTheme->background, 0.6f);
+    // Determine current value string
+    const char* valueText;
+    static char btBuf[16];
 
     switch(i) {
       case 0:  // Theme
-        settingsCanvas.setCursor(option1X, itemY);
-        settingsCanvas.setTextColor(currentTheme == &THEME_LIGHT ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(currentTheme == &THEME_LIGHT ? "[Light]" : " Light ");
-        settingsCanvas.setCursor(option2X, itemY);
-        settingsCanvas.setTextColor(currentTheme == &THEME_DARK ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(currentTheme == &THEME_DARK ? "[Dark]" : " Dark ");
+        valueText = currentTheme == &THEME_LIGHT ? "Light" : "Dark";
         break;
       case 1:  // Default Grid Size
-        settingsCanvas.setCursor(option1X, itemY);
-        settingsCanvas.setTextColor(defaultGridSize == 8 ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(defaultGridSize == 8 ? "[8x8]" : " 8x8 ");
-        settingsCanvas.setCursor(option2X, itemY);
-        settingsCanvas.setTextColor(defaultGridSize == 16 ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(defaultGridSize == 16 ? "[16x16]" : " 16x16 ");
+        valueText = defaultGridSize == 8 ? "8" : "16";
         break;
       case 2:  // RGB Matrix
-        settingsCanvas.setCursor(option1X, itemY);
-        settingsCanvas.setTextColor(rgbMatrixUnits == 1 ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(rgbMatrixUnits == 1 ? "[1 Unit]" : " 1 Unit ");
-        settingsCanvas.setCursor(option2X, itemY);
-        settingsCanvas.setTextColor(rgbMatrixUnits == 4 ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(rgbMatrixUnits == 4 ? "[4 Units]" : " 4 Units ");
+        valueText = rgbMatrixUnits == 1 ? "1" : "4";
         break;
       case 3:  // Export Format
-        settingsCanvas.setCursor(option1X, itemY);
-        settingsCanvas.setTextColor(exportRGB565 == false ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(exportRGB565 == false ? "[RGB888]" : " RGB888 ");
-        settingsCanvas.setCursor(option2X, itemY);
-        settingsCanvas.setTextColor(exportRGB565 ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(exportRGB565 ? "[RGB565]" : " RGB565 ");
+        valueText = exportRGB565 ? "RGB565" : "RGB888";
         break;
       case 4:  // Shake Undo
-        settingsCanvas.setCursor(option1X, itemY);
-        settingsCanvas.setTextColor(shakeUndoEnabled ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(shakeUndoEnabled ? "[ON]" : " ON ");
-        settingsCanvas.setCursor(option2X, itemY);
-        settingsCanvas.setTextColor(shakeUndoEnabled == false ? currentTheme->text : dimmedColor);
-        settingsCanvas.print(shakeUndoEnabled == false ? "[OFF]" : " OFF ");
+        valueText = shakeUndoEnabled ? "ON" : "OFF";
         break;
 #if ENABLE_BLUETOOTH
       case 5:  // Bluetooth
-        settingsCanvas.setCursor(option1X, itemY);
         if (btConnected) {
-          settingsCanvas.setTextColor(currentTheme->text);
-          settingsCanvas.print("[PAIRED]");
+          valueText = "Paired";
         } else if (btScanning) {
-          settingsCanvas.setTextColor(currentTheme->text);
-          char scanMsg[16];
-          snprintf(scanMsg, sizeof(scanMsg), "[SCAN %d]", btScanCountdown);
-          settingsCanvas.print(scanMsg);
+          snprintf(btBuf, sizeof(btBuf), "Scan %d", btScanCountdown);
+          valueText = btBuf;
         } else if (btEnabled && btHasBondedDevice) {
-          // Show "Reconnect" when there's a bonded device
-          settingsCanvas.setTextColor(currentTheme->text);
-          settingsCanvas.print("[RECONNECT]");
+          valueText = "Reconnect";
         } else if (btEnabled) {
-          // Show "Scan" option when BT is on but no bonded device
-          settingsCanvas.setTextColor(currentTheme->text);
-          settingsCanvas.print("[SCAN]");
+          valueText = "Scan";
         } else {
-          settingsCanvas.setTextColor(dimmedColor);
-          settingsCanvas.print("[OFF]");
+          valueText = "OFF";
         }
         break;
 #endif
+      default:
+        valueText = "";
+        break;
     }
 
-    // Reset text color for next items
+    // Right-align value
+    uint16_t dimmedColor = getDimmedColor(currentTheme->text, currentTheme->background, 0.6f);
+    settingsCanvas.setTextColor(dimmedColor);
+    settingsCanvas.setCursor(valueRight - (strlen(valueText) * charWidth), itemY);
+    settingsCanvas.print(valueText);
+
     settingsCanvas.setTextColor(currentTheme->text);
   }
 
@@ -2550,10 +2523,16 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
           preferences.putUChar("puzzleUnits", rgbMatrixUnits);
           preferences.end();
 
-          // Clear unused LEDs and update display immediately
+#if ENABLE_LED_MATRIX
+          // Clear all LEDs first (in case going from 4 to 1 unit)
           FastLED.clear();
           FastLED.show();
-          LED_CANVAS_UPDATED();  // Mark canvas for LED update
+
+          // Update LED matrix immediately with current canvas
+          if (ledMatrixEnabled) {
+            updateLEDMatrix(false);  // Show canvas without cursor while in settings
+          }
+#endif
 
           setStatusMessage(rgbMatrixUnits == 1 ? "1 Unit" : "4 Units");
           break;
@@ -2688,6 +2667,13 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
         // Simulate Enter key press
         status.enter = true;
       }
+#if ENABLE_SCREENSHOTS
+      // Y key - Take Screenshot
+      else if (i == 'y' || i == 'Y') {
+        takeScreenshot();
+        settingsViewNeedsRedraw = true;
+      }
+#endif
     }
   }
 
