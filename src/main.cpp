@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - v0.6.0
+ * BitMap16 DX - v0.7.0
  *
  * Working pixel sketch station for Cardputer ADV!
  *
@@ -184,6 +184,7 @@ struct ThemeColors {
   uint16_t cellLight;
   uint16_t shadow;
   uint16_t text;
+  uint16_t textSecondary;
   uint16_t centerLine;
   uint16_t iconDark;
   uint16_t iconLight;
@@ -196,6 +197,7 @@ const ThemeColors THEME_LIGHT = {
   RGB565(0xFC, 0xFD, 0xFF),  // cellLight #FCFDFF
   RGB565(0xC1, 0xC4, 0xD6),  // shadow #c1c4d6
   TFT_BLACK,                 // text #000000
+  RGB565(0x96, 0x94, 0x9B),  // textSecondary #4c4b4f
   RGB565(0xD3, 0xD3, 0xDD),  // centerLine (same as background)
   TFT_BLACK,                 // iconDark #000000
   TFT_WHITE                  // iconLight #ffffff
@@ -208,6 +210,7 @@ const ThemeColors THEME_DARK = {
   RGB565(0x2c, 0x2c, 0x2c),  // cellLight #2c2c2c
   RGB565(0x05, 0x05, 0x05),  // shadow #050505
   TFT_WHITE,                 // text #ffffff
+  RGB565(0x96, 0x94, 0x9B),  // textSecondary #4c4b4f
   RGB565(0x0e, 0x0e, 0x0e),  // centerLine (same as background)
   TFT_BLACK,                 // iconDark #000000
   RGB565(0xD3, 0xD3, 0xDD)   // iconLight #d3d3dd
@@ -410,6 +413,8 @@ const int MEMORY_CURSOR_ANIM_DISTANCE = 6;  // Max pixels to move diagonally (mo
 // Hint screen state
 bool inHelpView = false;
 bool helpViewFromMemoryView = false;  // Track if hint screen was opened from memory view
+int helpViewCursor = 0;
+int helpViewScrollOffset = 0;
 
 // View mode state
 bool inPreviewView = false;
@@ -458,15 +463,38 @@ const int SETTINGS_ITEM_COUNT = 6;
 const int SETTINGS_ITEM_COUNT = 5;
 #endif
 
+// Charging mode state (DVD screensaver)
+bool inChargingMode = false;
+unsigned long lastChargeFrameTime = 0;
+const int CHARGE_FRAME_MS = 33;  // ~30fps
+int chargeBatteryPercent = -1;
+unsigned long lastChargeBatteryCheck = 0;
+
+struct BouncingIcon {
+  float x, y;
+  float dx, dy;
+  const unsigned char* icon;
+};
+const int CHARGE_ICON_COUNT = 5;  // 4 icons + 1 sketch sprite
+BouncingIcon chargeIcons[5];
+M5Canvas chargeSketchSprite(&M5Cardputer.Display);
+M5Canvas chargeCanvas(&M5Cardputer.Display);
+bool chargeSketchLoaded = false;
+bool chargeCanvasAvailable = false;
+
 // Settings preferences (loaded from NVS)
 uint8_t defaultGridSize = 8;        // 8 or 16 (default grid size on boot/new sketch)
 uint8_t rgbMatrixUnits = 1;         // 1 or 4 (64 or 256 LEDs)
 bool exportRGB565 = false;           // false=RGB888, true=RGB565
-bool shakeUndoEnabled = true;        // true=enabled, false=disabled
+bool shakeUndoEnabled = false;       // true=enabled, false=disabled
 
 // Settings canvas for tear-free rendering
 M5Canvas settingsCanvas(&M5Cardputer.Display);
 bool settingsCanvasAvailable = false;
+
+// Help view canvas for tear-free rendering
+M5Canvas helpCanvas(&M5Cardputer.Display);
+bool helpCanvasAvailable = false;
 
 // Battery display
 int lastBatteryPercent = -1;  // Track last drawn battery % to avoid unnecessary redraws
@@ -1902,6 +1930,147 @@ void exitMemoryView() {
 }
 
 /**
+ * Enter Charging Mode - DVD-style bouncing battery screensaver
+ */
+void enterChargingMode() {
+  inChargingMode = true;
+  lastChargeFrameTime = millis();
+  chargeBatteryPercent = M5Cardputer.Power.getBatteryLevel();
+  lastChargeBatteryCheck = millis();
+
+  // Select battery icon
+  const unsigned char* batIcon;
+  if (chargeBatteryPercent < 10) batIcon = ICON_BATTERY_0;
+  else if (chargeBatteryPercent < 50) batIcon = ICON_BATTERY_10;
+  else if (chargeBatteryPercent < 90) batIcon = ICON_BATTERY_50;
+  else batIcon = ICON_BATTERY_90;
+
+  // Initialize icons with random positions and velocities (no overlap)
+  randomSeed(millis());
+  const unsigned char* icons[] = {ICON_DRAW, ICON_ERASE, ICON_FILL, batIcon, nullptr};
+  for (int i = 0; i < CHARGE_ICON_COUNT; i++) {
+    float x, y;
+    bool tooClose;
+    int attempts = 0;
+    do {
+      x = random(10, 190);
+      y = random(10, 90);
+      tooClose = false;
+      for (int j = 0; j < i; j++) {
+        if (abs(x - chargeIcons[j].x) < 48 && abs(y - chargeIcons[j].y) < 48) {
+          tooClose = true;
+          break;
+        }
+      }
+    } while (tooClose && ++attempts < 50);
+    float dx = (random(70, 130) / 100.0f) * (random(2) ? 1 : -1);
+    float dy = (random(70, 130) / 100.0f) * (random(2) ? 1 : -1);
+    chargeIcons[i] = {x, y, dx, dy, icons[i]};
+  }
+
+  // Load a random sketch into the sprite
+  chargeSketchLoaded = false;
+  loadSketchListFromSD();
+
+  if (sketchList.size() > 0) {
+    // Pick a random sketch
+    int randIndex = millis() % sketchList.size();
+    SketchInfo& info = sketchList[randIndex];
+
+    // Load sketch data from SD
+    String fullPath = "/bitmap16dx/sketches/" + info.filename;
+    File file = SD.open(fullPath.c_str(), FILE_READ);
+    if (file) {
+      Sketch tempSketch;
+      size_t fileSize = file.size();
+
+      // Skip version byte if present
+      if (fileSize == SKETCH_FILE_SIZE_V2) {
+        file.read();  // version byte
+      }
+
+      tempSketch.gridSize = file.read();
+      tempSketch.paletteSize = file.read();
+
+      for (int i = 0; i < 16; i++) {
+        uint8_t high = file.read();
+        uint8_t low = file.read();
+        tempSketch.paletteColors[i] = (high << 8) | low;
+      }
+
+      for (int py = 0; py < 16; py++) {
+        for (int px = 0; px < 16; px++) {
+          tempSketch.pixels[py][px] = file.read();
+        }
+      }
+      file.close();
+
+      // Render into 48x48 sprite
+      if (chargeSketchSprite.createSprite(48, 48)) {
+        chargeSketchSprite.fillSprite(TFT_BLACK);
+        int pixelSize = (tempSketch.gridSize == 16) ? 3 : 6;
+        int gridSize = tempSketch.gridSize;
+
+        for (int py = 0; py < gridSize; py++) {
+          for (int px = 0; px < gridSize; px++) {
+            uint8_t colorIdx = tempSketch.pixels[py][px];
+            if (colorIdx > 0 && colorIdx <= tempSketch.paletteSize) {
+              uint16_t color = tempSketch.paletteColors[colorIdx - 1];
+              chargeSketchSprite.fillRect(px * pixelSize, py * pixelSize, pixelSize, pixelSize, color);
+            }
+          }
+        }
+        chargeSketchLoaded = true;
+      }
+    }
+  }
+
+  // Allocate full-screen canvas for tear-free rendering
+  chargeCanvasAvailable = chargeCanvas.createSprite(240, 135);
+
+  // Dim display
+  M5Cardputer.Display.setBrightness(50);
+
+  // Dark background
+  M5Cardputer.Display.fillScreen(TFT_BLACK);
+}
+
+/**
+ * Exit Charging Mode - restore canvas view
+ */
+void exitChargingMode() {
+  inChargingMode = false;
+
+  // Free sprites
+  if (chargeSketchLoaded) {
+    chargeSketchSprite.deleteSprite();
+    chargeSketchLoaded = false;
+  }
+  if (chargeCanvasAvailable) {
+    chargeCanvas.deleteSprite();
+    chargeCanvasAvailable = false;
+  }
+
+  // Restore brightness
+  uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
+  M5Cardputer.Display.setBrightness(hardwareBrightness);
+
+  // Redraw canvas
+  M5Cardputer.Display.fillScreen(currentTheme->background);
+  drawGrid();
+  drawPalette();
+  drawCursor();
+
+  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
+  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
+  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
+
+  lastBatteryPercent = -1;
+  batteryFirstCheck = true;
+  drawBatteryIndicator();
+}
+
+/**
  * Enter Hint Screen mode
  */
 void enterHelpView() {
@@ -1909,6 +2078,9 @@ void enterHelpView() {
   helpViewFromMemoryView = inMemoryView;
 
   inHelpView = true;
+  helpViewCursor = 0;
+  helpViewScrollOffset = 0;
+  helpCanvasAvailable = helpCanvas.createSprite(240, 135);
 
   // Draw hint screen
   drawHelpView();
@@ -1919,6 +2091,11 @@ void enterHelpView() {
  */
 void exitHelpView() {
   inHelpView = false;
+
+  if (helpCanvasAvailable) {
+    helpCanvas.deleteSprite();
+    helpCanvasAvailable = false;
+  }
 
   // Return to the view we came from
   if (helpViewFromMemoryView) {
@@ -2308,28 +2485,6 @@ void exitSettingsView() {
   drawBatteryIndicator();
 }
 
-/**
- * Calculate a dimmed color by blending with background (for 60% opacity effect)
- */
-uint16_t getDimmedColor(uint16_t foreground, uint16_t background, float alpha) {
-  // Extract RGB565 components from foreground
-  uint8_t fgR = (foreground >> 11) & 0x1F;
-  uint8_t fgG = (foreground >> 5) & 0x3F;
-  uint8_t fgB = foreground & 0x1F;
-
-  // Extract RGB565 components from background
-  uint8_t bgR = (background >> 11) & 0x1F;
-  uint8_t bgG = (background >> 5) & 0x3F;
-  uint8_t bgB = background & 0x1F;
-
-  // Blend (alpha blend formula)
-  uint8_t blendR = (uint8_t)(fgR * alpha + bgR * (1.0f - alpha));
-  uint8_t blendG = (uint8_t)(fgG * alpha + bgG * (1.0f - alpha));
-  uint8_t blendB = (uint8_t)(fgB * alpha + bgB * (1.0f - alpha));
-
-  // Reconstruct RGB565
-  return (blendR << 11) | (blendG << 5) | blendB;
-}
 
 /**
  * Draw Settings Menu UI to canvas
@@ -2357,16 +2512,12 @@ void drawSettingsView() {
   settingsCanvas.setTextSize(1);
   settingsCanvas.setCursor(4, 4);
   settingsCanvas.print("SETTINGS");
-  settingsCanvas.setTextSize(2);
 
-  // Menu item positions
-  const int itemStartY = 30;
-  const int itemHeight = 20;
-  const int labelX = 20;
-  const int valueRight = 228;  // Right edge for value text (240 - 12px margin)
-  const int charWidth = 12;
+  const int startY = 18;
+  const int lineHeight = 16;
+  const int selectedLineHeight = 28;
+  const int labelX = 12;
 
-  // Draw each menu item
   const char* menuLabels[SETTINGS_ITEM_COUNT] = {
     "UI Theme",
     "Grid default",
@@ -2378,18 +2529,17 @@ void drawSettingsView() {
 #endif
   };
 
+  int y = startY;
   for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
-    int itemY = itemStartY + (i * itemHeight);
-
-    // Draw cursor arrow for selected item
-    if (i == settingsViewCursor) {
-      settingsCanvas.setCursor(4, itemY);
-      settingsCanvas.print(">");
-    }
+    bool isSelected = (i == settingsViewCursor);
+    int rowH = isSelected ? selectedLineHeight : lineHeight;
+    int textY = isSelected ? y + 4 : y;
+    uint16_t color = isSelected ? currentTheme->text : currentTheme->textSecondary;
 
     // Draw label
-    settingsCanvas.setTextColor(currentTheme->text);
-    settingsCanvas.setCursor(labelX, itemY);
+    settingsCanvas.setTextSize(isSelected ? 2 : 1);
+    settingsCanvas.setTextColor(color);
+    settingsCanvas.setCursor(labelX, textY);
     settingsCanvas.print(menuLabels[i]);
 
     // Determine current value string
@@ -2397,23 +2547,23 @@ void drawSettingsView() {
     static char btBuf[16];
 
     switch(i) {
-      case 0:  // Theme
+      case 0:
         valueText = currentTheme == &THEME_LIGHT ? "Light" : "Dark";
         break;
-      case 1:  // Default Grid Size
+      case 1:
         valueText = defaultGridSize == 8 ? "8" : "16";
         break;
-      case 2:  // RGB Matrix
+      case 2:
         valueText = rgbMatrixUnits == 1 ? "1" : "4";
         break;
-      case 3:  // Export Format
+      case 3:
         valueText = exportRGB565 ? "RGB565" : "RGB888";
         break;
-      case 4:  // Shake Undo
+      case 4:
         valueText = shakeUndoEnabled ? "ON" : "OFF";
         break;
 #if ENABLE_BLUETOOTH
-      case 5:  // Bluetooth
+      case 5:
         if (btConnected) {
           valueText = "Paired";
         } else if (btScanning) {
@@ -2433,16 +2583,28 @@ void drawSettingsView() {
         break;
     }
 
-    // Right-align value
-    uint16_t dimmedColor = getDimmedColor(currentTheme->text, currentTheme->background, 0.6f);
-    settingsCanvas.setTextColor(dimmedColor);
-    settingsCanvas.setCursor(valueRight - (strlen(valueText) * charWidth), itemY);
-    settingsCanvas.print(valueText);
+    // Draw value right-aligned, with < > on selected row
+    settingsCanvas.setTextSize(isSelected ? 2 : 1);
+    settingsCanvas.setTextColor(color);
+    const int valueRight = 228;
+    int charW = isSelected ? 12 : 6;
+    int valueLen;
+    if (isSelected) {
+      valueLen = strlen(valueText) + 2;  // "<" + text + ">"
+    } else {
+      valueLen = strlen(valueText);
+    }
+    settingsCanvas.setCursor(valueRight - (valueLen * charW), textY);
+    if (isSelected) {
+      settingsCanvas.printf("<%s>", valueText);
+    } else {
+      settingsCanvas.print(valueText);
+    }
 
-    settingsCanvas.setTextColor(currentTheme->text);
+    y += rowH;
   }
 
-  // Draw status message if one exists (lower left, matching canvas view)
+  // Draw status message if one exists
   if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
     settingsCanvas.setTextColor(currentTheme->text);
     settingsCanvas.setTextSize(1);
@@ -2461,6 +2623,7 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
   // Track if we need to redraw
   static bool settingsViewNeedsRedraw = true;
   static int lastSettingsViewCursor = -1;
+  static bool settingsPrevUp = false, settingsPrevDown = false;
 
   // Redraw if cursor changed or first time
   if (settingsViewNeedsRedraw || lastSettingsViewCursor != settingsViewCursor) {
@@ -2479,6 +2642,11 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
 #endif
 
   if (M5Cardputer.Keyboard.isPressed() || btEnterPressed) {
+    // Check if left/right arrow pressed (treat as toggle)
+    for (auto i : status.word) {
+      if (i == ',' || i == '/') status.enter = true;
+    }
+
     // Enter key - toggle selected setting
     if (status.enter || btEnterPressed) {
       bool needsFullRedraw = false;
@@ -2636,8 +2804,8 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
     }
 
     // Check for character keys
+    bool upPressed = false, downPressed = false;
     for (auto i : status.word) {
-      // ESC key - exit settings
       if (i == '`') {
         exitSettingsView();
         settingsViewNeedsRedraw = true;
@@ -2645,36 +2813,32 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
         delay(200);
         return;
       }
-      // Arrow keys: ; (up), . (down)
-      else if (i == ';') {
-        // Up arrow - move cursor up
-        if (settingsViewCursor > 0) {
-          settingsViewCursor--;
-          settingsViewNeedsRedraw = true;
-          delay(150);  // Debounce to prevent rapid scrolling
-        }
-      }
-      else if (i == '.') {
-        // Down arrow - move cursor down
-        if (settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
-          settingsViewCursor++;
-          settingsViewNeedsRedraw = true;
-          delay(150);  // Debounce to prevent rapid scrolling
-        }
-      }
-      // Space bar - also toggle (alternative to Enter)
+      else if (i == ';') upPressed = true;
+      else if (i == '.') downPressed = true;
       else if (i == ' ') {
-        // Simulate Enter key press
         status.enter = true;
       }
 #if ENABLE_SCREENSHOTS
-      // Y key - Take Screenshot
       else if (i == 'y' || i == 'Y') {
         takeScreenshot();
         settingsViewNeedsRedraw = true;
       }
 #endif
     }
+
+    if (upPressed && !settingsPrevUp && settingsViewCursor > 0) {
+      settingsViewCursor--;
+      settingsViewNeedsRedraw = true;
+    }
+    if (downPressed && !settingsPrevDown && settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
+      settingsViewCursor++;
+      settingsViewNeedsRedraw = true;
+    }
+    settingsPrevUp = upPressed;
+    settingsPrevDown = downPressed;
+  } else {
+    settingsPrevUp = false;
+    settingsPrevDown = false;
   }
 
 #if ENABLE_BLUETOOTH
@@ -3833,111 +3997,96 @@ void drawMemoryView(bool fullRedraw) {
  * Draw Hint Screen - displays all keyboard controls
  */
 void drawHelpView() {
-  M5Cardputer.Display.fillScreen(currentTheme->background);
+  if (!helpCanvasAvailable) return;
+
+  helpCanvas.fillSprite(currentTheme->background);
+  helpCanvas.setTextSize(1);
 
   // Title
-  M5Cardputer.Display.setTextColor(currentTheme->text);
-  M5Cardputer.Display.setTextSize(1);
-  M5Cardputer.Display.setCursor(4, 4);
-  M5Cardputer.Display.print("HINTS");
+  helpCanvas.setTextColor(currentTheme->text);
+  helpCanvas.setCursor(4, 4);
+  helpCanvas.print("HINTS");
 
-  // Draw help text in columns
-  int leftCol = 4;
-  int rightCol = 125;
-  int startY = 20;
-  int lineHeight = 10;
-  int currentLine = 0;
+  struct HelpItem {
+    const char* label;
+    const char* key;
+    int group;
+  };
 
-  // Left column - Drawing controls
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("DRAWING");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Move: Arrows");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Draw: Ok");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Erase: Del");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Fill: F");
-  currentLine++;
-
-  // Space between sections
-  currentLine++;
-
-  // Colors section
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("COLORS");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Color 1-8: 1-8");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Color 9-16: Fn+1-8");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(leftCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Swap Palette: P");
-  currentLine++;
-
-  // Right column - System controls
-  currentLine = 0;
-
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("SYSTEM");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Open: O");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Undo: Z");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Save: S");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Export: X");
-  currentLine++;
-
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Clear: G0");
-  currentLine++;
-
+  const HelpItem helpItems[] = {
+    {"Move",        "Arrows",  0},
+    {"Draw",        "Ok",      0},
+    {"Erase",       "Del",     0},
+    {"Fill",        "F",       0},
+    {"Color 1-8",   "1-8",     0},
+    {"Color 9-16",  "Fn 1-8",  0},
+    {"Palette",     "P",       0},
+    {"Clear",       "G0",      0},
+    {"Preview",     "V",       0},
+    {"Grid size",   "G",       0},
+    {"Grid ruler",  "R",       0},
+    {"Open",        "O",       1},
+    {"Undo",        "Z",       1},
+    {"Save",        "S",       1},
+    {"Save as",     "Fn S",    1},
+    {"Settings",    "T",       1},
+    {"Export",      "X",       1},
+    {"Brightness",  "B +/-",   1},
+    {"Charge",      "Fn B",    1},
 #if ENABLE_LED_MATRIX
-  // === LED MATRIX SECTION (Optional Hardware Feature) ===
-  // Space between sections
-  currentLine++;
+    {"RGB on/off",  "L Ok",    2},
+    {"RGB Bright",  "L +/-",   2},
+#endif
+  };
 
-  // LED Matrix section header
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("LED MATRIX");
-  currentLine++;
+  const int totalItems = sizeof(helpItems) / sizeof(helpItems[0]);
+  const int startY = 18;
+  const int lineHeight = 14;
+  const int selectedLineHeight = 24;
+  const int groupGap = 8;
+  const int labelX = 12;
+  const int keyX = 156;
 
-  // LED toggle hint (L + Enter)
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Toggle: L+Ok ");
-  M5Cardputer.Display.print(ledMatrixEnabled ? "[ON]" : "[OFF]");
-  currentLine++;
+  // Auto-scroll to keep cursor visible
+  if (helpViewCursor < helpViewScrollOffset) {
+    helpViewScrollOffset = helpViewCursor;
+  }
+  while (helpViewScrollOffset < helpViewCursor) {
+    int y = startY;
+    for (int i = helpViewScrollOffset; i <= helpViewCursor && i < totalItems; i++) {
+      if (i > helpViewScrollOffset && helpItems[i].group != helpItems[i-1].group) y += groupGap;
+      y += (i == helpViewCursor) ? selectedLineHeight : lineHeight;
+    }
+    if (y <= 135) break;
+    helpViewScrollOffset++;
+  }
 
-  // LED brightness hint (L + +/-)
-  M5Cardputer.Display.setCursor(rightCol, startY + (currentLine * lineHeight));
-  M5Cardputer.Display.print("Brightness: L+/-");
-  currentLine++;
-#endif // ENABLE_LED_MATRIX
+  // Draw visible rows
+  int y = startY;
+  for (int i = helpViewScrollOffset; i < totalItems; i++) {
+    if (i > helpViewScrollOffset && helpItems[i].group != helpItems[i-1].group) y += groupGap;
+    if (y >= 135) break;
 
+    bool isSelected = (i == helpViewCursor);
+    int rowH = isSelected ? selectedLineHeight : lineHeight;
+    int textY = isSelected ? y + 4 : y;
+
+    uint16_t color = isSelected ? currentTheme->text : currentTheme->textSecondary;
+
+    helpCanvas.setTextSize(isSelected ? 2 : 1);
+    helpCanvas.setTextColor(color);
+    helpCanvas.setCursor(labelX, textY);
+    helpCanvas.print(helpItems[i].label);
+
+    helpCanvas.setTextSize(isSelected ? 2 : 1);
+    helpCanvas.setTextColor(color);
+    helpCanvas.setCursor(keyX, textY);
+    helpCanvas.print(helpItems[i].key);
+
+    y += rowH;
+  }
+
+  helpCanvas.pushSprite(0, 0);
 }
 
 /**
@@ -4540,7 +4689,7 @@ void setup() {
   defaultGridSize = preferences.getUChar("defaultGrid", 8);      // Default: 8×8
   rgbMatrixUnits = preferences.getUChar("puzzleUnits", 1);       // Default: 1 unit (64 LEDs)
   exportRGB565 = preferences.getBool("exportRGB565", false);     // Default: RGB888
-  shakeUndoEnabled = preferences.getBool("shakeUndo", true);     // Default: enabled
+  shakeUndoEnabled = preferences.getBool("shakeUndo", false);    // Default: disabled
 
   preferences.end();
 
@@ -4635,36 +4784,250 @@ void setup() {
 // ============================================================================
 
 /**
- * Handle Help View input and rendering
+ * Handle Charging Mode - DVD-style bouncing battery icon
  */
-void handleHelpView(Keyboard_Class::KeysState& status) {
-  // Handle help view controls - ESC or I to exit
+void handleChargingMode(Keyboard_Class::KeysState& status) {
+  // Wait for initial key release before listening for exit
+  static bool chargeWaitingForRelease = true;
+  if (chargeWaitingForRelease) {
+    if (!M5Cardputer.Keyboard.isPressed()) {
+      chargeWaitingForRelease = false;
+    }
+    return;
+  }
+
+  // Any key press exits
   if (M5Cardputer.Keyboard.isPressed()) {
-    // Check for character keys
-    for (auto i : status.word) {
-      // ` key (ESC) or I key - exit help view
-      if (i == '`' || i == 'i' || i == 'I') {
-        exitHelpView();
-        delay(200);  // Debounce
-        return;
+    chargeWaitingForRelease = true;
+    exitChargingMode();
+    delay(200);
+    return;
+  }
+
+  // Throttle to ~30fps
+  unsigned long now = millis();
+  if (now - lastChargeFrameTime < CHARGE_FRAME_MS) {
+    return;
+  }
+  lastChargeFrameTime = now;
+
+  // Update battery level periodically
+  if (now - lastChargeBatteryCheck >= BATTERY_CHECK_INTERVAL) {
+    chargeBatteryPercent = M5Cardputer.Power.getBatteryLevel();
+    lastChargeBatteryCheck = now;
+    // Update battery icon pointer
+    if (chargeBatteryPercent < 10) chargeIcons[3].icon = ICON_BATTERY_0;
+    else if (chargeBatteryPercent < 50) chargeIcons[3].icon = ICON_BATTERY_10;
+    else if (chargeBatteryPercent < 90) chargeIcons[3].icon = ICON_BATTERY_50;
+    else chargeIcons[3].icon = ICON_BATTERY_90;
+  }
+
+  const int iconSize = 24;
+  const int sketchSize = 48;
+  int activeCount = chargeSketchLoaded ? CHARGE_ICON_COUNT : CHARGE_ICON_COUNT - 1;
+
+  // Update positions
+  for (int i = 0; i < activeCount; i++) {
+    chargeIcons[i].x += chargeIcons[i].dx;
+    chargeIcons[i].y += chargeIcons[i].dy;
+
+    // Wall collision
+    int boundsW = (i == 4) ? sketchSize : (i == 3) ? 54 : iconSize;
+    int boundsH = (i == 4) ? sketchSize : iconSize;
+    if (chargeIcons[i].x <= 0) { chargeIcons[i].x = 0; chargeIcons[i].dx = -chargeIcons[i].dx; }
+    if (chargeIcons[i].x >= 240 - boundsW) { chargeIcons[i].x = 240 - boundsW; chargeIcons[i].dx = -chargeIcons[i].dx; }
+    if (chargeIcons[i].y <= 0) { chargeIcons[i].y = 0; chargeIcons[i].dy = -chargeIcons[i].dy; }
+    if (chargeIcons[i].y >= 135 - boundsH) { chargeIcons[i].y = 135 - boundsH; chargeIcons[i].dy = -chargeIcons[i].dy; }
+  }
+
+  // Icon-icon collision detection
+  const int collisionDist = 16;
+  for (int a = 0; a < activeCount; a++) {
+    for (int b = a + 1; b < activeCount; b++) {
+      int distThresh = (a == 4 || b == 4) ? 30 : collisionDist;
+      if (abs(chargeIcons[a].x - chargeIcons[b].x) < distThresh &&
+          abs(chargeIcons[a].y - chargeIcons[b].y) < distThresh) {
+        float tmpDx = chargeIcons[a].dx;
+        float tmpDy = chargeIcons[a].dy;
+        chargeIcons[a].dx = chargeIcons[b].dx;
+        chargeIcons[a].dy = chargeIcons[b].dy;
+        chargeIcons[b].dx = tmpDx;
+        chargeIcons[b].dy = tmpDy;
+        chargeIcons[a].x += chargeIcons[a].dx * 2;
+        chargeIcons[a].y += chargeIcons[a].dy * 2;
+        chargeIcons[b].x += chargeIcons[b].dx * 2;
+        chargeIcons[b].y += chargeIcons[b].dy * 2;
       }
-#if ENABLE_SCREENSHOTS
-      // Y key - Take Screenshot
-      else if (i == 'y' || i == 'Y') {
-        takeScreenshot();
-        enterHelpView();  // Redraw help view after screenshot status message
-      }
-#endif
     }
   }
 
+  // Render frame to canvas (tear-free)
+  if (chargeCanvasAvailable) {
+    chargeCanvas.fillSprite(TFT_BLACK);
+
+    // Draw icons to canvas
+    for (int i = 0; i < activeCount; i++) {
+      if (i == 4 && chargeSketchLoaded) {
+        // Blit sketch sprite into canvas
+        chargeSketchSprite.pushSprite(&chargeCanvas, (int)chargeIcons[i].x, (int)chargeIcons[i].y, TFT_BLACK);
+      } else {
+        // Draw 2-bit indexed icon to canvas
+        const unsigned char* bitmap = chargeIcons[i].icon;
+        int ix = (int)chargeIcons[i].x;
+        int iy = (int)chargeIcons[i].y;
+        for (int row = 0; row < iconSize; row++) {
+          for (int col = 0; col < iconSize; col++) {
+            int pixelIndex = row * iconSize + col;
+            int byteIndex = pixelIndex / 4;
+            int bitShift = (3 - (pixelIndex % 4)) * 2;
+            uint8_t byte = pgm_read_byte(&bitmap[byteIndex]);
+            uint8_t value = (byte >> bitShift) & 0x03;
+            if (value == 1) {
+              chargeCanvas.drawPixel(ix + col, iy + row, THEME_DARK.iconDark);
+            } else if (value == 2) {
+              chargeCanvas.drawPixel(ix + col, iy + row, THEME_DARK.iconLight);
+            }
+          }
+        }
+      }
+    }
+
+    // Draw battery percentage text
+    chargeCanvas.setTextColor(THEME_DARK.text);
+    chargeCanvas.setTextSize(1);
+    chargeCanvas.setCursor((int)chargeIcons[3].x + 28, (int)chargeIcons[3].y + 8);
+    chargeCanvas.printf("%d%%", chargeBatteryPercent);
+
+    // Push entire frame at once
+    chargeCanvas.pushSprite(0, 0);
+  } else {
+    // Fallback: draw directly (with flicker)
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+    for (int i = 0; i < activeCount; i++) {
+      if (i == 4 && chargeSketchLoaded) {
+        chargeSketchSprite.pushSprite((int)chargeIcons[i].x, (int)chargeIcons[i].y, TFT_BLACK);
+      } else {
+        drawIcon((int)chargeIcons[i].x, (int)chargeIcons[i].y, chargeIcons[i].icon, 24, 24, true);
+      }
+    }
+    M5Cardputer.Display.setTextColor(THEME_DARK.text);
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setCursor((int)chargeIcons[3].x + 28, (int)chargeIcons[3].y + 8);
+    M5Cardputer.Display.printf("%d%%", chargeBatteryPercent);
+  }
+}
+
+/**
+ * Handle Help View input and rendering
+ */
+void handleHelpView(Keyboard_Class::KeysState& status) {
+#if ENABLE_LED_MATRIX
+  const int totalHelpItems = 21;
+#else
+  const int totalHelpItems = 19;
+#endif
+
+  static bool prevUp = false;
+  static bool prevDown = false;
+  static unsigned long helpLastKeyTime = 0;
+  static bool helpKeyRepeating = false;
+  static char helpLastKey = 0;
+
+  if (M5Cardputer.Keyboard.isPressed()) {
+    bool upPressed = false;
+    bool downPressed = false;
+
+    for (auto i : status.word) {
+      if (i == '`' || i == 'h' || i == 'H') {
+        exitHelpView();
+        delay(200);
+        return;
+      }
+#if ENABLE_SCREENSHOTS
+      else if (i == 'y' || i == 'Y') {
+        takeScreenshot();
+        drawHelpView();
+      }
+#endif
+      if (i == ';') upPressed = true;
+      if (i == '.') downPressed = true;
+    }
+
+    // Edge-triggered initial press
+    if (upPressed && !prevUp && helpViewCursor > 0) {
+      helpViewCursor--;
+      helpLastKey = ';';
+      helpLastKeyTime = millis();
+      helpKeyRepeating = false;
+      drawHelpView();
+    }
+    if (downPressed && !prevDown && helpViewCursor < totalHelpItems - 1) {
+      helpViewCursor++;
+      helpLastKey = '.';
+      helpLastKeyTime = millis();
+      helpKeyRepeating = false;
+      drawHelpView();
+    }
+
+    // Key repeat while held
+    char heldKey = 0;
+    if (upPressed) heldKey = ';';
+    else if (downPressed) heldKey = '.';
+
+    if (heldKey && heldKey == helpLastKey) {
+      unsigned long elapsed = millis() - helpLastKeyTime;
+      unsigned long threshold = helpKeyRepeating ? keyRepeatRate : keyRepeatDelay;
+      if (elapsed >= threshold) {
+        helpKeyRepeating = true;
+        helpLastKeyTime = millis();
+        if (heldKey == ';' && helpViewCursor > 0) {
+          helpViewCursor--;
+          drawHelpView();
+        } else if (heldKey == '.' && helpViewCursor < totalHelpItems - 1) {
+          helpViewCursor++;
+          drawHelpView();
+        }
+      }
+    }
+
+    prevUp = upPressed;
+    prevDown = downPressed;
+  } else {
+    prevUp = false;
+    prevDown = false;
+    helpLastKey = 0;
+    helpKeyRepeating = false;
+  }
+
 #if ENABLE_BLUETOOTH
-  // BT keyboard - escape exits help
   static bool btPrevEscHelp = false;
+  static bool btPrevUpHelp = false;
+  static bool btPrevDownHelp = false;
+
   if (btEscape && !btPrevEscHelp) {
     exitHelpView();
   }
   btPrevEscHelp = btEscape;
+
+  if (btUp && !btPrevUpHelp && helpViewCursor > 0) {
+    helpViewCursor--;
+    drawHelpView();
+  }
+  btPrevUpHelp = btUp;
+
+  if (btDown && !btPrevDownHelp && helpViewCursor < totalHelpItems - 1) {
+    helpViewCursor++;
+    drawHelpView();
+  }
+  btPrevDownHelp = btDown;
+
+  char btChar;
+  while ((btChar = btQueuePop()) != '\0') {
+    if (btChar == 'h' || btChar == 'H') {
+      exitHelpView();
+      return;
+    }
+  }
 #endif
 
   delay(10);
@@ -4843,7 +5206,7 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
         return;
       }
       // I key - Open help view
-      else if (i == 'i' || i == 'I') {
+      else if (i == 'h' || i == 'H') {
         enterHelpView();
         delay(200);  // Debounce
         return;  // Exit memory view loop to enter help view mode
@@ -5980,6 +6343,14 @@ void loop() {
   Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
 
   // ============================================================================
+  // CHARGING MODE
+  // ============================================================================
+  if (inChargingMode) {
+    handleChargingMode(status);
+    return;
+  }
+
+  // ============================================================================
   // HELP VIEW
   // ============================================================================
   if (inHelpView) {
@@ -6164,7 +6535,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
       return;
     }
     // I key - Help view
-    else if (btChar == 'i' || btChar == 'I') {
+    else if (btChar == 'h' || btChar == 'H') {
       enterHelpView();
       delay(200);
       return;
@@ -6203,6 +6574,12 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
       floodFilled = true;
       LED_CANVAS_UPDATED();
       setStatusMessage(StatusMsg::FILL);
+    }
+    // B key (with Fn/Alt) - Charging mode
+    else if ((btChar == 'b' || btChar == 'B') && fnHeld) {
+      enterChargingMode();
+      delay(200);
+      return;
     }
   }
 
@@ -6309,8 +6686,8 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           LED_CANVAS_UPDATED();  // Update LED matrix
           setStatusMessage(StatusMsg::FILL);
           }
-        // I key - Enter Hint Screen
-        else if (i == 'i' || i == 'I') {
+        // I key or ESC (`) - Enter Hint Screen
+        else if (i == 'h' || i == 'H' || i == '`') {
           enterHelpView();
           delay(200);  // Debounce to prevent immediate close
         }
@@ -6341,6 +6718,12 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
         else if (i == 'p' || i == 'P') {
           enterPaletteView();
           delay(200);  // Debounce to prevent immediate close
+        }
+        // Fn+B - Enter Charging Mode (screensaver)
+        else if ((i == 'b' || i == 'B') && fnHeld) {
+          enterChargingMode();
+          delay(200);
+          return;
         }
         // B key + Plus/Minus - Brightness control
         // Hold B and press + to increase brightness
