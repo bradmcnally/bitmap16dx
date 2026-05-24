@@ -14,6 +14,8 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
   - Switching palettes remaps your canvas to the new colors, clamping the palette down to the new size, you can always switch back to restore the original palette.
 - Export `.png` files to `bitmap16dx/exports/` (128x128 or logical size)
 - Dark mode!
+- Charging mode!
+- Display mirroring with Puzzle Unit 8x8 RGB LED Matrix (WS2812E)
 
 ![Drawing](img/photo_drawing.jpg)
 
@@ -56,18 +58,19 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 | `F` | Flood **f**ill |
 | `G` | Toggle between 8×8 and 16×16 **g**rid |
 | `R` | Toggle **r**ulers (center guide lines) |
-| `T` | Toggle **t**heme (light/dark mode) |
+| `T` | Toggle Se**t**tings |
 | `Z` | Undo last action (or just shake to undo)|
 | `g0` button | Clear canvas |
 | `S` | **S**ave sketch (update current or create new) |
 | `FN` + `S` | **S**ave as new sketch (always creates new file) |
 | `X` | E**x**port PNG (128×128 scaled) |
 | `FN` + `X` | Export PNG (logical size: 8×8 or 16×16) |
-| `I` | Open help screen (key commands) |
+| `H` | Open help screen (key commands) (You can also press `Esc` in Drawing Mode) |
 | `P` | Open **P**alette Menu |
 | `O` | **O**pen Sketches Menu |
 | `V` | Open Pre**v**iew Mode |
 | `B` + `+/-` | Adjust **b**rightness |
+| `FN` + `B` | Charging Mode |
 
 ### Drawing Preview *(V)*
 
@@ -120,6 +123,14 @@ View your saved sketches in a fullscreen slideshow with optional auto-advance.
 | `B` + `+/-` | Adjust **b**rightness |
 | `esc` | Return to Sketches |
 
+### Settings *(T)*
+
+- Set UI theme (light, dark)
+- Set default grid (8x8, 16x16)
+- Set RGB matrix count (1, 4)
+- Set export format (RGB888, RGB565)
+- Enable Shake to Undo (IMU accelerometer)
+
 ### Project Structure
 
 ```
@@ -132,12 +143,6 @@ BitMap16DX/
 │   ├── cartridge_graphic.h # Cartridge sprite
 │   └── boot_image.h       # Splash screen
 ```
-
-### What's Next
-- Puzzle unit rgb matrix support
-- I2C module support (joystick/buttons)
-- Bluetooth keyboard/controller support
-- Background music/UI sound exploration
 
 ![Sketches](img/photo_sketches.jpg)
 ![Palettes](img/photo_palettes.jpg)
