@@ -236,6 +236,7 @@ int cursorY = 0;
 // Previous cursor screen position (to clear the old cursor icon)
 int lastCursorScreenX = -1;
 int lastCursorScreenY = -1;
+bool moveModeActive = false;
 
 // Key repeat timing
 unsigned long lastKeyTime = 0;        // When the last key action happened
@@ -410,9 +411,9 @@ float memoryCursorAnimPhase = 0.0f;  // Animation phase (0.0 to 1.0, loops)
 const float MEMORY_CURSOR_ANIM_SPEED = 0.010f;  // How fast the animation cycles (lower = slower, more calm)
 const int MEMORY_CURSOR_ANIM_DISTANCE = 6;  // Max pixels to move diagonally (more pixels = smoother animation)
 
-// Hint screen state
+// Help screen state
 bool inHelpView = false;
-bool helpViewFromMemoryView = false;  // Track if hint screen was opened from memory view
+bool helpViewFromMemoryView = false;  // Track if help screen was opened from memory view
 int helpViewCursor = 0;
 int helpViewScrollOffset = 0;
 
@@ -456,11 +457,11 @@ M5Canvas memoryCanvas(&M5Cardputer.Display);
 
 // Settings view state
 bool inSettingsView = false;
-int settingsViewCursor = 0;  // 0-4 for the 5 menu items (0-5 with BT)
+int settingsViewCursor = 0;  // 0-5 for the 6 menu items (0-6 with BT)
 #if ENABLE_BLUETOOTH
-const int SETTINGS_ITEM_COUNT = 6;
+const int SETTINGS_ITEM_COUNT = 7;
 #else
-const int SETTINGS_ITEM_COUNT = 5;
+const int SETTINGS_ITEM_COUNT = 6;
 #endif
 
 // Charging mode state (DVD screensaver)
@@ -485,6 +486,7 @@ bool chargeCanvasAvailable = false;
 // Settings preferences (loaded from NVS)
 uint8_t defaultGridSize = 8;        // 8 or 16 (default grid size on boot/new sketch)
 uint8_t rgbMatrixUnits = 1;         // 1 or 4 (64 or 256 LEDs)
+uint8_t matrixRotation = 2;         // 0=0°, 1=90°, 2=180°, 3=270°
 bool exportRGB565 = false;           // false=RGB888, true=RGB565
 bool shakeUndoEnabled = false;       // true=enabled, false=disabled
 
@@ -554,6 +556,7 @@ namespace StatusMsg {
   const char* GRID_8X8 = "8x8";
   const char* COLOR_FMT = "Color: %d";     // Format string
   const char* FILL = "Fill";
+  const char* MOVE = "Move";
   const char* RESTORED_SKETCH = "Restored sketch";
 }
 
@@ -646,6 +649,15 @@ void setStatusMessage(const char* message) {
 bool isBKeyHeld(Keyboard_Class::KeysState& status) {
   for (auto i : status.word) {
     if (i == 'b' || i == 'B') {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isMKeyHeld(Keyboard_Class::KeysState& status) {
+  for (auto i : status.word) {
+    if (i == 'm' || i == 'M') {
       return true;
     }
   }
@@ -1709,6 +1721,24 @@ void clearCanvas() {
   setStatusMessage(StatusMsg::CLEAR);
 }
 
+// Shift the entire canvas by (dx, dy) with wrapping
+void shiftCanvas(int dx, int dy) {
+  uint8_t temp[16][16];
+  int size = currentGridSize;
+  for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) {
+      int srcX = (x - dx + size) % size;
+      int srcY = (y - dy + size) % size;
+      temp[y][x] = canvas[srcY][srcX];
+    }
+  }
+  for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) {
+      canvas[y][x] = temp[y][x];
+    }
+  }
+}
+
 /**
  * Flood fill - fills all connected pixels of the same color with the selected color
  *
@@ -2071,7 +2101,7 @@ void exitChargingMode() {
 }
 
 /**
- * Enter Hint Screen mode
+ * Enter Help Screen mode
  */
 void enterHelpView() {
   // Remember if we're coming from memory view
@@ -2082,12 +2112,12 @@ void enterHelpView() {
   helpViewScrollOffset = 0;
   helpCanvasAvailable = helpCanvas.createSprite(240, 135);
 
-  // Draw hint screen
+  // Draw help screen
   drawHelpView();
 }
 
 /**
- * Exit Hint Screen and return to previous view
+ * Exit Help Screen and return to previous view
  */
 void exitHelpView() {
   inHelpView = false;
@@ -2519,9 +2549,10 @@ void drawSettingsView() {
   const int labelX = 12;
 
   const char* menuLabels[SETTINGS_ITEM_COUNT] = {
-    "UI Theme",
+    "UI theme",
     "Grid default",
     "RGB matrix",
+    "Rotate matrix",
     "Export",
     "Shake undo",
 #if ENABLE_BLUETOOTH
@@ -2546,6 +2577,7 @@ void drawSettingsView() {
     const char* valueText;
     static char btBuf[16];
 
+    static char rotBuf[8];
     switch(i) {
       case 0:
         valueText = currentTheme == &THEME_LIGHT ? "Light" : "Dark";
@@ -2557,13 +2589,17 @@ void drawSettingsView() {
         valueText = rgbMatrixUnits == 1 ? "1" : "4";
         break;
       case 3:
-        valueText = exportRGB565 ? "RGB565" : "RGB888";
+        snprintf(rotBuf, sizeof(rotBuf), "%d", matrixRotation * 90);
+        valueText = rotBuf;
         break;
       case 4:
+        valueText = exportRGB565 ? "RGB565" : "RGB888";
+        break;
+      case 5:
         valueText = shakeUndoEnabled ? "ON" : "OFF";
         break;
 #if ENABLE_BLUETOOTH
-      case 5:
+      case 6:
         if (btConnected) {
           valueText = "Paired";
         } else if (btScanning) {
@@ -2705,7 +2741,28 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
           setStatusMessage(rgbMatrixUnits == 1 ? "1 Unit" : "4 Units");
           break;
 
-        case 3:  // Export Format
+        case 3:  // Matrix Rotation
+          matrixRotation = (matrixRotation + 1) % 4;
+
+          // Save preference
+          preferences.begin("bitmap16dx", false);
+          preferences.putUChar("matrixRot", matrixRotation);
+          preferences.end();
+
+#if ENABLE_LED_MATRIX
+          if (ledMatrixEnabled) {
+            updateLEDMatrix(false);
+          }
+#endif
+
+          {
+            char rotMsg[16];
+            snprintf(rotMsg, sizeof(rotMsg), "Rotation: %d", matrixRotation * 90);
+            setStatusMessage(rotMsg);
+          }
+          break;
+
+        case 4:  // Export Format
           // Toggle between RGB888 and RGB565
           exportRGB565 = !exportRGB565;
 
@@ -2717,7 +2774,7 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
           setStatusMessage(exportRGB565 ? "Export: RGB565" : "Export: RGB888");
           break;
 
-        case 4:  // Shake Undo
+        case 5:  // Shake Undo
           // Toggle shake-to-undo
           shakeUndoEnabled = !shakeUndoEnabled;
 
@@ -2730,7 +2787,7 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
           break;
 
 #if ENABLE_BLUETOOTH
-        case 5:  // Bluetooth
+        case 6:  // Bluetooth
           if (btConnected) {
             // Disconnect if connected (Fn+Enter forgets pairing too)
             btDisconnect();
@@ -3457,11 +3514,22 @@ void drawCell(int x, int y, bool isSelected = false) {
  * Draws a simple arrow pointer below and to the right of the selected cell
  */
 void drawCursor() {
+  // Determine which icon to use based on move mode
+  const unsigned char* cursorIcon = moveModeActive ? ICON_MOVE_CURSOR : ICON_CANVAS_CURSOR;
+  int iconW = moveModeActive ? ICON_MOVE_CURSOR_WIDTH : ICON_CANVAS_CURSOR_WIDTH;
+  int iconH = moveModeActive ? ICON_MOVE_CURSOR_HEIGHT : ICON_CANVAS_CURSOR_HEIGHT;
+  int offsetX = moveModeActive ? MOVE_CURSOR_OFFSET_X : CURSOR_OFFSET_X;
+  int offsetY = moveModeActive ? MOVE_CURSOR_OFFSET_Y : CURSOR_OFFSET_Y;
+
+  // Use max dimensions for clearing to handle icon switching
+  int clearW = max(ICON_CANVAS_CURSOR_WIDTH, ICON_MOVE_CURSOR_WIDTH);
+  int clearH = max(ICON_CANVAS_CURSOR_HEIGHT, ICON_MOVE_CURSOR_HEIGHT);
+
   // Clear the old cursor icon position if it exists
   if (lastCursorScreenX >= 0 && lastCursorScreenY >= 0) {
     // Calculate which cells might have been covered by the old cursor icon
-    int oldCursorEndX = lastCursorScreenX + ICON_CANVAS_CURSOR_WIDTH;
-    int oldCursorEndY = lastCursorScreenY + ICON_CANVAS_CURSOR_HEIGHT;
+    int oldCursorEndX = lastCursorScreenX + clearW;
+    int oldCursorEndY = lastCursorScreenY + clearH;
 
     // Find grid cells that overlap with the old cursor area
     int startCellX = max(0, (lastCursorScreenX - GRID_X) / currentCellSize);
@@ -3473,8 +3541,8 @@ void drawCursor() {
     M5Cardputer.Display.fillRect(
       lastCursorScreenX,
       lastCursorScreenY,
-      ICON_CANVAS_CURSOR_WIDTH,
-      ICON_CANVAS_CURSOR_HEIGHT,
+      clearW,
+      clearH,
       currentTheme->background
     );
 
@@ -3510,11 +3578,11 @@ void drawCursor() {
   int cellY = GRID_Y + (cursorY * currentCellSize);
 
   // Position cursor below and to the right of the cell, with offset for alignment
-  int cursorX_pos = cellX + currentCellSize + CURSOR_OFFSET_X;
-  int cursorY_pos = cellY + currentCellSize + CURSOR_OFFSET_Y;
+  int cursorX_pos = cellX + currentCellSize + offsetX;
+  int cursorY_pos = cellY + currentCellSize + offsetY;
 
   // Draw the cursor icon
-  drawIcon(cursorX_pos, cursorY_pos, ICON_CANVAS_CURSOR, ICON_CANVAS_CURSOR_WIDTH, ICON_CANVAS_CURSOR_HEIGHT, ICON_CANVAS_CURSOR_IS_INDEXED);
+  drawIcon(cursorX_pos, cursorY_pos, cursorIcon, iconW, iconH, true);
 
   // Save this position for next time
   lastCursorScreenX = cursorX_pos;
@@ -3994,7 +4062,7 @@ void drawMemoryView(bool fullRedraw) {
 }
 
 /**
- * Draw Hint Screen - displays all keyboard controls
+ * Draw Help Screen - displays all keyboard controls
  */
 void drawHelpView() {
   if (!helpCanvasAvailable) return;
@@ -4005,7 +4073,7 @@ void drawHelpView() {
   // Title
   helpCanvas.setTextColor(currentTheme->text);
   helpCanvas.setCursor(4, 4);
-  helpCanvas.print("HINTS");
+  helpCanvas.print("HELP");
 
   struct HelpItem {
     const char* label;
@@ -4014,10 +4082,11 @@ void drawHelpView() {
   };
 
   const HelpItem helpItems[] = {
-    {"Move",        "Arrows",  0},
+    {"Cursor",        "Arrows",  0},
     {"Draw",        "Ok",      0},
     {"Erase",       "Del",     0},
     {"Fill",        "F",       0},
+    {"Move",        "M arrow",0},
     {"Color 1-8",   "1-8",     0},
     {"Color 9-16",  "Fn 1-8",  0},
     {"Palette",     "P",       0},
@@ -4337,43 +4406,53 @@ void updatePaletteFilter() {
  * Units 0 and 3 are rotated 90° clockwise due to physical connector alignment
  */
 uint8_t getLEDIndex(uint8_t x, uint8_t y) {
+    uint8_t maxIdx = (rgbMatrixUnits == 1) ? 7 : 15;
+
+    // Apply global rotation based on setting
+    uint8_t adjX = x, adjY = y;
+    switch (matrixRotation) {
+        case 0:  // 0° - no rotation
+            adjX = x; adjY = y;
+            break;
+        case 1:  // 90° CW
+            adjX = maxIdx - y; adjY = x;
+            break;
+        case 2:  // 180°
+            adjX = maxIdx - x; adjY = maxIdx - y;
+            break;
+        case 3:  // 270° CW
+            adjX = y; adjY = maxIdx - x;
+            break;
+    }
+
     if (rgbMatrixUnits == 1) {
-        // Single 8×8 unit: apply same 180° rotation as unit 0
-        uint8_t rotatedX = 7 - x;
-        uint8_t rotatedY = 7 - y;
-        return rotatedY * 8 + rotatedX;
+        return adjY * 8 + adjX;
     } else {
         // Four 8×8 units in 16×16 grid
-        // Determine which unit and position within that unit
-        uint8_t unitX = x / 8;  // 0 (left) or 1 (right)
-        uint8_t unitY = y / 8;  // 0 (top) or 1 (bottom)
-        uint8_t localX = x % 8; // Position within unit (0-7)
-        uint8_t localY = y % 8;
+        uint8_t unitX = adjX / 8;  // 0 (left) or 1 (right)
+        uint8_t unitY = adjY / 8;  // 0 (top) or 1 (bottom)
+        uint8_t localX = adjX % 8;
+        uint8_t localY = adjY % 8;
 
         // Unit number based on physical layout:
         // Top row: 0 (left), 1 (right)
         // Bottom row: 3 (left), 2 (right)
         uint8_t unit;
         if (unitY == 0) {
-            // Top row: units 0 and 1
-            unit = unitX;  // 0 or 1
+            unit = unitX;
         } else {
-            // Bottom row: units 3 and 2
             unit = (unitX == 0) ? 3 : 2;
         }
 
-        // Apply rotation corrections for units based on physical orientation
+        // Apply rotation corrections for serpentine wiring within units
         uint8_t rotatedX = localX;
         uint8_t rotatedY = localY;
 
         if (unit == 0 || unit == 3) {
-            // Units 0 and 3: 180° rotation (horizontal + vertical flip)
-            // Rotation formula: (x, y) → (7-x, 7-y)
             rotatedX = 7 - localX;
             rotatedY = 7 - localY;
         }
 
-        // LED index = (unit offset) + (position within unit)
         return (unit * 64) + (rotatedY * 8) + rotatedX;
     }
 }
@@ -4596,12 +4675,8 @@ void toggleLEDMatrix() {
             uint8_t x = index % 8;
             uint8_t y = index / 8;
 
-            // Apply 180° rotation (same as unit 0 in getLEDIndex)
-            uint8_t rotatedX = 7 - x;
-            uint8_t rotatedY = 7 - y;
-
-            // Convert back to linear index
-            int rotatedIndex = rotatedY * 8 + rotatedX;
+            // Use getLEDIndex for consistent rotation
+            int rotatedIndex = getLEDIndex(x, y);
 
             leds[rotatedIndex] = CRGB::White;
         }
@@ -4688,6 +4763,7 @@ void setup() {
   // Load settings preferences
   defaultGridSize = preferences.getUChar("defaultGrid", 8);      // Default: 8×8
   rgbMatrixUnits = preferences.getUChar("puzzleUnits", 1);       // Default: 1 unit (64 LEDs)
+  matrixRotation = preferences.getUChar("matrixRot", 2);         // Default: 180° (legacy orientation)
   exportRGB565 = preferences.getBool("exportRGB565", false);     // Default: RGB888
   shakeUndoEnabled = preferences.getBool("shakeUndo", false);    // Default: disabled
 
@@ -4922,9 +4998,9 @@ void handleChargingMode(Keyboard_Class::KeysState& status) {
  */
 void handleHelpView(Keyboard_Class::KeysState& status) {
 #if ENABLE_LED_MATRIX
-  const int totalHelpItems = 21;
+  const int totalHelpItems = 22;
 #else
-  const int totalHelpItems = 19;
+  const int totalHelpItems = 20;
 #endif
 
   static bool prevUp = false;
@@ -6407,6 +6483,8 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   bool rulersToggled = false;
   bool themeToggled = false;
   bool floodFilled = false;
+  bool canvasMoved = false;
+  static bool moveUndoSaved = false;
   int oldX = cursorX;
   int oldY = cursorY;
 
@@ -6425,6 +6503,12 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   // Check if enter or delete are currently held
   enterHeld = status.enter;
   deleteHeld = status.del;
+
+  // Check if M key is held (for canvas move)
+  bool mHeld = isMKeyHeld(status);
+  bool moveModeChanged = (mHeld != moveModeActive);
+  moveModeActive = mHeld;
+  if (!mHeld) moveUndoSaved = false;
 
 #if ENABLE_BLUETOOTH
   // Merge BT input with keyboard input
@@ -6686,8 +6770,8 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           LED_CANVAS_UPDATED();  // Update LED matrix
           setStatusMessage(StatusMsg::FILL);
           }
-        // I key or ESC (`) - Enter Hint Screen
-        else if (i == 'h' || i == 'H' || i == '`') {
+        // H key - Enter Help Screen
+        else if (i == 'h' || i == 'H') {
           enterHelpView();
           delay(200);  // Debounce to prevent immediate close
         }
@@ -6790,35 +6874,51 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           lastKey = i;
           lastKeyTime = millis();
           keyRepeating = false;
-          // Process the initial keypress
-          if (i == ';' && cursorY > 0) {
-            cursorY--;
-            moved = true;
-          }
-          else if (i == '.' && cursorY < currentGridSize - 1) {
-            cursorY++;
-            moved = true;
-          }
-          else if (i == ',' && cursorX > 0) {
-            cursorX--;
-            moved = true;
-          }
-          else if (i == '/' && cursorX < currentGridSize - 1) {
-            cursorX++;
-            moved = true;
-          }
 
-          // If enter or delete is held, paint/erase at the new position
-          if (moved && enterHeld) {
-            canvas[cursorY][cursorX] = selectedColor;
-            pixelPlaced = true;
-            LED_CANVAS_UPDATED();  // Update LED matrix
-              }
-          else if (moved && deleteHeld) {
-            canvas[cursorY][cursorX] = 0;
-            pixelPlaced = true;
-            LED_CANVAS_UPDATED();  // Update LED matrix
-              }
+          if (mHeld) {
+            // M + Arrow: Shift entire canvas with wrapping
+            if (!moveUndoSaved) {
+              saveUndo();
+              moveUndoSaved = true;
+            }
+            if (i == ';') shiftCanvas(0, -1);
+            else if (i == '.') shiftCanvas(0, 1);
+            else if (i == ',') shiftCanvas(-1, 0);
+            else if (i == '/') shiftCanvas(1, 0);
+            canvasMoved = true;
+            LED_CANVAS_UPDATED();
+            setStatusMessage(StatusMsg::MOVE);
+          } else {
+            // Normal cursor movement
+            if (i == ';' && cursorY > 0) {
+              cursorY--;
+              moved = true;
+            }
+            else if (i == '.' && cursorY < currentGridSize - 1) {
+              cursorY++;
+              moved = true;
+            }
+            else if (i == ',' && cursorX > 0) {
+              cursorX--;
+              moved = true;
+            }
+            else if (i == '/' && cursorX < currentGridSize - 1) {
+              cursorX++;
+              moved = true;
+            }
+
+            // If enter or delete is held, paint/erase at the new position
+            if (moved && enterHeld) {
+              canvas[cursorY][cursorX] = selectedColor;
+              pixelPlaced = true;
+              LED_CANVAS_UPDATED();
+            }
+            else if (moved && deleteHeld) {
+              canvas[cursorY][cursorX] = 0;
+              pixelPlaced = true;
+              LED_CANVAS_UPDATED();
+            }
+          }
         }
       }
     }
@@ -6860,34 +6960,48 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
       keyRepeating = true;
       lastKeyTime = currentTime;
 
-      // Process the arrow key movement
-      if (currentArrowKey == ';' && cursorY > 0) {
-        cursorY--;
-        moved = true;
-      }
-      else if (currentArrowKey == '.' && cursorY < currentGridSize - 1) {
-        cursorY++;
-        moved = true;
-      }
-      else if (currentArrowKey == ',' && cursorX > 0) {
-        cursorX--;
-        moved = true;
-      }
-      else if (currentArrowKey == '/' && cursorX < currentGridSize - 1) {
-        cursorX++;
-        moved = true;
-      }
+      if (mHeld) {
+        // M + Arrow repeat: continue shifting canvas
+        if (!moveUndoSaved) {
+          saveUndo();
+          moveUndoSaved = true;
+        }
+        if (currentArrowKey == ';') shiftCanvas(0, -1);
+        else if (currentArrowKey == '.') shiftCanvas(0, 1);
+        else if (currentArrowKey == ',') shiftCanvas(-1, 0);
+        else if (currentArrowKey == '/') shiftCanvas(1, 0);
+        canvasMoved = true;
+        LED_CANVAS_UPDATED();
+      } else {
+        // Normal cursor movement repeat
+        if (currentArrowKey == ';' && cursorY > 0) {
+          cursorY--;
+          moved = true;
+        }
+        else if (currentArrowKey == '.' && cursorY < currentGridSize - 1) {
+          cursorY++;
+          moved = true;
+        }
+        else if (currentArrowKey == ',' && cursorX > 0) {
+          cursorX--;
+          moved = true;
+        }
+        else if (currentArrowKey == '/' && cursorX < currentGridSize - 1) {
+          cursorX++;
+          moved = true;
+        }
 
-      // If enter or delete is held, paint/erase at the new position
-      if (moved && enterHeld) {
-        canvas[cursorY][cursorX] = selectedColor;
-        pixelPlaced = true;
-        LED_CANVAS_UPDATED();  // Update LED matrix
-      }
-      else if (moved && deleteHeld) {
-        canvas[cursorY][cursorX] = 0;
-        pixelPlaced = true;
-        LED_CANVAS_UPDATED();  // Update LED matrix
+        // If enter or delete is held, paint/erase at the new position
+        if (moved && enterHeld) {
+          canvas[cursorY][cursorX] = selectedColor;
+          pixelPlaced = true;
+          LED_CANVAS_UPDATED();
+        }
+        else if (moved && deleteHeld) {
+          canvas[cursorY][cursorX] = 0;
+          pixelPlaced = true;
+          LED_CANVAS_UPDATED();
+        }
       }
     }
   } else {
@@ -6902,7 +7016,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   }
 
   // Redraw based on what changed
-  if (canvasCleared || undoPerformed || gridToggled || rulersToggled || floodFilled || themeToggled) {
+  if (canvasCleared || undoPerformed || gridToggled || rulersToggled || floodFilled || themeToggled || canvasMoved) {
     // Update LED matrix for any canvas change
     LED_CANVAS_UPDATED();
 
@@ -6959,6 +7073,9 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
     // Redraw the entire palette with new selection
     drawPalette();
     // Also redraw the cursor to show the new color preview
+    drawCursor();
+  }
+  else if (moveModeChanged) {
     drawCursor();
   }
 
