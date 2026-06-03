@@ -4082,11 +4082,11 @@ void drawHelpView() {
   };
 
   const HelpItem helpItems[] = {
-    {"Cursor",        "Arrows",  0},
+    {"Cursor", "Arrows",  0},
     {"Draw",        "Ok",      0},
     {"Erase",       "Del",     0},
     {"Fill",        "F",       0},
-    {"Move",        "M arrow",0},
+    {"Move",        "M arrows",0},
     {"Color 1-8",   "1-8",     0},
     {"Color 9-16",  "Fn 1-8",  0},
     {"Palette",     "P",       0},
