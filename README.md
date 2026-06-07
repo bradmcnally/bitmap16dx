@@ -3,11 +3,11 @@
 BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channeling the vibe of 2000s handheld gaming consoles.
 
 ![Logo](img/bitmap16dx.png)![Drawing](img/drawing.png)
-![Dark mode drawing](img/drawingdark.png)
+![Sketches](img/sketches_latest.png)
 
 ## Features
 - 8×8 and 16×16 canvas modes
-- Draw, Erase, Fill tools
+- Draw, Erase, Fill, Move tools
 - Undo last action
 - Save/open sketches from SD card
 - Built-in 16, 8, and 4-color palettes
@@ -52,10 +52,11 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 | Arrow keys (`↑` `←` `↓` `→`) | Move cursor (hold to repeat) |
 | `ok`/`enter` | Place pixel with selected color |
 | `del`/`backspace` | Erase pixel |
+| `F` | Flood **f**ill |
+| `M` + `Arrow keys` | **M**ove canvas |
 | `1-8` | Quick color selection (colors 1-8) |
 | `fn` + `1-8` | Quick color selection (colors 9-16) |
 | `C` | **C**ycle to next color |
-| `F` | Flood **f**ill |
 | `G` | Toggle between 8×8 and 16×16 **g**rid |
 | `R` | Toggle **r**ulers (center guide lines) |
 | `T` | Toggle Se**t**tings |
@@ -65,12 +66,14 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 | `FN` + `S` | **S**ave as new sketch (always creates new file) |
 | `X` | E**x**port PNG (128×128 scaled) |
 | `FN` + `X` | Export PNG (logical size: 8×8 or 16×16) |
-| `H` | Open help screen (key commands) (You can also press `Esc` in Drawing Mode) |
+| `H` | Open **h**elp screen (key commands) |
 | `P` | Open **P**alette Menu |
 | `O` | **O**pen Sketches Menu |
 | `V` | Open Pre**v**iew Mode |
 | `B` + `+/-` | Adjust **b**rightness |
 | `FN` + `B` | Charging Mode |
+| `L` + `Ok` | RGB Matrix on/off |
+| `L` + `+/-` | RGB Matrix brightness |
 
 ### Drawing Preview *(V)*
 
@@ -98,6 +101,7 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 ### Sketches Menu *(O)*
 
 ![Sketches Menu](img/sketches.png)
+![Sketches Menu](img/sketches_dark.png)
 
 | Key | Function |
 |-----|----------|
@@ -128,6 +132,7 @@ View your saved sketches in a fullscreen slideshow with optional auto-advance.
 - Set UI theme (light, dark)
 - Set default grid (8x8, 16x16)
 - Set RGB matrix count (1, 4)
+- Set RGB matrix rotation (0, 90, 180, 270)
 - Set export format (RGB888, RGB565)
 - Enable Shake to Undo (IMU accelerometer)
 
