@@ -151,3 +151,30 @@ BitMap16DX/
 
 ![Sketches](img/photo_sketches.jpg)
 ![Palettes](img/photo_palettes.jpg)
+
+## LED Matrix Display mirroring
+
+The RGB LED matrix display mirrors your canvas in real-time. Connect 1 or 4 Puzzle Unit 8x8 RGB LED Matrix (WS2812E) modules + chain returns to the Cardputer ADV via the expansion port. Matrix brightness and rotation are configurable in Settings.
+
+### Quad Matrix (16x16)
+
+<p>
+<img src="img/photo_clamshell_open.jpg" height="300">
+<img src="img/photo_clamshell_detail.jpg" height="300">
+</p>
+
+### Single Matrix (8x8)
+
+<p>
+<img src="img/photo_singleLEDMatrix.jpg" height="300">
+<img src="img/photo_singleLEDMatrix_detail.jpg" height="300">
+</p>
+
+### Technic Panel Board
+
+<p>
+<img src="img/photo_techplate1.jpg" height="300">
+<img src="img/photo_techplate2.jpg" height="300">
+</p>
+
+A Cardputer-sized prototype board with Lego Technic-compatible mounting holes. Designed for snapping peripherals — like the RGB matrix modules — into modular, reconfigurable layouts.
