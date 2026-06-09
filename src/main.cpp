@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - v0.7.0
+ * BitMap16 DX - v0.7.1
  *
  * Working pixel sketch station for Cardputer ADV!
  *
@@ -73,7 +73,7 @@ Preferences preferences;
 // ============================================================================
 
 // Enable screenshot feature (Y key) - disable for release builds
-#define ENABLE_SCREENSHOTS 1  // Set to 0 to disable screenshots in release
+#define ENABLE_SCREENSHOTS 0  // Set to 0 to disable screenshots in release
 
 // Enable external 8×8 WS2812 LED matrix support
 // Set to 0 to disable LED matrix features and save memory (~9KB flash, 880 bytes RAM)
@@ -95,7 +95,7 @@ Preferences preferences;
 
 
 // Firmware version displayed on boot screen
-const char* FIRMWARE_VERSION = "v0.7.0";
+const char* FIRMWARE_VERSION = "v0.7.1";
 
 // File format version for sketch files
 // Version 1: gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 290 bytes
@@ -1934,6 +1934,8 @@ void enterMemoryView() {
  */
 void exitMemoryView() {
   inMemoryView = false;
+  sketchList.clear();
+  sketchList.shrink_to_fit();
 
   // Redraw the canvas view
   M5Cardputer.Display.fillScreen(currentTheme->background);
@@ -4215,6 +4217,23 @@ void showBootScreen() {
   M5Cardputer.Display.setTextSize(1);
   M5Cardputer.Display.setCursor(4, 135 - 12);  // 4px from left, 12px from bottom
   M5Cardputer.Display.print(FIRMWARE_VERSION);
+
+  // Display "beepbot" centered at bottom
+  int bbWidth = 7 * 6;  // 7 chars × 6px wide
+  int bbX = (240 - bbWidth) / 2;
+  int bbY = 135 - 12;
+  M5Cardputer.Display.setTextColor(TFT_WHITE);
+  M5Cardputer.Display.setCursor(bbX, bbY);
+  M5Cardputer.Display.print("beepbot");
+
+  // Display "HELP" hint in lower right corner with underlined H
+  int helpX = 240 - 4 - (4 * 6);  // 4px from right, 4 chars × 6px wide
+  int helpY = 135 - 12;
+  M5Cardputer.Display.setTextColor(TFT_WHITE);
+  M5Cardputer.Display.setCursor(helpX, helpY);
+  M5Cardputer.Display.print("HELP");
+  // Underline the H (first character, 6px wide)
+  M5Cardputer.Display.drawLine(helpX, helpY + 9, helpX + 5, helpY + 9, TFT_WHITE);
 
   // Wait for ESC key (`) press to continue, or timeout after 5 seconds
   bool waiting = true;
