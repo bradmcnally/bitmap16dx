@@ -504,6 +504,13 @@ unsigned long lastBatteryCheckTime = 0;  // Track when we last checked battery
 const unsigned long BATTERY_CHECK_INTERVAL = 30000;  // Check battery every 30 seconds
 bool batteryFirstCheck = true;  // Flag to force first battery check
 
+// Onboard LED (battery indicator)
+// Cardputer ADV has a WS2812 RGB LED on GPIO21 with enable on GPIO38
+// Uses neopixelWrite() from ESP32 Arduino core — independent of FastLED
+#define ONBOARD_LED_PIN 21
+#define ONBOARD_LED_EN 38
+bool lowBattery = false;  // Latches true when battery <= 10%
+
 // ============================================================================
 // STATUS MESSAGES - All user-facing messages in one place
 // ============================================================================
@@ -1598,6 +1605,12 @@ void drawBatteryIndicator() {
 
     // Draw battery icon at (3, 85) - below fill icon with 4px spacing
     drawIcon(3, 85, batteryIcon, 24, 24, true);
+
+    // Low battery LED indicator (latches red at <= 10%)
+    if (!lowBattery && batteryPercent <= 10) {
+      lowBattery = true;
+      neopixelWrite(ONBOARD_LED_PIN, 255, 0, 0);
+    }
 
     lastBatteryPercent = batteryPercent;
   }
@@ -4760,6 +4773,11 @@ void setup() {
   // Initialize the IMU (accelerometer/gyro sensor)
   // This is required for shake detection to work
   M5.Imu.begin();
+
+  // Initialize onboard RGB LED (battery indicator)
+  pinMode(ONBOARD_LED_EN, OUTPUT);
+  digitalWrite(ONBOARD_LED_EN, HIGH);
+  neopixelWrite(ONBOARD_LED_PIN, 0, 0, 0);
 
   // Detect which Cardputer model is running
   // This helps with debugging and user support
