@@ -650,6 +650,16 @@ void setStatusMessage(const char* message) {
 }
 
 /**
+ * Set display backlight brightness via GPIO38 (WS2812 enable pin).
+ * Maps input (0-255) to 160-255 range so the LED always has enough power.
+ * On Arduino core 3.x, analogWrite re-attaches the pin to LEDC on each call.
+ */
+void setDisplayBrightness(uint8_t value) {
+  uint8_t mapped = 160 + (uint16_t)value * (255 - 160) / 255;
+  analogWrite(ONBOARD_LED_EN, mapped);
+}
+
+/**
  * Check if the B key is currently being held down
  * Used for brightness control (B + Plus/Minus)
  */
@@ -2074,7 +2084,7 @@ void enterChargingMode() {
   chargeCanvasAvailable = chargeCanvas.createSprite(240, 135);
 
   // Dim display
-  M5Cardputer.Display.setBrightness(50);
+  setDisplayBrightness(50);
 
   // Dark background
   M5Cardputer.Display.fillScreen(TFT_BLACK);
@@ -2098,7 +2108,7 @@ void exitChargingMode() {
 
   // Restore brightness
   uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
-  M5Cardputer.Display.setBrightness(hardwareBrightness);
+  setDisplayBrightness(hardwareBrightness);
 
   // Redraw canvas
   M5Cardputer.Display.fillScreen(currentTheme->background);
@@ -4809,7 +4819,7 @@ void setup() {
   // Set initial display brightness
   // displayBrightness is stored as percentage (10-100%), convert to hardware range (0-255)
   uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
-  M5Cardputer.Display.setBrightness(hardwareBrightness);
+  setDisplayBrightness(hardwareBrightness);
 
 #if ENABLE_LED_MATRIX
   // Initialize LED matrix (8×8 WS2812E RGB LEDs)
@@ -5566,7 +5576,7 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
         uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
 
         // Apply the new brightness setting to the display
-        M5Cardputer.Display.setBrightness(hardwareBrightness);
+        setDisplayBrightness(hardwareBrightness);
 
         // Save brightness setting to preferences so it persists across reboots
         preferences.begin("bitmap16dx", false);
@@ -6874,7 +6884,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
           uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
 
           // Apply the new brightness setting to the display
-          M5Cardputer.Display.setBrightness(hardwareBrightness);
+          setDisplayBrightness(hardwareBrightness);
 
           // Save brightness setting to preferences so it persists across reboots
           preferences.begin("bitmap16dx", false);
