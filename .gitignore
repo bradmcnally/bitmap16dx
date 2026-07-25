@@ -20,6 +20,7 @@ Thumbs.db
 build/
 build_zero/
 build_zero_device/
+build_steamdeck/
 *.bin
 *.elf
 *.map

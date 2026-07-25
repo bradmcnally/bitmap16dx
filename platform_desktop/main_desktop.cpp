@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || defined(BITMAP16_STEAM_DECK)
 #include <dirent.h>
 #include <fstream>
 #include <string>
@@ -52,7 +52,7 @@ const bitmap16::Sketch* previewOverride = nullptr;
 bool desktopMoveModeActive = false;
 
 int platformBatteryPercent() {
-#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || defined(BITMAP16_STEAM_DECK)
   constexpr const char* kPowerSupplyRoot = "/sys/class/power_supply";
   DIR* directory = opendir(kPowerSupplyRoot);
   if (directory == nullptr) return -1;
@@ -76,7 +76,72 @@ int platformBatteryPercent() {
 }
 
 bool platformHasLedMatrixControls() {
+#ifdef BITMAP16_STEAM_DECK
+  return false;
+#else
   return true;
+#endif
+}
+
+struct AxisRepeat {
+  int direction = 0;
+  Uint32 nextAt = 0;
+};
+
+bool axisRepeatReady(
+    AxisRepeat& state,
+    int direction,
+    Uint32 now,
+    bool& repeat) {
+  repeat = false;
+  if (direction == 0) {
+    state = {};
+    return false;
+  }
+  if (direction != state.direction) {
+    state.direction = direction;
+    state.nextAt = now + 260u;
+    return true;
+  }
+  if (now < state.nextAt) {
+    return false;
+  }
+  state.nextAt = now + 90u;
+  repeat = true;
+  return true;
+}
+
+int stickDirection(Sint16 value) {
+  constexpr Sint16 kDeadZone = 16000;
+  if (value < -kDeadZone) return -1;
+  if (value > kDeadZone) return 1;
+  return 0;
+}
+
+void pushKeyEvent(SDL_Keycode key, bool repeat) {
+  SDL_Event event = {};
+  event.type = SDL_KEYDOWN;
+  event.key.type = SDL_KEYDOWN;
+  event.key.state = SDL_PRESSED;
+  event.key.repeat = repeat ? 1 : 0;
+  event.key.keysym.sym = key;
+  event.key.keysym.mod = KMOD_NONE;
+  SDL_PushEvent(&event);
+}
+
+enum DeckColorEvent : Sint32 {
+  kColorLeft = 1,
+  kColorRight,
+  kColorUp,
+  kColorDown,
+};
+
+void pushColorEvent(DeckColorEvent direction) {
+  SDL_Event event = {};
+  event.type = SDL_USEREVENT;
+  event.user.type = SDL_USEREVENT;
+  event.user.code = direction;
+  SDL_PushEvent(&event);
 }
 
 const uint8_t* batteryIconForPercent(int batteryPercent) {
@@ -124,7 +189,7 @@ bitmap16::PreviewView::Theme previewTheme() {
 }
 
 bitmap16::ChargingView::Theme chargingTheme() {
-  return {0x0000, 0x0000, 0xffff, 0xffff};
+  return {0x0000, 0x0000, 0xd69b, 0xffff};
 }
 
 bitmap16::PaletteView::Theme paletteTheme(
@@ -144,7 +209,7 @@ bitmap16::MemoryView::Theme memoryTheme(
   return {
       theme.background,
       static_cast<uint16_t>(
-          settings.theme == bitmap16::ThemeId::Dark ? 0x18c3 : 0xef7d),
+          settings.theme == bitmap16::ThemeId::Dark ? 0x10a2 : 0xef7e),
       theme.text,
       0x0000,
       static_cast<uint16_t>(
@@ -161,7 +226,7 @@ bitmap16::CanvasView::Theme canvasTheme(
         0x0000, 0xd69b, true};
   }
   return {
-      0xd69b, 0xef7d, 0xffff, 0xbdf7, 0x0000, 0x94b3, 0xd69b,
+      0xd69b, 0xef7e, 0xffff, 0xc63a, 0x0000, 0x94b3, 0xd69b,
       0x0000, 0xffff, false};
 }
 
@@ -420,12 +485,12 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+  if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
     SDL_Log("SDL_Init failed: %s", SDL_GetError());
     return 1;
   }
 
-#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || defined(BITMAP16_STEAM_DECK)
   const int windowWidth = width;
   const int windowHeight = height;
   const Uint32 windowFlags =
@@ -439,8 +504,13 @@ int main(int argc, char** argv) {
 #endif
 
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+  SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   SDL_Window* window = SDL_CreateWindow(
+#ifdef BITMAP16_STEAM_DECK
+      "BitMap16 DX Steam Deck",
+#else
       "BitMap16 DX Desktop",
+#endif
       SDL_WINDOWPOS_CENTERED,
       SDL_WINDOWPOS_CENTERED,
       windowWidth,
@@ -473,6 +543,24 @@ int main(int argc, char** argv) {
     if (window != nullptr) SDL_DestroyWindow(window);
     SDL_Quit();
     return 1;
+  }
+
+  SDL_GameController* controller = nullptr;
+  const auto openController = [&](int deviceIndex) {
+    if (controller != nullptr || !SDL_IsGameController(deviceIndex)) {
+      return;
+    }
+    controller = SDL_GameControllerOpen(deviceIndex);
+    if (controller != nullptr) {
+      SDL_Log(
+          "Controller: %s",
+          SDL_GameControllerName(controller));
+    } else {
+      SDL_Log("Controller open failed: %s", SDL_GetError());
+    }
+  };
+  for (int device = 0; device < SDL_NumJoysticks(); ++device) {
+    openController(device);
   }
 
   DesktopView currentView = DesktopView::Canvas;
@@ -553,7 +641,7 @@ int main(int argc, char** argv) {
     bitmap16::PaletteView::reset(paletteState, paletteCatalog);
     activePalette = findActivePalette(editor.sketch(), paletteEntries);
   };
-#ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if !defined(BITMAP16_CARDPUTER_ZERO_DEVICE) && !defined(BITMAP16_STEAM_DECK)
   bitmap16::Desktop::MatrixSimulator desktopMatrix;
   if (desktopMatrix.create()) {
     desktopMatrix.setEnabled(settings.matrixEnabled);
@@ -700,7 +788,7 @@ int main(int argc, char** argv) {
         settings,
         texture,
         renderer);
-#ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if !defined(BITMAP16_CARDPUTER_ZERO_DEVICE) && !defined(BITMAP16_STEAM_DECK)
     if (matrixSimulator != nullptr) {
       matrixSimulator->setEnabled(true);
       settings.matrixUnits = 4;
@@ -779,10 +867,74 @@ int main(int argc, char** argv) {
   SDL_SetWindowBrightness(
       window, static_cast<float>(settings.displayBrightness) / 100.0f);
 
+  const auto moveColorCursor = [&](int dx, int dy) {
+    const int colorCount = editor.sketch().paletteSize;
+    if (colorCount <= 0) return false;
+    const int oldIndex = editor.selectedColor() - 1;
+    const int rows = std::min(8, colorCount);
+    int column = colorCount > 8 ? oldIndex / 8 : 0;
+    int row = oldIndex % 8;
+    if (dx != 0 && colorCount > 8) {
+      column = std::max(0, std::min(1, column + dx));
+    }
+    if (dy != 0) {
+      row = std::max(0, std::min(rows - 1, row + dy));
+    }
+    const int nextIndex =
+        std::min(colorCount - 1, column * 8 + row);
+    if (nextIndex == oldIndex) return false;
+    editor.setSelectedColor(static_cast<uint8_t>(nextIndex + 1));
+    return true;
+  };
+
+  AxisRepeat leftStickX;
+  AxisRepeat leftStickY;
+  AxisRepeat rightStickX;
+  AxisRepeat rightStickY;
+  bool controllerMoveHeld = false;
+  bool controllerShiftStarted = false;
   bool running = !smokeTest;
   while (running) {
+    if (controller != nullptr) {
+      const bool nextMoveHeld =
+          SDL_GameControllerGetAxis(
+              controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000;
+      if (nextMoveHeld != controllerMoveHeld) {
+        controllerMoveHeld = nextMoveHeld;
+        controllerShiftStarted = false;
+        if (currentView == DesktopView::Canvas) {
+          desktopMoveModeActive = controllerMoveHeld;
+          renderNow();
+        }
+      }
+
+      const Uint32 now = SDL_GetTicks();
+      bool repeat = false;
+      const int leftX = stickDirection(SDL_GameControllerGetAxis(
+          controller, SDL_CONTROLLER_AXIS_LEFTX));
+      if (axisRepeatReady(leftStickX, leftX, now, repeat)) {
+        pushKeyEvent(leftX < 0 ? SDLK_LEFT : SDLK_RIGHT, repeat);
+      }
+      const int leftY = stickDirection(SDL_GameControllerGetAxis(
+          controller, SDL_CONTROLLER_AXIS_LEFTY));
+      if (axisRepeatReady(leftStickY, leftY, now, repeat)) {
+        pushKeyEvent(leftY < 0 ? SDLK_UP : SDLK_DOWN, repeat);
+      }
+      const int rightX = stickDirection(SDL_GameControllerGetAxis(
+          controller, SDL_CONTROLLER_AXIS_RIGHTX));
+      if (axisRepeatReady(rightStickX, rightX, now, repeat)) {
+        pushColorEvent(rightX < 0 ? kColorLeft : kColorRight);
+      }
+      const int rightY = stickDirection(SDL_GameControllerGetAxis(
+          controller, SDL_CONTROLLER_AXIS_RIGHTY));
+      if (axisRepeatReady(rightStickY, rightY, now, repeat)) {
+        pushColorEvent(rightY < 0 ? kColorUp : kColorDown);
+      }
+    }
+
     SDL_Event event;
     const bool animatedView =
+        controller != nullptr ||
         currentView == DesktopView::Charging ||
         currentView == DesktopView::Palette ||
         currentView == DesktopView::Memory ||
@@ -874,6 +1026,105 @@ int main(int argc, char** argv) {
           editor.cursorY());
       continue;
     }
+    if (event.type == SDL_CONTROLLERDEVICEADDED) {
+      openController(event.cdevice.which);
+      continue;
+    }
+    if (event.type == SDL_CONTROLLERDEVICEREMOVED &&
+        controller != nullptr) {
+      SDL_Joystick* joystick = SDL_GameControllerGetJoystick(controller);
+      if (SDL_JoystickInstanceID(joystick) == event.cdevice.which) {
+        SDL_GameControllerClose(controller);
+        controller = nullptr;
+        controllerMoveHeld = false;
+        controllerShiftStarted = false;
+        desktopMoveModeActive = false;
+        leftStickX = {};
+        leftStickY = {};
+        rightStickX = {};
+        rightStickY = {};
+        renderNow();
+      }
+      continue;
+    }
+    if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+      SDL_Keycode mappedKey = SDLK_UNKNOWN;
+      switch (event.cbutton.button) {
+        case SDL_CONTROLLER_BUTTON_A:
+          mappedKey = SDLK_RETURN;
+          break;
+        case SDL_CONTROLLER_BUTTON_B:
+          mappedKey = SDLK_ESCAPE;
+          break;
+        case SDL_CONTROLLER_BUTTON_X:
+          mappedKey = SDLK_BACKSPACE;
+          break;
+        case SDL_CONTROLLER_BUTTON_Y:
+          mappedKey = SDLK_f;
+          break;
+        case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
+          mappedKey = SDLK_p;
+          break;
+        case SDL_CONTROLLER_BUTTON_LEFTSTICK:
+          mappedKey = SDLK_g;
+          break;
+        case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+          mappedKey = SDLK_s;
+          break;
+        case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
+          mappedKey = SDLK_v;
+          break;
+        case SDL_CONTROLLER_BUTTON_BACK:
+          mappedKey = SDLK_o;
+          break;
+        case SDL_CONTROLLER_BUTTON_START:
+          mappedKey = SDLK_t;
+          break;
+        case SDL_CONTROLLER_BUTTON_DPAD_UP:
+          mappedKey = SDLK_UP;
+          break;
+        case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
+          mappedKey = SDLK_DOWN;
+          break;
+        case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
+          mappedKey = SDLK_LEFT;
+          break;
+        case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
+          mappedKey = SDLK_RIGHT;
+          break;
+        default:
+          break;
+      }
+      if (mappedKey != SDLK_UNKNOWN) {
+        pushKeyEvent(mappedKey, false);
+      }
+      continue;
+    }
+    if (event.type == SDL_USEREVENT &&
+        event.user.code >= kColorLeft &&
+        event.user.code <= kColorDown) {
+      bool changed = false;
+      if (currentView == DesktopView::Canvas) {
+        const int dx =
+            event.user.code == kColorLeft
+                ? -1
+                : event.user.code == kColorRight ? 1 : 0;
+        const int dy =
+            event.user.code == kColorUp
+                ? -1
+                : event.user.code == kColorDown ? 1 : 0;
+        changed = moveColorCursor(dx, dy);
+      } else if (
+          currentView == DesktopView::Palette &&
+          (event.user.code == kColorLeft ||
+           event.user.code == kColorRight)) {
+        changed = bitmap16::PaletteView::moveCursor(
+            paletteState,
+            event.user.code == kColorLeft ? -1 : 1);
+      }
+      if (changed) renderNow();
+      continue;
+    }
     if (event.type == SDL_KEYUP &&
         event.key.keysym.sym == SDLK_m &&
         desktopMoveModeActive) {
@@ -898,22 +1149,37 @@ int main(int argc, char** argv) {
     if (event.key.repeat != 0 && !arrow) continue;
     const bool altHeld = (event.key.keysym.mod & KMOD_ALT) != 0;
     const Uint8* keyboard = SDL_GetKeyboardState(nullptr);
-    const bool moveHeld = keyboard[SDL_SCANCODE_M] != 0;
+    const bool moveHeld =
+        keyboard[SDL_SCANCODE_M] != 0 || controllerMoveHeld;
     const bool brightnessHeld = keyboard[SDL_SCANCODE_B] != 0;
     const bool matrixHeld = keyboard[SDL_SCANCODE_L] != 0;
     const bool drawHeld =
         keyboard[SDL_SCANCODE_RETURN] != 0 ||
-        keyboard[SDL_SCANCODE_SPACE] != 0;
+        keyboard[SDL_SCANCODE_SPACE] != 0 ||
+        (controller != nullptr &&
+         SDL_GameControllerGetButton(
+             controller, SDL_CONTROLLER_BUTTON_A) != 0);
     const bool eraseHeld =
         keyboard[SDL_SCANCODE_BACKSPACE] != 0 ||
-        keyboard[SDL_SCANCODE_DELETE] != 0;
+        keyboard[SDL_SCANCODE_DELETE] != 0 ||
+        (controller != nullptr &&
+         SDL_GameControllerGetButton(
+             controller, SDL_CONTROLLER_BUTTON_X) != 0);
     const bool plusKey =
         key == SDLK_PLUS || key == SDLK_EQUALS || key == SDLK_KP_PLUS;
     const bool minusKey = key == SDLK_MINUS || key == SDLK_KP_MINUS;
     bool changed = false;
     const auto moveCanvasCursor = [&](int dx, int dy) {
       if (moveHeld) {
-        return editor.shift(dx, dy, event.key.repeat == 0);
+        const bool saveUndo =
+            controllerMoveHeld
+                ? !controllerShiftStarted
+                : event.key.repeat == 0;
+        const bool shifted = editor.shift(dx, dy, saveUndo);
+        if (shifted && controllerMoveHeld) {
+          controllerShiftStarted = true;
+        }
+        return shifted;
       }
       const bool moved = editor.moveCursor(dx, dy);
       if (!moved) return false;
@@ -1230,12 +1496,16 @@ int main(int argc, char** argv) {
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
-#ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if !defined(BITMAP16_CARDPUTER_ZERO_DEVICE) && !defined(BITMAP16_STEAM_DECK)
   if (matrixSimulator != nullptr) {
     matrixSimulator->destroy();
     matrixSimulator = nullptr;
   }
 #endif
+  if (controller != nullptr) {
+    SDL_GameControllerClose(controller);
+    controller = nullptr;
+  }
   SDL_Quit();
   return 0;
 }

@@ -338,7 +338,7 @@ void test_preview_view_renders_indexed_pixels_at_both_target_sizes() {
     bitmap16::PreviewView::render(canvas, state, image, theme);
 
     const int viewX = (width - 128) / 2;
-    const int viewY = (height - 128) / 2;
+    const int viewY = (height - 128 + 1) / 2;
     TEST_ASSERT_EQUAL_HEX16(palette[0], canvas.readPixel(viewX, viewY));
     TEST_ASSERT_EQUAL_HEX16(
         palette[1], canvas.readPixel(viewX + 8, viewY));

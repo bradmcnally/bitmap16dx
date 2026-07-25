@@ -54,7 +54,7 @@ void render(
       std::max(1, std::min(maximumViewSize, availableSize) / image.gridSize);
   const int viewSize = cellSize * image.gridSize;
   const int viewX = (canvas.width() - viewSize) / 2;
-  const int viewY = (canvas.height() - viewSize) / 2;
+  const int viewY = (canvas.height() - viewSize + 1) / 2;
 
   for (int y = 0; y < image.gridSize; ++y) {
     for (int x = 0; x < image.gridSize; ++x) {

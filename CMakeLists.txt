@@ -14,6 +14,8 @@ set(BITMAP16_DEFAULT_HEIGHT 135 CACHE STRING
     "Default desktop simulator framebuffer height")
 option(BITMAP16_CARDPUTER_ZERO_DEVICE
        "Build the SDL shell for the Cardputer Zero Linux runtime" OFF)
+option(BITMAP16_STEAM_DECK
+       "Build the fullscreen Steam Deck SDL runtime" OFF)
 
 find_package(SDL2 CONFIG QUIET)
 if(NOT SDL2_FOUND)
@@ -50,6 +52,10 @@ target_compile_definitions(bitmap16dx_desktop PRIVATE
 if(BITMAP16_CARDPUTER_ZERO_DEVICE)
   target_compile_definitions(
     bitmap16dx_desktop PRIVATE BITMAP16_CARDPUTER_ZERO_DEVICE=1)
+endif()
+if(BITMAP16_STEAM_DECK)
+  target_compile_definitions(
+    bitmap16dx_desktop PRIVATE BITMAP16_STEAM_DECK=1)
 endif()
 
 if(BUILD_TESTING)

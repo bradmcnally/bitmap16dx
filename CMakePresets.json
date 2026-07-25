@@ -31,6 +31,18 @@
         "CMAKE_BUILD_TYPE": "Release",
         "BITMAP16_CARDPUTER_ZERO_DEVICE": "ON"
       }
+    },
+    {
+      "name": "steamdeck",
+      "displayName": "Steam Deck (320x200 logical)",
+      "inherits": "desktop",
+      "binaryDir": "${sourceDir}/build_steamdeck",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BITMAP16_DEFAULT_WIDTH": "320",
+        "BITMAP16_DEFAULT_HEIGHT": "200",
+        "BITMAP16_STEAM_DECK": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -45,6 +57,10 @@
     {
       "name": "zero-device",
       "configurePreset": "zero-device"
+    },
+    {
+      "name": "steamdeck",
+      "configurePreset": "steamdeck"
     }
   ]
 }

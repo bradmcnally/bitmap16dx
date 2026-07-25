@@ -39,6 +39,19 @@ The simulator persists sketches, exports, settings, and custom palettes under
 See [the Cardputer Zero simulator guide](platform_zero/README.md) for desktop
 keyboard mappings and the complete validation checklist.
 
+### Steam Deck quick test
+
+The Deck preset renders a 320×200 logical framebuffer at an exact 4× scale on
+the 1280×800 display and enables SDL controller input:
+
+```sh
+cmake --preset steamdeck
+cmake --build --preset steamdeck
+```
+
+See [the Steam Deck sideload guide](platform_steamdeck/README.md) for the
+controller layout and copy/run instructions.
+
 ### First Boot
 
 1. **Insert SD card** before powering on (FAT32 format recommended)
