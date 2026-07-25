@@ -64,9 +64,18 @@
 #include <vector>
 #include <algorithm>
 #include "boot_image.h"
+#include "core/app.h"
+#include "core/shake_detector.h"
+#include "platform/clock.h"
+#include "platform/imu.h"
+#include "platform/indicator.h"
+#include "platform/input.h"
+#include "platform/power.h"
 
 // Preferences for persistent storage across reboots
 Preferences preferences;
+bitmap16::App app;
+bitmap16::ShakeDetector shakeDetector;
 
 // ============================================================================
 // FEATURE FLAGS
@@ -238,12 +247,15 @@ int lastCursorScreenX = -1;
 int lastCursorScreenY = -1;
 bool moveModeActive = false;
 
-// Key repeat timing
+// Bluetooth keeps a separate repeat state until its disabled legacy path is
+// folded into the platform input adapter.
+#if ENABLE_BLUETOOTH
 unsigned long lastKeyTime = 0;        // When the last key action happened
 unsigned long keyRepeatDelay = 300;   // Initial delay before repeat starts (ms)
 unsigned long keyRepeatRate = 100;    // Time between repeats (ms)
 bool keyRepeating = false;            // Whether we're in repeat mode
 char lastKey = 0;                     // Track which arrow key is held
+#endif
 
 // Canvas data - stores color indices for each pixel
 // 0 = empty/transparent (show checkerboard)
@@ -354,18 +366,6 @@ uint16_t undoPaletteColors[16] = {0};
 uint8_t undoGridSize = 0;
 
 // ============================================================================
-// SHAKE DETECTION (IMU-based undo)
-// ============================================================================
-// Shake detection state for gesture-based undo
-// Uses the BMI270 accelerometer to detect shake gestures
-unsigned long lastShakeTime = 0;        // When last shake was detected (for debouncing)
-const float SHAKE_THRESHOLD = 6.0f;     // Acceleration threshold in G-forces
-                                        // 6.0G requires very firm deliberate shake
-                                        // prevents accidental triggers
-const unsigned long SHAKE_COOLDOWN = 500;  // Debounce time in milliseconds
-                                           // Prevents accidental double-triggers
-
-// ============================================================================
 // SKETCH SYSTEM
 // ============================================================================
 // Each sketch is a single drawing document with its own palette.
@@ -398,7 +398,6 @@ struct SketchInfo {
 std::vector<SketchInfo> sketchList;      // Populated when entering memory view
 
 // Memory View state
-bool inMemoryView = false;
 int memoryViewCursor = 0;  // Which item is selected (0 = "+", 1+ = sketches)
 int memoryViewScrollOffset = 0;  // Target scroll position (pixels scrolled left)
 float memoryViewScrollPos = 0.0f;  // Actual animated scroll position for smooth transitions
@@ -412,13 +411,10 @@ const float MEMORY_CURSOR_ANIM_SPEED = 0.010f;  // How fast the animation cycles
 const int MEMORY_CURSOR_ANIM_DISTANCE = 6;  // Max pixels to move diagonally (more pixels = smoother animation)
 
 // Help screen state
-bool inHelpView = false;
-bool helpViewFromMemoryView = false;  // Track if help screen was opened from memory view
 int helpViewCursor = 0;
 int helpViewScrollOffset = 0;
 
 // View mode state
-bool inPreviewView = false;
 uint8_t previewViewBackground = 0;  // 0=black, 1=white, 2=light gray, 3=dark gray
 
 // Gallery mode state (preview from Memory View with navigation)
@@ -429,7 +425,6 @@ bool galleryAutoAdvance = false;            // Slideshow auto-advance active
 const unsigned long GALLERY_ADVANCE_INTERVAL = 3000;  // Auto-advance every 3 seconds
 
 // Palette menu state
-bool inPaletteView = false;
 bool paletteCanvasAvailable = false;  // Track if canvas allocation succeeded
 int paletteViewCursor = 0;  // Currently selected palette (0 to totalPaletteCount-1)
 float paletteViewScrollPos = 0.0f;  // Animated scroll position for smooth transitions
@@ -456,7 +451,6 @@ M5Canvas paletteCanvas(&M5Cardputer.Display);
 M5Canvas memoryCanvas(&M5Cardputer.Display);
 
 // Settings view state
-bool inSettingsView = false;
 int settingsViewCursor = 0;  // 0-5 for the 6 menu items (0-6 with BT)
 #if ENABLE_BLUETOOTH
 const int SETTINGS_ITEM_COUNT = 7;
@@ -465,7 +459,6 @@ const int SETTINGS_ITEM_COUNT = 6;
 #endif
 
 // Charging mode state (DVD screensaver)
-bool inChargingMode = false;
 unsigned long lastChargeFrameTime = 0;
 const int CHARGE_FRAME_MS = 33;  // ~30fps
 int chargeBatteryPercent = -1;
@@ -504,10 +497,7 @@ unsigned long lastBatteryCheckTime = 0;  // Track when we last checked battery
 const unsigned long BATTERY_CHECK_INTERVAL = 30000;  // Check battery every 30 seconds
 bool batteryFirstCheck = true;  // Flag to force first battery check
 
-// Onboard LED (battery indicator)
-// Cardputer ADV has a WS2812 RGB LED on GPIO21 with enable on GPIO38
-// Uses neopixelWrite() from ESP32 Arduino core — independent of FastLED
-#define ONBOARD_LED_PIN 21
+// Display power-enable pin, also used by the legacy brightness path.
 #define ONBOARD_LED_EN 38
 bool lowBattery = false;  // Latches true when battery <= 10%
 
@@ -658,40 +648,6 @@ void setDisplayBrightness(uint8_t value) {
   uint8_t mapped = 160 + (uint16_t)value * (255 - 160) / 255;
   analogWrite(ONBOARD_LED_EN, mapped);
 }
-
-/**
- * Check if the B key is currently being held down
- * Used for brightness control (B + Plus/Minus)
- */
-bool isBKeyHeld(Keyboard_Class::KeysState& status) {
-  for (auto i : status.word) {
-    if (i == 'b' || i == 'B') {
-      return true;
-    }
-  }
-  return false;
-}
-
-bool isMKeyHeld(Keyboard_Class::KeysState& status) {
-  for (auto i : status.word) {
-    if (i == 'm' || i == 'M') {
-      return true;
-    }
-  }
-  return false;
-}
-
-#if ENABLE_LED_MATRIX
-// Helper function to check if 'L' key is in the word buffer
-bool isLKeyHeld(Keyboard_Class::KeysState& status) {
-  for (auto i : status.word) {
-    if (i == 'l' || i == 'L') {
-      return true;
-    }
-  }
-  return false;
-}
-#endif // ENABLE_LED_MATRIX
 
 // ============================================================================
 // ANIMATION HELPER FUNCTIONS
@@ -1594,7 +1550,7 @@ void drawBatteryIndicator() {
   lastBatteryCheckTime = currentTime;
 
   // Get current battery percentage
-  int batteryPercent = M5Cardputer.Power.getBatteryLevel();
+  int batteryPercent = Power::getBatteryPercent();
 
   // Redraw if changed or forced
   if (batteryPercent != lastBatteryPercent || forceRedraw) {
@@ -1619,7 +1575,7 @@ void drawBatteryIndicator() {
     // Low battery LED indicator (latches red at <= 10%)
     if (!lowBattery && batteryPercent <= 10) {
       lowBattery = true;
-      neopixelWrite(ONBOARD_LED_PIN, 255, 0, 0);
+      Indicator::setColor(255, 0, 0);
     }
 
     lastBatteryPercent = batteryPercent;
@@ -1933,7 +1889,7 @@ void createNewSketch() {
  */
 void enterMemoryView() {
   loadSketchListFromSD();  // Load sketch list (sketch data will be cached on first draw)
-  inMemoryView = true;
+  app.setView(bitmap16::ViewId::Memory);
 
   // Keep cursor and scroll position persistent between sessions
   // This remembers where you were browsing in the list
@@ -1956,7 +1912,7 @@ void enterMemoryView() {
  * Exit Memory View and return to canvas
  */
 void exitMemoryView() {
-  inMemoryView = false;
+  app.setView(bitmap16::ViewId::Canvas);
   sketchList.clear();
   sketchList.shrink_to_fit();
 
@@ -1988,9 +1944,9 @@ void exitMemoryView() {
  * Enter Charging Mode - DVD-style bouncing battery screensaver
  */
 void enterChargingMode() {
-  inChargingMode = true;
+  app.setView(bitmap16::ViewId::Charging);
   lastChargeFrameTime = millis();
-  chargeBatteryPercent = M5Cardputer.Power.getBatteryLevel();
+  chargeBatteryPercent = Power::getBatteryPercent();
   lastChargeBatteryCheck = millis();
 
   // Select battery icon
@@ -2094,7 +2050,7 @@ void enterChargingMode() {
  * Exit Charging Mode - restore canvas view
  */
 void exitChargingMode() {
-  inChargingMode = false;
+  app.setView(bitmap16::ViewId::Canvas);
 
   // Free sprites
   if (chargeSketchLoaded) {
@@ -2129,10 +2085,7 @@ void exitChargingMode() {
  * Enter Help Screen mode
  */
 void enterHelpView() {
-  // Remember if we're coming from memory view
-  helpViewFromMemoryView = inMemoryView;
-
-  inHelpView = true;
+  app.setView(bitmap16::ViewId::Help);
   helpViewCursor = 0;
   helpViewScrollOffset = 0;
   helpCanvasAvailable = helpCanvas.createSprite(240, 135);
@@ -2145,7 +2098,11 @@ void enterHelpView() {
  * Exit Help Screen and return to previous view
  */
 void exitHelpView() {
-  inHelpView = false;
+  const bitmap16::ViewId returnView =
+      app.previousView() == bitmap16::ViewId::Memory
+          ? bitmap16::ViewId::Memory
+          : bitmap16::ViewId::Canvas;
+  app.setView(returnView);
 
   if (helpCanvasAvailable) {
     helpCanvas.deleteSprite();
@@ -2153,10 +2110,9 @@ void exitHelpView() {
   }
 
   // Return to the view we came from
-  if (helpViewFromMemoryView) {
+  if (returnView == bitmap16::ViewId::Memory) {
     // Return to memory view
     drawMemoryView(true);
-    helpViewFromMemoryView = false;
   } else {
     // Return to canvas/drawing view
     M5Cardputer.Display.fillScreen(currentTheme->background);
@@ -2285,13 +2241,14 @@ void loadGallerySketch(int index) {
  * Context-aware: detects if coming from Memory View for gallery mode
  */
 void enterPreviewView() {
-  inPreviewView = true;
+  const bool fromMemoryView =
+      app.currentView() == bitmap16::ViewId::Memory;
+  app.setView(bitmap16::ViewId::Preview);
 
   // Check if we're coming from Memory View (gallery mode)
-  if (inMemoryView) {
+  if (fromMemoryView) {
     galleryMode = true;
     galleryAutoAdvance = false;  // Start paused
-    inMemoryView = false;  // Clear Memory View flag so preview handler runs
 
     // Start at selected sketch (memoryViewCursor - 1 because cursor 0 is "+")
     if (memoryViewCursor > 0 && memoryViewCursor - 1 < sketchList.size()) {
@@ -2358,14 +2315,12 @@ void enterPreviewView() {
  * Context-aware: returns to Memory View if in gallery mode
  */
 void exitPreviewView() {
-  inPreviewView = false;
-
   if (galleryMode) {
     // Return to Memory View at current gallery position
     memoryViewCursor = galleryCurrentIndex + 1;  // +1 for "+" button offset
     galleryMode = false;
     galleryAutoAdvance = false;
-    inMemoryView = true;  // Re-enable Memory View so handler runs
+    app.setView(bitmap16::ViewId::Memory);
 
     // Redraw Memory View
     M5Cardputer.Display.fillScreen(currentTheme->background);
@@ -2393,6 +2348,7 @@ void exitPreviewView() {
   }
 
   // Return to canvas view (existing behavior)
+  app.setView(bitmap16::ViewId::Canvas);
   M5Cardputer.Display.fillScreen(currentTheme->background);
   drawGrid();
   drawPalette();
@@ -2419,7 +2375,7 @@ void exitPreviewView() {
  * Enter Palette Menu - horizontally scrolling palette selector
  */
 void enterPaletteView() {
-  inPaletteView = true;
+  app.setView(bitmap16::ViewId::Palette);
 
   // Create canvas sprite on-demand (64KB)
   if (!paletteCanvas.createSprite(240, 135)) {
@@ -2467,7 +2423,7 @@ void enterPaletteView() {
  * Exit Palette Menu and return to canvas
  */
 void exitPaletteView() {
-  inPaletteView = false;
+  app.setView(bitmap16::ViewId::Canvas);
 
   // Free canvas sprite memory (64KB)
   paletteCanvas.deleteSprite();
@@ -2499,7 +2455,7 @@ void exitPaletteView() {
  * Enter Settings Menu - vertical list of persistent preferences
  */
 void enterSettingsView() {
-  inSettingsView = true;
+  app.setView(bitmap16::ViewId::Settings);
   settingsViewCursor = 0;  // Start at top
 
   // Create canvas sprite on-demand (64KB)
@@ -2517,7 +2473,7 @@ void enterSettingsView() {
  * Exit Settings Menu and return to canvas
  */
 void exitSettingsView() {
-  inSettingsView = false;
+  app.setView(bitmap16::ViewId::Canvas);
 
   // Free canvas sprite memory (64KB)
   settingsCanvas.deleteSprite();
@@ -2680,11 +2636,10 @@ void drawSettingsView() {
 /**
  * Handle Settings Menu input and navigation
  */
-void handleSettingsView(Keyboard_Class::KeysState& status) {
+void handleSettingsView(const bitmap16::InputFrame& input) {
   // Track if we need to redraw
   static bool settingsViewNeedsRedraw = true;
   static int lastSettingsViewCursor = -1;
-  static bool settingsPrevUp = false, settingsPrevDown = false;
 
   // Redraw if cursor changed or first time
   if (settingsViewNeedsRedraw || lastSettingsViewCursor != settingsViewCursor) {
@@ -2702,15 +2657,14 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
   bool btEnterPressed = false;
 #endif
 
-  if (M5Cardputer.Keyboard.isPressed() || btEnterPressed) {
-    // Check if left/right arrow pressed (treat as toggle)
-    for (auto i : status.word) {
-      if (i == ',' || i == '/') status.enter = true;
-    }
+  if (input.keyboardHeld || btEnterPressed) {
+    const bool activateSelected =
+        input.enterPressed || btEnterPressed ||
+        input.event == bitmap16::InputEvent::Left ||
+        input.event == bitmap16::InputEvent::Right ||
+        input.event == bitmap16::InputEvent::Space;
 
-    // Enter key - toggle selected setting
-    if (status.enter || btEnterPressed) {
-      bool needsFullRedraw = false;
+    if (activateSelected) {
 
       switch(settingsViewCursor) {
         case 0:  // Theme
@@ -2728,7 +2682,6 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
           preferences.putBool("darkMode", (currentTheme == &THEME_DARK));
           preferences.end();
 
-          needsFullRedraw = true;
           break;
 
         case 1:  // Default Grid Size
@@ -2817,7 +2770,7 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
             // Disconnect if connected (Fn+Enter forgets pairing too)
             btDisconnect();
             btDeinit();  // Free BLE memory
-            if (status.fn) {
+            if (input.fnHeld) {
               // Fn held - forget bonded device
               btHasBondedDevice = false;
               preferences.begin("bitmap16dx", false);
@@ -2829,7 +2782,7 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
             }
           } else if (btScanning) {
             // Already scanning, do nothing
-          } else if (btEnabled && btHasBondedDevice && !status.fn) {
+          } else if (btEnabled && btHasBondedDevice && !input.fnHeld) {
             // Try to reconnect to bonded device (no scan needed)
             // Fn bypasses this to force new scan
             if (btReconnect()) {
@@ -2839,7 +2792,7 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
             }
           } else if (btEnabled) {
             // Start scanning for keyboard (no bonded device, or Fn held to force scan)
-            if (status.fn && btHasBondedDevice) {
+            if (input.fnHeld && btHasBondedDevice) {
               // Forget old pairing first
               btHasBondedDevice = false;
               preferences.begin("bitmap16dx", false);
@@ -2881,46 +2834,32 @@ void handleSettingsView(Keyboard_Class::KeysState& status) {
       // Force redraw (especially important for theme changes)
       settingsViewNeedsRedraw = true;
 
-      // Debounce
-      delay(200);
     }
 
-    // Check for character keys
-    bool upPressed = false, downPressed = false;
-    for (auto i : status.word) {
-      if (i == '`') {
-        exitSettingsView();
-        settingsViewNeedsRedraw = true;
-        lastSettingsViewCursor = -1;
-        delay(200);
-        return;
-      }
-      else if (i == ';') upPressed = true;
-      else if (i == '.') downPressed = true;
-      else if (i == ' ') {
-        status.enter = true;
-      }
+    if (input.event == bitmap16::InputEvent::Escape) {
+      exitSettingsView();
+      settingsViewNeedsRedraw = true;
+      lastSettingsViewCursor = -1;
+      return;
+    }
+
+    if (input.event == bitmap16::InputEvent::Up &&
+        settingsViewCursor > 0) {
+      --settingsViewCursor;
+      settingsViewNeedsRedraw = true;
+    } else if (input.event == bitmap16::InputEvent::Down &&
+               settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
+      ++settingsViewCursor;
+      settingsViewNeedsRedraw = true;
+    }
+
 #if ENABLE_SCREENSHOTS
-      else if (i == 'y' || i == 'Y') {
-        takeScreenshot();
-        settingsViewNeedsRedraw = true;
-      }
+    if (input.event == bitmap16::InputEvent::Character &&
+        (input.character == 'y' || input.character == 'Y')) {
+      takeScreenshot();
+      settingsViewNeedsRedraw = true;
+    }
 #endif
-    }
-
-    if (upPressed && !settingsPrevUp && settingsViewCursor > 0) {
-      settingsViewCursor--;
-      settingsViewNeedsRedraw = true;
-    }
-    if (downPressed && !settingsPrevDown && settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
-      settingsViewCursor++;
-      settingsViewNeedsRedraw = true;
-    }
-    settingsPrevUp = upPressed;
-    settingsPrevDown = downPressed;
-  } else {
-    settingsPrevUp = false;
-    settingsPrevDown = false;
   }
 
 #if ENABLE_BLUETOOTH
@@ -4272,17 +4211,13 @@ void showBootScreen() {
       break;
     }
 
-    if (M5Cardputer.Keyboard.isChange() && M5Cardputer.Keyboard.isPressed()) {
-      // Check for backtick (ESC key)
-      for (auto i : M5Cardputer.Keyboard.keysState().word) {
-        if (i == '`') {
-          waiting = false;
-          break;
-        }
-      }
+    const bitmap16::InputFrame bootInput = Input::poll(Clock::nowMs());
+    if (bootInput.event == bitmap16::InputEvent::Escape) {
+      waiting = false;
     }
     delay(10);  // Small delay to prevent busy-waiting
   }
+  Input::reset();
 }
 
 // ============================================================================
@@ -4768,6 +4703,8 @@ void adjustLEDBrightness(int8_t delta) {
 }
 #endif // ENABLE_LED_MATRIX
 
+void runLegacyFrame();
+
 // setup() runs once when the device boots
 void setup() {
   // Initialize the M5Cardputer hardware
@@ -4780,14 +4717,10 @@ void setup() {
 
   M5Cardputer.begin(cfg);
 
-  // Initialize the IMU (accelerometer/gyro sensor)
-  // This is required for shake detection to work
-  M5.Imu.begin();
-
-  // Initialize onboard RGB LED (battery indicator)
-  pinMode(ONBOARD_LED_EN, OUTPUT);
-  digitalWrite(ONBOARD_LED_EN, HIGH);
-  neopixelWrite(ONBOARD_LED_PIN, 0, 0, 0);
+  // Initialize hardware through the new platform adapters.
+  IMU::init();
+  Indicator::init();
+  Input::init();
 
   // Detect which Cardputer model is running
   // This helps with debugging and user support
@@ -4900,6 +4833,10 @@ void setup() {
 
   // Draw initial battery indicator
   drawBatteryIndicator();
+
+  // Phase 3 lifecycle: the App now owns frame dispatch while the existing
+  // handlers remain authoritative during the behavior-preserving migration.
+  app.init(runLegacyFrame);
 }
 
 // ============================================================================
@@ -4909,18 +4846,18 @@ void setup() {
 /**
  * Handle Charging Mode - DVD-style bouncing battery icon
  */
-void handleChargingMode(Keyboard_Class::KeysState& status) {
+void handleChargingMode(const bitmap16::InputFrame& input) {
   // Wait for initial key release before listening for exit
   static bool chargeWaitingForRelease = true;
   if (chargeWaitingForRelease) {
-    if (!M5Cardputer.Keyboard.isPressed()) {
+    if (!input.keyboardHeld) {
       chargeWaitingForRelease = false;
     }
     return;
   }
 
   // Any key press exits
-  if (M5Cardputer.Keyboard.isPressed()) {
+  if (input.keyboardHeld) {
     chargeWaitingForRelease = true;
     exitChargingMode();
     delay(200);
@@ -4936,7 +4873,7 @@ void handleChargingMode(Keyboard_Class::KeysState& status) {
 
   // Update battery level periodically
   if (now - lastChargeBatteryCheck >= BATTERY_CHECK_INTERVAL) {
-    chargeBatteryPercent = M5Cardputer.Power.getBatteryLevel();
+    chargeBatteryPercent = Power::getBatteryPercent();
     lastChargeBatteryCheck = now;
     // Update battery icon pointer
     if (chargeBatteryPercent < 10) chargeIcons[3].icon = ICON_BATTERY_0;
@@ -5043,83 +4980,36 @@ void handleChargingMode(Keyboard_Class::KeysState& status) {
 /**
  * Handle Help View input and rendering
  */
-void handleHelpView(Keyboard_Class::KeysState& status) {
+void handleHelpView(const bitmap16::InputFrame& input) {
 #if ENABLE_LED_MATRIX
   const int totalHelpItems = 22;
 #else
   const int totalHelpItems = 20;
 #endif
 
-  static bool prevUp = false;
-  static bool prevDown = false;
-  static unsigned long helpLastKeyTime = 0;
-  static bool helpKeyRepeating = false;
-  static char helpLastKey = 0;
+  if (input.event == bitmap16::InputEvent::Escape ||
+      (input.event == bitmap16::InputEvent::Character &&
+       (input.character == 'h' || input.character == 'H'))) {
+    exitHelpView();
+    delay(200);
+    return;
+  }
 
-  if (M5Cardputer.Keyboard.isPressed()) {
-    bool upPressed = false;
-    bool downPressed = false;
-
-    for (auto i : status.word) {
-      if (i == '`' || i == 'h' || i == 'H') {
-        exitHelpView();
-        delay(200);
-        return;
-      }
 #if ENABLE_SCREENSHOTS
-      else if (i == 'y' || i == 'Y') {
-        takeScreenshot();
-        drawHelpView();
-      }
+  if (input.event == bitmap16::InputEvent::Character &&
+      (input.character == 'y' || input.character == 'Y')) {
+    takeScreenshot();
+    drawHelpView();
+  }
 #endif
-      if (i == ';') upPressed = true;
-      if (i == '.') downPressed = true;
-    }
 
-    // Edge-triggered initial press
-    if (upPressed && !prevUp && helpViewCursor > 0) {
-      helpViewCursor--;
-      helpLastKey = ';';
-      helpLastKeyTime = millis();
-      helpKeyRepeating = false;
-      drawHelpView();
-    }
-    if (downPressed && !prevDown && helpViewCursor < totalHelpItems - 1) {
-      helpViewCursor++;
-      helpLastKey = '.';
-      helpLastKeyTime = millis();
-      helpKeyRepeating = false;
-      drawHelpView();
-    }
-
-    // Key repeat while held
-    char heldKey = 0;
-    if (upPressed) heldKey = ';';
-    else if (downPressed) heldKey = '.';
-
-    if (heldKey && heldKey == helpLastKey) {
-      unsigned long elapsed = millis() - helpLastKeyTime;
-      unsigned long threshold = helpKeyRepeating ? keyRepeatRate : keyRepeatDelay;
-      if (elapsed >= threshold) {
-        helpKeyRepeating = true;
-        helpLastKeyTime = millis();
-        if (heldKey == ';' && helpViewCursor > 0) {
-          helpViewCursor--;
-          drawHelpView();
-        } else if (heldKey == '.' && helpViewCursor < totalHelpItems - 1) {
-          helpViewCursor++;
-          drawHelpView();
-        }
-      }
-    }
-
-    prevUp = upPressed;
-    prevDown = downPressed;
-  } else {
-    prevUp = false;
-    prevDown = false;
-    helpLastKey = 0;
-    helpKeyRepeating = false;
+  if (input.event == bitmap16::InputEvent::Up && helpViewCursor > 0) {
+    --helpViewCursor;
+    drawHelpView();
+  } else if (input.event == bitmap16::InputEvent::Down &&
+             helpViewCursor < totalHelpItems - 1) {
+    ++helpViewCursor;
+    drawHelpView();
   }
 
 #if ENABLE_BLUETOOTH
@@ -5159,7 +5049,7 @@ void handleHelpView(Keyboard_Class::KeysState& status) {
 /**
  * Handle Memory View input and rendering
  */
-void handleMemoryView(Keyboard_Class::KeysState& status) {
+void handleMemoryView(const bitmap16::InputFrame& input) {
   // Handle memory view controls
   static bool memoryViewNeedsRedraw = true;
   static int lastMemoryViewCursor = -1;
@@ -5205,7 +5095,7 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
   }
 
   // Check for G0 button - delete selected sketch (if not on "+")
-  if (M5Cardputer.BtnA.wasPressed() && memoryViewCursor > 0) {
+  if (input.actionPressed && memoryViewCursor > 0) {
     int sketchIndex = memoryViewCursor - 1;
     if (sketchIndex < sketchList.size()) {
       // Save sketch to undo buffer before deleting (so we can restore with Z)
@@ -5239,33 +5129,32 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
     }
     memoryViewNeedsRedraw = true;
     lastMemoryViewCursor = -1;
-    delay(200);  // Debounce
   }
 
-  if (M5Cardputer.Keyboard.isPressed()) {
-    // Enter key - create new sketch or open selected sketch
-    if (status.enter) {
-      if (memoryViewCursor == 0) {
-        // Create new blank sketch
-        createNewSketch();
-      } else {
-        // Open selected sketch
-        int sketchIndex = memoryViewCursor - 1;
-        if (sketchIndex < sketchList.size()) {
-          openSketch(sketchList[sketchIndex].filename);
-        }
+  if (input.enterPressed) {
+    if (memoryViewCursor == 0) {
+      // Create new blank sketch
+      createNewSketch();
+    } else {
+      // Open selected sketch
+      int sketchIndex = memoryViewCursor - 1;
+      if (sketchIndex < sketchList.size()) {
+        openSketch(sketchList[sketchIndex].filename);
       }
-      exitMemoryView();
-      memoryViewNeedsRedraw = true;
-      lastMemoryViewCursor = -1;
-      delay(200);  // Debounce
-      return;
     }
+    exitMemoryView();
+    memoryViewNeedsRedraw = true;
+    lastMemoryViewCursor = -1;
+    return;
+  }
 
-    // Check for character keys
-    for (auto i : status.word) {
-      // Z key - Undo (restore last cleared sketch from memory view)
-      if (i == 'z' || i == 'Z') {
+  {
+    const char command =
+        input.event == bitmap16::InputEvent::Character
+            ? input.character
+            : '\0';
+    // Z key - Undo (restore last cleared sketch from memory view)
+    if (command == 'z' || command == 'Z') {
         if (undoAvailable) {
           // Restore the undo buffer to active sketch
           // (This restores canvas-level undo, not sketch deletion)
@@ -5313,54 +5202,49 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
           setStatusMessage(StatusMsg::RESTORED_SKETCH);
           memoryViewNeedsRedraw = true;
           lastMemoryViewCursor = -1;
-          delay(200);  // Debounce
         } else {
           setStatusMessage(StatusMsg::NO_UNDO);
-          delay(200);  // Debounce
         }
       }
       // ` key (ESC) or O key - exit memory view
-      else if (i == '`' || i == 'o' || i == 'O') {
+    else if (input.event == bitmap16::InputEvent::Escape ||
+             command == 'o' || command == 'O') {
         // Always allow exiting memory view (can go back to current sketch)
         exitMemoryView();
         memoryViewNeedsRedraw = true;
         lastMemoryViewCursor = -1;
-        delay(200);  // Debounce
         return;
       }
-      // I key - Open help view
-      else if (i == 'h' || i == 'H') {
+    // H key - Open help view
+    else if (command == 'h' || command == 'H') {
         enterHelpView();
-        delay(200);  // Debounce
         return;  // Exit memory view loop to enter help view mode
       }
       // V key - View selected sketch in gallery preview
-      else if (i == 'v' || i == 'V') {
+    else if (command == 'v' || command == 'V') {
         if (sketchList.size() > 0) {
-          enterPreviewView();  // Will detect inMemoryView and set galleryMode
-          delay(200);
+          enterPreviewView();  // Detects Memory View and enables gallery mode
           return;
         } else {
           setStatusMessage("No sketches to show");
-          delay(200);
         }
       }
 #if ENABLE_SCREENSHOTS
       // Y key - Take Screenshot
-      else if (i == 'y' || i == 'Y') {
+    else if (command == 'y' || command == 'Y') {
         takeScreenshot();
         memoryViewNeedsRedraw = true;  // Redraw after screenshot status message
       }
 #endif
       // Arrow keys - navigate grid (2D navigation with 4 columns)
-      const int COLS = 4;  // Match the column count in drawMemoryViewGrid
-      int totalItems = 1 + sketchList.size();  // 1 for "+", rest are sketches
+    const int COLS = 4;  // Match the column count in drawMemoryViewGrid
+    int totalItems = 1 + sketchList.size();  // 1 for "+", rest are sketches
 
-      if (i == ';' && memoryViewCursor >= COLS) {  // Up
-        memoryViewCursor -= COLS;
-        delay(150);
-      }
-      else if (i == '.') {  // Down
+    if (input.event == bitmap16::InputEvent::Up &&
+        memoryViewCursor >= COLS) {
+      memoryViewCursor -= COLS;
+    }
+    else if (input.event == bitmap16::InputEvent::Down) {
         int currentCol = memoryViewCursor % COLS;  // Which column are we in?
         int nextRow = memoryViewCursor + COLS;
 
@@ -5378,16 +5262,15 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
           // Normal move down
           memoryViewCursor = nextRow;
         }
-        delay(150);
       }
-      else if (i == ',' && memoryViewCursor % COLS != 0) {  // Left
-        memoryViewCursor--;
-        delay(150);
-      }
-      else if (i == '/' && memoryViewCursor % COLS != (COLS - 1) && memoryViewCursor < totalItems - 1) {  // Right
-        memoryViewCursor++;
-        delay(150);
-      }
+    else if (input.event == bitmap16::InputEvent::Left &&
+             memoryViewCursor % COLS != 0) {
+      memoryViewCursor--;
+    }
+    else if (input.event == bitmap16::InputEvent::Right &&
+             memoryViewCursor % COLS != (COLS - 1) &&
+             memoryViewCursor < totalItems - 1) {
+      memoryViewCursor++;
     }
   }
 
@@ -5449,7 +5332,7 @@ void handleMemoryView(Keyboard_Class::KeysState& status) {
 /**
  * Handle Preview View input and rendering
  */
-void handlePreviewView(Keyboard_Class::KeysState& status) {
+void handlePreviewView(const bitmap16::InputFrame& input) {
   // Auto-advance logic (ONLY in gallery mode)
   if (galleryMode && galleryAutoAdvance) {
     unsigned long now = millis();
@@ -5464,150 +5347,108 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
     }
   }
 
-  // Handle preview view controls - ESC or V to exit, 1/2/3/4 to change background
-  if (M5Cardputer.Keyboard.isPressed()) {
-    // Check for character keys
-    for (auto i : status.word) {
-      // ` key (ESC) or V key - exit preview view
-      if (i == '`' || i == 'v' || i == 'V') {
-        exitPreviewView();
-        delay(200);  // Debounce
-        return;
-      }
+  const bool characterEvent =
+      input.event == bitmap16::InputEvent::Character;
+  if (input.event == bitmap16::InputEvent::Escape ||
+      (characterEvent && (input.character == 'v' || input.character == 'V'))) {
+    exitPreviewView();
+    delay(200);
+    return;
+  }
 
-      // Gallery navigation (ONLY in gallery mode)
-      if (galleryMode) {
-        // Left arrow (,) - previous sketch
-        if (i == ',') {
-          galleryCurrentIndex--;
-          if (galleryCurrentIndex < 0) {
-            galleryCurrentIndex = sketchList.size() - 1;  // Wrap to end
-          }
-          galleryAutoAdvance = false;  // Pause autoplay on manual navigation
-          loadGallerySketch(galleryCurrentIndex);
-          delay(150);
-        }
-        // Right arrow (/) - next sketch
-        else if (i == '/') {
-          galleryCurrentIndex++;
-          if (galleryCurrentIndex >= sketchList.size()) {
-            galleryCurrentIndex = 0;  // Wrap to start
-          }
-          galleryAutoAdvance = false;  // Pause autoplay on manual navigation
-          loadGallerySketch(galleryCurrentIndex);
-          delay(150);
-        }
-        // Space - toggle auto-advance
-        else if (i == ' ') {
-          galleryAutoAdvance = !galleryAutoAdvance;
-          if (galleryAutoAdvance) {
-            galleryLastAdvanceTime = millis();
-          }
-          delay(200);
-        }
-      }
-
-      // Background changes (works in both modes)
-      // 1 key - Black background
-      if (i == '1') {
-        previewViewBackground = 0;
-        if (galleryMode) {
-          loadGallerySketch(galleryCurrentIndex);  // Redraw gallery sketch
-        } else {
-          enterPreviewView();  // Redraw canvas preview
-        }
-        delay(150);  // Debounce
-      }
-      // 2 key - White background
-      else if (i == '2') {
-        previewViewBackground = 1;
-        if (galleryMode) {
-          loadGallerySketch(galleryCurrentIndex);
-        } else {
-          enterPreviewView();
-        }
-        delay(150);  // Debounce
-      }
-      // 3 key - Light gray background
-      else if (i == '3') {
-        previewViewBackground = 2;
-        if (galleryMode) {
-          loadGallerySketch(galleryCurrentIndex);
-        } else {
-          enterPreviewView();
-        }
-        delay(150);  // Debounce
-      }
-      // 4 key - Dark gray background
-      else if (i == '4') {
-        previewViewBackground = 3;
-        if (galleryMode) {
-          loadGallerySketch(galleryCurrentIndex);
-        } else {
-          enterPreviewView();
-        }
-        delay(150);  // Debounce
-      }
-      // Brightness control - B key + Plus/Minus
-      // Hold B and press + to increase brightness
-      // Hold B and press - to decrease brightness
-      else if ((i == '+' || i == '=' || i == '-') && isBKeyHeld(status)) {
-        const int BRIGHTNESS_STEP = 10;  // Adjust brightness by 10% each press
-        const int MIN_BRIGHTNESS = 10;   // Minimum brightness (10%)
-        const int MAX_BRIGHTNESS = 100;  // Maximum brightness (100%)
-
-        if (i == '+' || i == '=') {
-          // Increase brightness by 10% (cap at 100%)
-          if (displayBrightness <= MAX_BRIGHTNESS - BRIGHTNESS_STEP) {
-            displayBrightness += BRIGHTNESS_STEP;
-          } else {
-            displayBrightness = MAX_BRIGHTNESS;
-          }
-        } else if (i == '-') {
-          // Decrease brightness by 10% (don't go below minimum)
-          if (displayBrightness > MIN_BRIGHTNESS + BRIGHTNESS_STEP) {
-            displayBrightness -= BRIGHTNESS_STEP;
-          } else {
-            displayBrightness = MIN_BRIGHTNESS;  // Keep minimum usable brightness
-          }
-        }
-
-        // Convert percentage (10-100) to hardware range (0-255)
-        uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
-
-        // Apply the new brightness setting to the display
-        setDisplayBrightness(hardwareBrightness);
-
-        // Save brightness setting to preferences so it persists across reboots
-        preferences.begin("bitmap16dx", false);
-        preferences.putUChar("brightness", displayBrightness);
-        preferences.end();
-
-        // Show brightness level as clean percentage
-        char brightnessMsg[20];
-        snprintf(brightnessMsg, sizeof(brightnessMsg), "BRIGHT: %d%%", displayBrightness);
-        setStatusMessage(brightnessMsg);
-
-        // Redraw view to show status message
-        if (galleryMode) {
-          loadGallerySketch(galleryCurrentIndex);
-        } else {
-          enterPreviewView();  // Redraw preview
-        }
-        delay(150);
-      }
-#if ENABLE_SCREENSHOTS
-      // Y key - Take Screenshot
-      else if (i == 'y' || i == 'Y') {
-        takeScreenshot();
-        if (galleryMode) {
-          loadGallerySketch(galleryCurrentIndex);
-        } else {
-          enterPreviewView();  // Redraw preview view after screenshot status message
-        }
-      }
-#endif
+  if (galleryMode && input.event == bitmap16::InputEvent::Left) {
+    --galleryCurrentIndex;
+    if (galleryCurrentIndex < 0) {
+      galleryCurrentIndex = sketchList.size() - 1;
     }
+    galleryAutoAdvance = false;
+    loadGallerySketch(galleryCurrentIndex);
+  } else if (galleryMode && input.event == bitmap16::InputEvent::Right) {
+    ++galleryCurrentIndex;
+    if (galleryCurrentIndex >= sketchList.size()) {
+      galleryCurrentIndex = 0;
+    }
+    galleryAutoAdvance = false;
+    loadGallerySketch(galleryCurrentIndex);
+  } else if (galleryMode && input.event == bitmap16::InputEvent::Space) {
+    galleryAutoAdvance = !galleryAutoAdvance;
+    if (galleryAutoAdvance) {
+      galleryLastAdvanceTime = millis();
+    }
+  } else {
+    int requestedBackground = -1;
+    switch (input.event) {
+      case bitmap16::InputEvent::Number1:
+        requestedBackground = 0;
+        break;
+      case bitmap16::InputEvent::Number2:
+        requestedBackground = 1;
+        break;
+      case bitmap16::InputEvent::Number3:
+        requestedBackground = 2;
+        break;
+      case bitmap16::InputEvent::Number4:
+        requestedBackground = 3;
+        break;
+      default:
+        break;
+    }
+
+    if (requestedBackground >= 0) {
+      previewViewBackground = requestedBackground;
+      if (galleryMode) {
+        loadGallerySketch(galleryCurrentIndex);
+      } else {
+        enterPreviewView();
+      }
+    } else if (input.bHeld &&
+               (input.event == bitmap16::InputEvent::Plus ||
+                input.event == bitmap16::InputEvent::Minus)) {
+      const int BRIGHTNESS_STEP = 10;
+      const int MIN_BRIGHTNESS = 10;
+      const int MAX_BRIGHTNESS = 100;
+
+      if (input.event == bitmap16::InputEvent::Plus) {
+        displayBrightness =
+            min(MAX_BRIGHTNESS, displayBrightness + BRIGHTNESS_STEP);
+      } else {
+        displayBrightness =
+            max(MIN_BRIGHTNESS, displayBrightness - BRIGHTNESS_STEP);
+      }
+
+      const uint8_t hardwareBrightness =
+          (displayBrightness * 255) / 100;
+      setDisplayBrightness(hardwareBrightness);
+
+      preferences.begin("bitmap16dx", false);
+      preferences.putUChar("brightness", displayBrightness);
+      preferences.end();
+
+      char brightnessMsg[20];
+      snprintf(
+          brightnessMsg,
+          sizeof(brightnessMsg),
+          "BRIGHT: %d%%",
+          displayBrightness);
+      setStatusMessage(brightnessMsg);
+
+      if (galleryMode) {
+        loadGallerySketch(galleryCurrentIndex);
+      } else {
+        enterPreviewView();
+      }
+    }
+#if ENABLE_SCREENSHOTS
+    else if (characterEvent &&
+             (input.character == 'y' || input.character == 'Y')) {
+      takeScreenshot();
+      if (galleryMode) {
+        loadGallerySketch(galleryCurrentIndex);
+      } else {
+        enterPreviewView();
+      }
+    }
+#endif
   }
 
 #if ENABLE_BLUETOOTH
@@ -5643,7 +5484,7 @@ void handlePreviewView(Keyboard_Class::KeysState& status) {
 /**
  * Handle Palette View input and rendering
  */
-void handlePaletteView(Keyboard_Class::KeysState& status) {
+void handlePaletteView(const bitmap16::InputFrame& input) {
   // Handle palette view controls
   static bool paletteViewNeedsRedraw = true;
   static int lastPaletteViewCursor = -1;
@@ -5690,144 +5531,78 @@ void handlePaletteView(Keyboard_Class::KeysState& status) {
     }
   }
 
-  if (M5Cardputer.Keyboard.isPressed()) {
-    // Enter key - select palette and apply to active sketch
-    if (status.enter) {
-      // Freeze current position WITHOUT snapping (prevents any pixel shift)
-      // All cartridges will use this exact position during animation
-      paletteInsertionFrozenScrollPos = paletteViewScrollPos;
-
-      // Start insertion animation
-      paletteInsertionAnimating = true;
-      paletteInsertionProgress = 0.0f;
-
-      // Get actual palette index from filtered list
-      uint8_t selectedPaletteIdx = filteredPaletteIndices[paletteViewCursor];
-
-      // Copy selected palette to active sketch
-      activeSketch.paletteSize = allPaletteSizes[selectedPaletteIdx];  // Set palette size
-      for (int i = 0; i < 16; i++) {
-        activeSketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
-      }
-
-      // Update LED matrix with new palette colors
-      LED_CANVAS_UPDATED();
-    }
-
-    // Check for character keys
-    for (auto i : status.word) {
-      // ` key (ESC) or P key - exit palette view
-      if (i == '`' || i == 'p' || i == 'P') {
-        exitPaletteView();
-        paletteViewNeedsRedraw = true;
-        lastPaletteViewCursor = -1;
-        delay(200);  // Debounce
-        return;
-      }
-      // Filter keys
-      else if (i == '0') {
-        // Clear all filters
-        paletteFilterSize = 0;
-        paletteFilterUser = false;
-        updatePaletteFilter();
-        paletteViewCursor = 0;
-        paletteViewScrollPos = 0;
-        paletteViewNeedsRedraw = true;
-        // Wait for key release to prevent multiple toggles
-        while (M5Cardputer.Keyboard.isPressed()) {
-          M5Cardputer.update();
-          delay(10);
-        }
-        delay(50);  // Extra debounce
-        break;
-      }
-      else if (i == '4') {
-        // Toggle 4-color filter
-        paletteFilterSize = (paletteFilterSize == 4) ? 0 : 4;
-        updatePaletteFilter();
-        if (paletteViewCursor >= filteredPaletteCount) {
-          paletteViewCursor = 0;
-          paletteViewScrollPos = 0;
-        }
-        paletteViewNeedsRedraw = true;
-        // Wait for key release to prevent multiple toggles
-        while (M5Cardputer.Keyboard.isPressed()) {
-          M5Cardputer.update();
-          delay(10);
-        }
-        delay(50);  // Extra debounce
-        break;
-      }
-      else if (i == '8') {
-        // Toggle 8-color filter
-        paletteFilterSize = (paletteFilterSize == 8) ? 0 : 8;
-        updatePaletteFilter();
-        if (paletteViewCursor >= filteredPaletteCount) {
-          paletteViewCursor = 0;
-          paletteViewScrollPos = 0;
-        }
-        paletteViewNeedsRedraw = true;
-        // Wait for key release to prevent multiple toggles
-        while (M5Cardputer.Keyboard.isPressed()) {
-          M5Cardputer.update();
-          delay(10);
-        }
-        delay(50);  // Extra debounce
-        break;
-      }
-      else if (i == '1') {
-        // Toggle 16-color filter
-        paletteFilterSize = (paletteFilterSize == 16) ? 0 : 16;
-        updatePaletteFilter();
-        if (paletteViewCursor >= filteredPaletteCount) {
-          paletteViewCursor = 0;
-          paletteViewScrollPos = 0;
-        }
-        paletteViewNeedsRedraw = true;
-        // Wait for key release to prevent multiple toggles
-        while (M5Cardputer.Keyboard.isPressed()) {
-          M5Cardputer.update();
-          delay(10);
-        }
-        delay(50);  // Extra debounce
-        break;
-      }
-      else if (i == 'u' || i == 'U') {
-        // Toggle user palette filter
-        paletteFilterUser = !paletteFilterUser;
-        updatePaletteFilter();
-        if (paletteViewCursor >= filteredPaletteCount) {
-          paletteViewCursor = 0;
-          paletteViewScrollPos = 0;
-        }
-        paletteViewNeedsRedraw = true;
-        // Wait for key release to prevent multiple toggles
-        while (M5Cardputer.Keyboard.isPressed()) {
-          M5Cardputer.update();
-          delay(10);
-        }
-        delay(50);  // Extra debounce
-        break;
-      }
-      // Left arrow - previous palette
-      else if (i == ',' && paletteViewCursor > 0) {
-        paletteViewCursor--;
-        delay(150);
-      }
-      // Right arrow - next palette
-      else if (i == '/' && paletteViewCursor < filteredPaletteCount - 1) {
-        paletteViewCursor++;
-        delay(150);
-      }
-#if ENABLE_SCREENSHOTS
-      // Y key - Take Screenshot
-      else if (i == 'y' || i == 'Y') {
-        takeScreenshot();
-        paletteViewNeedsRedraw = true;  // Redraw palette view after screenshot status message
-      }
-#endif
-    }
+  const bool characterEvent =
+      input.event == bitmap16::InputEvent::Character;
+  if (input.event == bitmap16::InputEvent::Escape ||
+      (characterEvent && (input.character == 'p' || input.character == 'P'))) {
+    exitPaletteView();
+    paletteViewNeedsRedraw = true;
+    lastPaletteViewCursor = -1;
+    delay(200);
+    return;
   }
+
+  if (input.enterPressed && filteredPaletteCount > 0) {
+    paletteInsertionFrozenScrollPos = paletteViewScrollPos;
+    paletteInsertionAnimating = true;
+    paletteInsertionProgress = 0.0f;
+
+    const uint8_t selectedPaletteIdx =
+        filteredPaletteIndices[paletteViewCursor];
+    activeSketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
+    for (int i = 0; i < 16; ++i) {
+      activeSketch.paletteColors[i] =
+          pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
+    }
+    LED_CANVAS_UPDATED();
+  } else if (input.event == bitmap16::InputEvent::Number0) {
+    paletteFilterSize = 0;
+    paletteFilterUser = false;
+    updatePaletteFilter();
+    paletteViewCursor = 0;
+    paletteViewScrollPos = 0;
+    paletteViewNeedsRedraw = true;
+  } else if (input.event == bitmap16::InputEvent::Number4 ||
+             input.event == bitmap16::InputEvent::Number8 ||
+             input.event == bitmap16::InputEvent::Number1) {
+    uint8_t requestedSize = 16;
+    if (input.event == bitmap16::InputEvent::Number4) {
+      requestedSize = 4;
+    } else if (input.event == bitmap16::InputEvent::Number8) {
+      requestedSize = 8;
+    }
+
+    paletteFilterSize =
+        paletteFilterSize == requestedSize ? 0 : requestedSize;
+    updatePaletteFilter();
+    if (paletteViewCursor >= filteredPaletteCount) {
+      paletteViewCursor = 0;
+      paletteViewScrollPos = 0;
+    }
+    paletteViewNeedsRedraw = true;
+  } else if (characterEvent &&
+             (input.character == 'u' || input.character == 'U')) {
+    paletteFilterUser = !paletteFilterUser;
+    updatePaletteFilter();
+    if (paletteViewCursor >= filteredPaletteCount) {
+      paletteViewCursor = 0;
+      paletteViewScrollPos = 0;
+    }
+    paletteViewNeedsRedraw = true;
+  } else if (input.event == bitmap16::InputEvent::Left &&
+             paletteViewCursor > 0) {
+    --paletteViewCursor;
+  } else if (input.event == bitmap16::InputEvent::Right &&
+             paletteViewCursor < filteredPaletteCount - 1) {
+    ++paletteViewCursor;
+  }
+#if ENABLE_SCREENSHOTS
+  else if (characterEvent &&
+           (input.character == 'y' || input.character == 'Y')) {
+    takeScreenshot();
+    paletteViewNeedsRedraw = true;
+  }
+#endif
 
 #if ENABLE_BLUETOOTH
   // BT keyboard navigation for palette view
@@ -5868,7 +5643,7 @@ void handlePaletteView(Keyboard_Class::KeysState& status) {
 /**
  * Handle Canvas View input and rendering
  */
-void handleCanvasView(Keyboard_Class::KeysState& status);
+void handleCanvasView(const bitmap16::InputFrame& input);
 
 #if ENABLE_BLUETOOTH
 // ============================================================================
@@ -5942,7 +5717,7 @@ void btStartScan() {
   btInit();
 
   // Redraw settings view to show [SCANNING] before blocking
-  if (inSettingsView) {
+  if (app.currentView() == bitmap16::ViewId::Settings) {
     drawSettingsView();
   }
 
@@ -5956,7 +5731,7 @@ void btStartScan() {
   for (int remaining = SCAN_SECONDS; remaining > 0; remaining--) {
     // Update countdown and redraw
     btScanCountdown = remaining;
-    if (inSettingsView) {
+    if (app.currentView() == bitmap16::ViewId::Settings) {
       drawSettingsView();
     }
 
@@ -6373,11 +6148,11 @@ void btUpdateNotify() {
  * How it works:
  * 1. Get IMU data (x, y, z acceleration in G-forces)
  * 2. Calculate magnitude using: sqrt(x² + y² + z²)
- * 3. Check if magnitude exceeds threshold (2.5G)
+ * 3. Check if magnitude exceeds threshold (6G)
  * 4. Ensure cooldown period has passed (500ms)
  * 5. Return true if shake detected
  *
- * The threshold of 2.5G is calibrated to:
+ * The threshold of 6G is calibrated to:
  * - Be intentional (won't trigger from gentle movements)
  * - Not be exhausting (doesn't require violent shaking)
  * - Feel natural for a handheld device
@@ -6385,54 +6160,23 @@ void btUpdateNotify() {
  * @return true if shake gesture detected, false otherwise
  */
 bool detectShakeGesture() {
-  // Check if IMU is available (some Cardputer models don't have it)
-  if (!M5.Imu.isEnabled()) {
-    return false;
-  }
-
-  // Check cooldown timer (prevent double-triggers)
-  unsigned long currentTime = millis();
-  if (currentTime - lastShakeTime < SHAKE_COOLDOWN) {
-    return false;
-  }
-
-  // Update IMU sensor data
-  M5.Imu.update();
-
-  // Get IMU data from the BMI270 accelerometer
-  // The sensor provides acceleration in G-forces (1G = 9.8 m/s²)
-  // When device is stationary, magnitude ≈ 1G (gravity)
-  auto imuData = M5.Imu.getImuData();
-
-  // Calculate total acceleration magnitude
-  // Formula: magnitude = sqrt(x² + y² + z²)
-  // This gives us the total acceleration in all directions
-  float accelX = imuData.accel.x;
-  float accelY = imuData.accel.y;
-  float accelZ = imuData.accel.z;
-
-  float magnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
-
-  // Detect shake when acceleration exceeds our threshold
-  // A shake produces sudden, high acceleration (> 2.5G)
-  if (magnitude > SHAKE_THRESHOLD) {
-    // Shake detected! Update timestamp and return true
-    lastShakeTime = currentTime;
-    return true;
-  }
-
-  // No shake detected
-  return false;
+  return shakeDetector.update(IMU::readAcceleration(), Clock::nowMs());
 }
 
 // ============================================================================
 // MAIN LOOP
 // ============================================================================
 
-// loop() runs over and over again forever
 void loop() {
+  app.tick();
+}
+
+void runLegacyFrame() {
   // Update the M5 hardware state (this checks for keyboard input)
   M5Cardputer.update();
+
+  // Poll once so migrated and legacy handlers observe the same hardware frame.
+  const bitmap16::InputFrame input = Input::poll(Clock::nowMs());
 
 #if ENABLE_BLUETOOTH
   // Update BT notification display timer
@@ -6443,7 +6187,7 @@ void loop() {
   // SHAKE-TO-UNDO DETECTION (IMU)
   // ============================================================================
   // Check for shake gesture ONLY in canvas view
-  if (!inHelpView && !inMemoryView && !inPreviewView && !inPaletteView && !inSettingsView) {
+  if (app.currentView() == bitmap16::ViewId::Canvas) {
     if (shakeUndoEnabled && detectShakeGesture() && undoAvailable) {
       // Shake detected and undo is available!
       restoreUndo();  // Perform the undo operation
@@ -6462,64 +6206,33 @@ void loop() {
     }
   }
 
-  // Get current keyboard state
-  Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
-
-  // ============================================================================
-  // CHARGING MODE
-  // ============================================================================
-  if (inChargingMode) {
-    handleChargingMode(status);
-    return;
+  // App ViewId is authoritative for frame dispatch.
+  switch (app.currentView()) {
+    case bitmap16::ViewId::Charging:
+      handleChargingMode(input);
+      break;
+    case bitmap16::ViewId::Help:
+      handleHelpView(input);
+      break;
+    case bitmap16::ViewId::Memory:
+      handleMemoryView(input);
+      break;
+    case bitmap16::ViewId::Preview:
+      handlePreviewView(input);
+      break;
+    case bitmap16::ViewId::Palette:
+      handlePaletteView(input);
+      break;
+    case bitmap16::ViewId::Settings:
+      handleSettingsView(input);
+      break;
+    case bitmap16::ViewId::Canvas:
+      handleCanvasView(input);
+      break;
   }
-
-  // ============================================================================
-  // HELP VIEW
-  // ============================================================================
-  if (inHelpView) {
-    handleHelpView(status);
-    return;
-  }
-
-  // ============================================================================
-  // MEMORY VIEW
-  // ============================================================================
-  if (inMemoryView) {
-    handleMemoryView(status);
-    return;
-  }
-
-  // ============================================================================
-  // PREVIEW VIEW
-  // ============================================================================
-  if (inPreviewView) {
-    handlePreviewView(status);
-    return;
-  }
-
-  // ============================================================================
-  // PALETTE VIEW
-  // ============================================================================
-  if (inPaletteView) {
-    handlePaletteView(status);
-    return;
-  }
-
-  // ============================================================================
-  // SETTINGS VIEW
-  // ============================================================================
-  if (inSettingsView) {
-    handleSettingsView(status);
-    return;
-  }
-
-  // ============================================================================
-  // CANVAS VIEW (Default)
-  // ============================================================================
-  handleCanvasView(status);
 }
 
-void handleCanvasView(Keyboard_Class::KeysState& status) {
+void handleCanvasView(const bitmap16::InputFrame& input) {
   // Track what changed for redrawing
   bool moved = false;
   bool pixelPlaced = false;
@@ -6536,23 +6249,17 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   int oldY = cursorY;
 
   // Check if enter or delete is currently being held (for drawing while moving)
-  bool enterHeld = false;
-  bool deleteHeld = false;
+  bool enterHeld = input.enterHeld;
+  bool deleteHeld = input.deleteHeld;
 
-  // Check for G0 button (physical button on the device)
-  // The G0 button is accessed via M5Cardputer.BtnA
-  if (M5Cardputer.BtnA.wasPressed()) {
+  if (input.actionPressed) {
     clearCanvas();
     canvasCleared = true;
     LED_CANVAS_UPDATED();  // Update LED matrix
   }
 
-  // Check if enter or delete are currently held
-  enterHeld = status.enter;
-  deleteHeld = status.del;
-
   // Check if M key is held (for canvas move)
-  bool mHeld = isMKeyHeld(status);
+  bool mHeld = input.mHeld;
   bool moveModeChanged = (mHeld != moveModeActive);
   moveModeActive = mHeld;
   if (!mHeld) moveUndoSaved = false;
@@ -6564,7 +6271,7 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   deleteHeld = deleteHeld || btBackspace;
 
   // Check for BT Fn modifier (Alt key)
-  bool fnHeld = status.fn || btFnHeld;
+  bool fnHeld = input.fnHeld || btFnHeld;
 
   // Process BT arrow keys - detect new presses and set up for key repeat
   static bool btPrevUp = false, btPrevDown = false, btPrevLeft = false, btPrevRight = false;
@@ -6600,13 +6307,13 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
 
   // Process BT Enter/Space/Backspace for pixel operations
   // Space on BT keyboard also draws (BT-only feature)
-  if ((btEnter || btSpace) && !status.enter) {
+  if ((btEnter || btSpace) && !input.enterHeld) {
     saveUndo();
     canvas[cursorY][cursorX] = selectedColor;
     pixelPlaced = true;
     LED_CANVAS_UPDATED();
   }
-  if (btBackspace && !status.del) {
+  if (btBackspace && !input.deleteHeld) {
     saveUndo();
     canvas[cursorY][cursorX] = 0;
     pixelPlaced = true;
@@ -6717,345 +6424,279 @@ void handleCanvasView(Keyboard_Class::KeysState& status) {
   // Clear BT arrow state after processing (they're edge-triggered from HID reports)
   // Note: We don't clear here because HID reports continuously update the state
 #else
-  bool fnHeld = status.fn;
+  bool fnHeld = input.fnHeld;
 #endif
 
-  // Check if any key was pressed (for non-repeating actions)
-  if (M5Cardputer.Keyboard.isChange()) {
-    if (M5Cardputer.Keyboard.isPressed()) {
-      // Check for special keys first (Enter, Backspace, etc.)
-      // These are in status.enter, status.del, etc., not in status.word
-      if (status.enter) {
-        // Enter/Return key (OK button) - place pixel with selected color
-        saveUndo();  // Save state before placing pixel
-        canvas[cursorY][cursorX] = selectedColor;
-        pixelPlaced = true;
-        LED_CANVAS_UPDATED();  // Update LED matrix
-      }
-      else if (status.del) {
-        // Backspace/Delete key - erase pixel
-        saveUndo();  // Save state before erasing
-        canvas[cursorY][cursorX] = 0;
-        pixelPlaced = true;
-        LED_CANVAS_UPDATED();  // Update LED matrix
-      }
+  if (input.enterPressed) {
+    saveUndo();
+    canvas[cursorY][cursorX] = selectedColor;
+    pixelPlaced = true;
+    LED_CANVAS_UPDATED();
+  } else if (input.deletePressed) {
+    saveUndo();
+    canvas[cursorY][cursorX] = 0;
+    pixelPlaced = true;
+    LED_CANVAS_UPDATED();
+  }
 
-      // Check for non-arrow keys (number keys, commands, etc.)
-      // The Cardputer uses ';' for up, '.' for down, ',' for left, '/' for right
-      for (auto i : status.word) {
-        // Number keys 1-8 select colors
-        // Without Shift: colors 1-8
-        // With Fn (or BT Alt): colors 9-16 (only if palette has 16 colors)
-        if (i >= '1' && i <= '8') {
-          uint8_t baseColor = i - '0';  // Convert '1' to 1, '2' to 2, etc.
-          uint8_t newColor = fnHeld ? (baseColor + 8) : baseColor;
+  uint8_t requestedColor = 0;
+  switch (input.event) {
+    case bitmap16::InputEvent::Number1: requestedColor = 1; break;
+    case bitmap16::InputEvent::Number2: requestedColor = 2; break;
+    case bitmap16::InputEvent::Number3: requestedColor = 3; break;
+    case bitmap16::InputEvent::Number4: requestedColor = 4; break;
+    case bitmap16::InputEvent::Number5: requestedColor = 5; break;
+    case bitmap16::InputEvent::Number6: requestedColor = 6; break;
+    case bitmap16::InputEvent::Number7: requestedColor = 7; break;
+    case bitmap16::InputEvent::Number8: requestedColor = 8; break;
+    default: break;
+  }
 
-          // Don't allow selecting colors beyond palette size
-          if (newColor <= activeSketch.paletteSize && selectedColor != newColor) {
-            selectedColor = newColor;
-            colorChanged = true;
-            char colorMsg[20];
-            snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
-            setStatusMessage(colorMsg);
-          }
-        }
-        // C key - Cycle to next color
-        else if (i == 'c' || i == 'C') {
-          selectedColor++;
-          if (selectedColor > activeSketch.paletteSize) {
-            selectedColor = 1;  // Loop back to first color
-          }
-          colorChanged = true;
-          char colorMsg[20];
-          snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
-          setStatusMessage(colorMsg);
-        }
-        // Z key - Undo
-        else if (i == 'z' || i == 'Z') {
-          restoreUndo();
-          undoPerformed = true;
-        }
-        // G key - Toggle grid size between 8×8 and 16×16
-        else if (i == 'g' || i == 'G') {
-          toggleGridSize();
-          gridToggled = true;
-        }
-        // R key - Toggle rulers (center guides)
-        else if (i == 'r' || i == 'R') {
-          rulersVisible = !rulersVisible;
-          rulersToggled = true;
-          setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
-        }
-        // O key - Open Memory View
-        else if (i == 'o' || i == 'O') {
-          enterMemoryView();
-          delay(200);  // Debounce to prevent immediate close
-        }
-        // S key - Save sketch (or Fn+S to save as new)
-        else if (i == 's' || i == 'S') {
-          // Copy canvas to active sketch before saving
-          for (int y = 0; y < 16; y++) {
-            for (int x = 0; x < 16; x++) {
-              activeSketch.pixels[y][x] = canvas[y][x];
-            }
-          }
-          activeSketch.gridSize = currentGridSize;
-
-          if (fnHeld) {
-            // Fn+S (or BT Alt+S): Save as new sketch
-            saveActiveSketchAsNew();
-          } else {
-            // S: Save to existing sketch (or save as new if unsaved)
-            saveActiveSketchToSD();
-          }
-        }
-        // F key - Flood fill (paint bucket)
-        else if (i == 'f' || i == 'F') {
-          saveUndo();  // Save state before flood fill
-          floodFill(cursorX, cursorY, selectedColor);
-          floodFilled = true;  // Trigger full canvas redraw
-          LED_CANVAS_UPDATED();  // Update LED matrix
-          setStatusMessage(StatusMsg::FILL);
-          }
-        // H key - Enter Help Screen
-        else if (i == 'h' || i == 'H') {
-          enterHelpView();
-          delay(200);  // Debounce to prevent immediate close
-        }
-        // T key - Open Settings Menu
-        else if (i == 't' || i == 'T') {
-          enterSettingsView();
-          delay(200);  // Debounce to prevent immediate close
-        }
-        // V key - Enter View Mode
-        else if (i == 'v' || i == 'V') {
-          enterPreviewView();
-          delay(200);  // Debounce to prevent immediate close
-        }
-        // X key - Export PNG
-        // X alone = 128×128 scaled export
-        // Fn+X (or BT Alt+X) = logical size export (8×8 or 16×16)
-        else if (i == 'x' || i == 'X') {
-          bool scaleToFull = !fnHeld;  // Scale unless Fn/Alt is held
-          exportCanvasToPNG(scaleToFull);
-        }
-#if ENABLE_SCREENSHOTS
-        // Y key - Take Screenshot (full 240×135 display)
-        else if (i == 'y' || i == 'Y') {
-          takeScreenshot();
-        }
-#endif
-        // P key - Open Palette Menu
-        else if (i == 'p' || i == 'P') {
-          enterPaletteView();
-          delay(200);  // Debounce to prevent immediate close
-        }
-        // Fn+B - Enter Charging Mode (screensaver)
-        else if ((i == 'b' || i == 'B') && fnHeld) {
-          enterChargingMode();
-          delay(200);
-          return;
-        }
-        // B key + Plus/Minus - Brightness control
-        // Hold B and press + to increase brightness
-        // Hold B and press - to decrease brightness
-        else if ((i == '+' || i == '=' || i == '-') && isBKeyHeld(status)) {
-          const int BRIGHTNESS_STEP = 10;  // Adjust brightness by 10% each press
-          const int MIN_BRIGHTNESS = 10;   // Minimum brightness (10%)
-          const int MAX_BRIGHTNESS = 100;  // Maximum brightness (100%)
-
-          if (i == '+' || i == '=') {
-            // Increase brightness by 10% (cap at 100%)
-            if (displayBrightness <= MAX_BRIGHTNESS - BRIGHTNESS_STEP) {
-              displayBrightness += BRIGHTNESS_STEP;
-            } else {
-              displayBrightness = MAX_BRIGHTNESS;
-            }
-          } else if (i == '-') {
-            // Decrease brightness by 10% (don't go below minimum)
-            if (displayBrightness > MIN_BRIGHTNESS + BRIGHTNESS_STEP) {
-              displayBrightness -= BRIGHTNESS_STEP;
-            } else {
-              displayBrightness = MIN_BRIGHTNESS;  // Keep minimum usable brightness
-            }
-          }
-
-          // Convert percentage (10-100) to hardware range (0-255)
-          uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
-
-          // Apply the new brightness setting to the display
-          setDisplayBrightness(hardwareBrightness);
-
-          // Save brightness setting to preferences so it persists across reboots
-          preferences.begin("bitmap16dx", false);
-          preferences.putUChar("brightness", displayBrightness);
-          preferences.end();
-
-          // Show brightness level as clean percentage
-          char brightnessMsg[20];
-          snprintf(brightnessMsg, sizeof(brightnessMsg), "BRIGHT: %d%%", displayBrightness);
-          setStatusMessage(brightnessMsg);
-        }
-#if ENABLE_LED_MATRIX
-        // L key + Enter - Toggle LED matrix on/off
-        else if ((i == 'l' || i == 'L') && status.enter) {
-          toggleLEDMatrix();
-          char ledMsg[30];
-          snprintf(ledMsg, sizeof(ledMsg), "LED: %s", ledMatrixEnabled ? "ON" : "OFF");
-          setStatusMessage(ledMsg);
-        }
-        // L key + Plus/Minus - LED matrix brightness control
-        // Hold L and press + to increase brightness
-        // Hold L and press - to decrease brightness
-        else if ((i == '+' || i == '=' || i == '-') && isLKeyHeld(status)) {
-          adjustLEDBrightness((i == '-') ? -1 : +1);
-
-          // Show LED matrix brightness level
-          char ledBrightMsg[30];
-          snprintf(ledBrightMsg, sizeof(ledBrightMsg), "LED: %d%%", ledBrightness);
-          setStatusMessage(ledBrightMsg);
-        }
-#endif // ENABLE_LED_MATRIX
-        // Arrow keys - handle first press
-        else if (i == ';' || i == '.' || i == ',' || i == '/') {
-          lastKey = i;
-          lastKeyTime = millis();
-          keyRepeating = false;
-
-          if (mHeld) {
-            // M + Arrow: Shift entire canvas with wrapping
-            if (!moveUndoSaved) {
-              saveUndo();
-              moveUndoSaved = true;
-            }
-            if (i == ';') shiftCanvas(0, -1);
-            else if (i == '.') shiftCanvas(0, 1);
-            else if (i == ',') shiftCanvas(-1, 0);
-            else if (i == '/') shiftCanvas(1, 0);
-            canvasMoved = true;
-            LED_CANVAS_UPDATED();
-            setStatusMessage(StatusMsg::MOVE);
-          } else {
-            // Normal cursor movement
-            if (i == ';' && cursorY > 0) {
-              cursorY--;
-              moved = true;
-            }
-            else if (i == '.' && cursorY < currentGridSize - 1) {
-              cursorY++;
-              moved = true;
-            }
-            else if (i == ',' && cursorX > 0) {
-              cursorX--;
-              moved = true;
-            }
-            else if (i == '/' && cursorX < currentGridSize - 1) {
-              cursorX++;
-              moved = true;
-            }
-
-            // If enter or delete is held, paint/erase at the new position
-            if (moved && enterHeld) {
-              canvas[cursorY][cursorX] = selectedColor;
-              pixelPlaced = true;
-              LED_CANVAS_UPDATED();
-            }
-            else if (moved && deleteHeld) {
-              canvas[cursorY][cursorX] = 0;
-              pixelPlaced = true;
-              LED_CANVAS_UPDATED();
-            }
-          }
-        }
-      }
+  if (requestedColor != 0) {
+    const uint8_t newColor =
+        fnHeld ? requestedColor + 8 : requestedColor;
+    if (newColor <= activeSketch.paletteSize && selectedColor != newColor) {
+      selectedColor = newColor;
+      colorChanged = true;
+      char colorMsg[20];
+      snprintf(
+          colorMsg,
+          sizeof(colorMsg),
+          StatusMsg::COLOR_FMT,
+          selectedColor);
+      setStatusMessage(colorMsg);
     }
   }
 
-  // Handle key repeat for arrow keys when held
-  // Check if an arrow key is currently being held (keyboard or BT)
-  bool arrowKeyHeld = false;
-  char currentArrowKey = 0;
+  const bool characterEvent =
+      input.event == bitmap16::InputEvent::Character;
+  const char command = characterEvent ? input.character : '\0';
 
-  for (auto i : status.word) {
-    if (i == ';' || i == '.' || i == ',' || i == '/') {
-      arrowKeyHeld = true;
-      currentArrowKey = i;
-      break;
+  if (command == 'c' || command == 'C') {
+    ++selectedColor;
+    if (selectedColor > activeSketch.paletteSize) {
+      selectedColor = 1;
+    }
+    colorChanged = true;
+    char colorMsg[20];
+    snprintf(
+        colorMsg,
+        sizeof(colorMsg),
+        StatusMsg::COLOR_FMT,
+        selectedColor);
+    setStatusMessage(colorMsg);
+  } else if (command == 'z' || command == 'Z') {
+    restoreUndo();
+    undoPerformed = true;
+  } else if (command == 'g' || command == 'G') {
+    toggleGridSize();
+    gridToggled = true;
+  } else if (command == 'r' || command == 'R') {
+    rulersVisible = !rulersVisible;
+    rulersToggled = true;
+    setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
+  } else if (command == 'o' || command == 'O') {
+    enterMemoryView();
+  } else if (command == 's' || command == 'S') {
+    for (int y = 0; y < 16; ++y) {
+      for (int x = 0; x < 16; ++x) {
+        activeSketch.pixels[y][x] = canvas[y][x];
+      }
+    }
+    activeSketch.gridSize = currentGridSize;
+    if (fnHeld) {
+      saveActiveSketchAsNew();
+    } else {
+      saveActiveSketchToSD();
+    }
+  } else if (command == 'f' || command == 'F') {
+    saveUndo();
+    floodFill(cursorX, cursorY, selectedColor);
+    floodFilled = true;
+    LED_CANVAS_UPDATED();
+    setStatusMessage(StatusMsg::FILL);
+  } else if (command == 'h' || command == 'H') {
+    enterHelpView();
+  } else if (command == 't' || command == 'T') {
+    enterSettingsView();
+  } else if (command == 'v' || command == 'V') {
+    enterPreviewView();
+  } else if (command == 'x' || command == 'X') {
+    exportCanvasToPNG(!fnHeld);
+#if ENABLE_SCREENSHOTS
+  } else if (command == 'y' || command == 'Y') {
+    takeScreenshot();
+#endif
+  } else if (command == 'p' || command == 'P') {
+    enterPaletteView();
+  } else if (fnHeld && input.bHeld) {
+    enterChargingMode();
+    return;
+  } else if (input.bHeld &&
+             (input.event == bitmap16::InputEvent::Plus ||
+              input.event == bitmap16::InputEvent::Minus)) {
+    const int BRIGHTNESS_STEP = 10;
+    const int MIN_BRIGHTNESS = 10;
+    const int MAX_BRIGHTNESS = 100;
+    if (input.event == bitmap16::InputEvent::Plus) {
+      displayBrightness =
+          min(MAX_BRIGHTNESS, displayBrightness + BRIGHTNESS_STEP);
+    } else {
+      displayBrightness =
+          max(MIN_BRIGHTNESS, displayBrightness - BRIGHTNESS_STEP);
+    }
+
+    const uint8_t hardwareBrightness =
+        (displayBrightness * 255) / 100;
+    setDisplayBrightness(hardwareBrightness);
+    preferences.begin("bitmap16dx", false);
+    preferences.putUChar("brightness", displayBrightness);
+    preferences.end();
+
+    char brightnessMsg[20];
+    snprintf(
+        brightnessMsg,
+        sizeof(brightnessMsg),
+        "BRIGHT: %d%%",
+        displayBrightness);
+    setStatusMessage(brightnessMsg);
+  }
+
+#if ENABLE_LED_MATRIX
+  if (input.lHeld && input.enterPressed) {
+    toggleLEDMatrix();
+    char ledMsg[30];
+    snprintf(
+        ledMsg,
+        sizeof(ledMsg),
+        "LED: %s",
+        ledMatrixEnabled ? "ON" : "OFF");
+    setStatusMessage(ledMsg);
+  } else if (input.lHeld &&
+             (input.event == bitmap16::InputEvent::Plus ||
+              input.event == bitmap16::InputEvent::Minus)) {
+    adjustLEDBrightness(
+        input.event == bitmap16::InputEvent::Minus ? -1 : 1);
+    char ledBrightMsg[30];
+    snprintf(
+        ledBrightMsg,
+        sizeof(ledBrightMsg),
+        "LED: %d%%",
+        ledBrightness);
+    setStatusMessage(ledBrightMsg);
+  }
+#endif
+
+  const bool directionEvent =
+      input.event == bitmap16::InputEvent::Up ||
+      input.event == bitmap16::InputEvent::Down ||
+      input.event == bitmap16::InputEvent::Left ||
+      input.event == bitmap16::InputEvent::Right;
+  if (directionEvent) {
+    if (mHeld) {
+      if (!moveUndoSaved) {
+        saveUndo();
+        moveUndoSaved = true;
+      }
+      if (input.event == bitmap16::InputEvent::Up) {
+        shiftCanvas(0, -1);
+      } else if (input.event == bitmap16::InputEvent::Down) {
+        shiftCanvas(0, 1);
+      } else if (input.event == bitmap16::InputEvent::Left) {
+        shiftCanvas(-1, 0);
+      } else {
+        shiftCanvas(1, 0);
+      }
+      canvasMoved = true;
+      LED_CANVAS_UPDATED();
+      setStatusMessage(StatusMsg::MOVE);
+    } else {
+      if (input.event == bitmap16::InputEvent::Up && cursorY > 0) {
+        --cursorY;
+        moved = true;
+      } else if (input.event == bitmap16::InputEvent::Down &&
+                 cursorY < currentGridSize - 1) {
+        ++cursorY;
+        moved = true;
+      } else if (input.event == bitmap16::InputEvent::Left && cursorX > 0) {
+        --cursorX;
+        moved = true;
+      } else if (input.event == bitmap16::InputEvent::Right &&
+                 cursorX < currentGridSize - 1) {
+        ++cursorX;
+        moved = true;
+      }
+
+      if (moved && enterHeld) {
+        canvas[cursorY][cursorX] = selectedColor;
+        pixelPlaced = true;
+        LED_CANVAS_UPDATED();
+      } else if (moved && deleteHeld) {
+        canvas[cursorY][cursorX] = 0;
+        pixelPlaced = true;
+        LED_CANVAS_UPDATED();
+      }
     }
   }
 
 #if ENABLE_BLUETOOTH
-  // Also check BT arrow keys for repeat
-  if (!arrowKeyHeld) {
-    if (btArrowUp) { arrowKeyHeld = true; currentArrowKey = ';'; }
-    else if (btArrowDown) { arrowKeyHeld = true; currentArrowKey = '.'; }
-    else if (btArrowLeft) { arrowKeyHeld = true; currentArrowKey = ','; }
-    else if (btArrowRight) { arrowKeyHeld = true; currentArrowKey = '/'; }
-  }
-#endif
+  bool btArrowHeld = false;
+  char currentBtArrow = 0;
+  if (btArrowUp) { btArrowHeld = true; currentBtArrow = ';'; }
+  else if (btArrowDown) { btArrowHeld = true; currentBtArrow = '.'; }
+  else if (btArrowLeft) { btArrowHeld = true; currentBtArrow = ','; }
+  else if (btArrowRight) { btArrowHeld = true; currentBtArrow = '/'; }
 
-  if (arrowKeyHeld && currentArrowKey == lastKey) {
-    // Key is still held - check if we should repeat
-    unsigned long currentTime = millis();
-    unsigned long timeSinceLastAction = currentTime - lastKeyTime;
-
-    // Determine the threshold based on whether we're in repeat mode
-    unsigned long threshold = keyRepeating ? keyRepeatRate : keyRepeatDelay;
-
-    if (timeSinceLastAction >= threshold) {
-      // Time to repeat!
+  if (btArrowHeld && currentBtArrow == lastKey) {
+    const unsigned long currentTime = millis();
+    const unsigned long threshold =
+        keyRepeating ? keyRepeatRate : keyRepeatDelay;
+    if (currentTime - lastKeyTime >= threshold) {
       keyRepeating = true;
       lastKeyTime = currentTime;
-
       if (mHeld) {
-        // M + Arrow repeat: continue shifting canvas
         if (!moveUndoSaved) {
           saveUndo();
           moveUndoSaved = true;
         }
-        if (currentArrowKey == ';') shiftCanvas(0, -1);
-        else if (currentArrowKey == '.') shiftCanvas(0, 1);
-        else if (currentArrowKey == ',') shiftCanvas(-1, 0);
-        else if (currentArrowKey == '/') shiftCanvas(1, 0);
+        if (currentBtArrow == ';') shiftCanvas(0, -1);
+        else if (currentBtArrow == '.') shiftCanvas(0, 1);
+        else if (currentBtArrow == ',') shiftCanvas(-1, 0);
+        else shiftCanvas(1, 0);
         canvasMoved = true;
         LED_CANVAS_UPDATED();
       } else {
-        // Normal cursor movement repeat
-        if (currentArrowKey == ';' && cursorY > 0) {
-          cursorY--;
+        if (currentBtArrow == ';' && cursorY > 0) {
+          --cursorY;
+          moved = true;
+        } else if (currentBtArrow == '.' &&
+                   cursorY < currentGridSize - 1) {
+          ++cursorY;
+          moved = true;
+        } else if (currentBtArrow == ',' && cursorX > 0) {
+          --cursorX;
+          moved = true;
+        } else if (currentBtArrow == '/' &&
+                   cursorX < currentGridSize - 1) {
+          ++cursorX;
           moved = true;
         }
-        else if (currentArrowKey == '.' && cursorY < currentGridSize - 1) {
-          cursorY++;
-          moved = true;
-        }
-        else if (currentArrowKey == ',' && cursorX > 0) {
-          cursorX--;
-          moved = true;
-        }
-        else if (currentArrowKey == '/' && cursorX < currentGridSize - 1) {
-          cursorX++;
-          moved = true;
-        }
-
-        // If enter or delete is held, paint/erase at the new position
         if (moved && enterHeld) {
           canvas[cursorY][cursorX] = selectedColor;
           pixelPlaced = true;
           LED_CANVAS_UPDATED();
-        }
-        else if (moved && deleteHeld) {
+        } else if (moved && deleteHeld) {
           canvas[cursorY][cursorX] = 0;
           pixelPlaced = true;
           LED_CANVAS_UPDATED();
         }
       }
     }
-  } else {
-    // No arrow key held - reset repeat state
+  } else if (!btArrowHeld) {
     lastKey = 0;
     keyRepeating = false;
   }
+#endif
 
   // Update LED matrix when cursor moves (to highlight current position)
   if (moved) {
