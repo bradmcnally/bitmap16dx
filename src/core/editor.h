@@ -28,7 +28,7 @@ class Editor {
   bool erase();
   bool floodFill();
   bool clear();
-  bool shift(int dx, int dy);
+  bool shift(int dx, int dy, bool saveUndoState = true);
   bool toggleGridSize();
   bool undo();
 

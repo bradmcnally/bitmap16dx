@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=BitMap16 DX
+Exec=/usr/share/APPLaunch/bin/bitmap16dx
+Terminal=false
+Sysplause=true
+Icon=share/images/bitmap16dx.png
+Type=Application

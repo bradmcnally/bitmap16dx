@@ -140,12 +140,14 @@ bool Editor::clear() {
   return true;
 }
 
-bool Editor::shift(int dx, int dy) {
+bool Editor::shift(int dx, int dy, bool saveUndoState) {
   if (dx == 0 && dy == 0) {
     return false;
   }
 
-  saveUndo();
+  if (saveUndoState) {
+    saveUndo();
+  }
   uint8_t shifted[kMaxGridSize][kMaxGridSize] = {};
   const int size = sketch_.gridSize;
   for (int y = 0; y < size; ++y) {

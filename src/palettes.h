@@ -8,7 +8,14 @@
 #ifndef PALETTES_H
 #define PALETTES_H
 
+#ifdef ARDUINO
 #include <Arduino.h>
+#else
+#include <cstdint>
+#ifndef PROGMEM
+#define PROGMEM
+#endif
+#endif
 
 // Helper macro to convert RGB888 (hex color #RRGGBB) to RGB565
 // Usage: RGB565(0x32, 0x00, 0x11) for #320011
@@ -291,7 +298,7 @@ const uint16_t PALETTE[16] = {
 // Palette catalog - array of pointers to all available palettes
 // Organized by size: 16-color, then 8-color, then 4-color
 const int NUM_PALETTES = 12;
-const uint16_t* PALETTE_CATALOG[NUM_PALETTES] = {
+static const uint16_t* const PALETTE_CATALOG[NUM_PALETTES] = {
   // 16-color palettes (4 total)
   PALETTE_SWEETIE16,
   PALETTE_PICO8,
@@ -309,7 +316,7 @@ const uint16_t* PALETTE_CATALOG[NUM_PALETTES] = {
   PALETTE_LAVAGB
 };
 
-const char* PALETTE_NAMES[NUM_PALETTES] = {
+static const char* const PALETTE_NAMES[NUM_PALETTES] = {
   // 16-color palettes
   "SWEETIE-16",
   "PICO-8",

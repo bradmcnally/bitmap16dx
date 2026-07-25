@@ -1,0 +1,50 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "desktop",
+      "displayName": "Desktop SDL2",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/desktop",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BITMAP16_DEFAULT_WIDTH": "240",
+        "BITMAP16_DEFAULT_HEIGHT": "135"
+      }
+    },
+    {
+      "name": "zero",
+      "displayName": "Cardputer Zero Simulator (320x170)",
+      "inherits": "desktop",
+      "binaryDir": "${sourceDir}/build_zero",
+      "cacheVariables": {
+        "BITMAP16_DEFAULT_WIDTH": "320",
+        "BITMAP16_DEFAULT_HEIGHT": "170"
+      }
+    },
+    {
+      "name": "zero-device",
+      "displayName": "Cardputer Zero Linux Device",
+      "inherits": "zero",
+      "binaryDir": "${sourceDir}/build_zero_device",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BITMAP16_CARDPUTER_ZERO_DEVICE": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "desktop",
+      "configurePreset": "desktop"
+    },
+    {
+      "name": "zero",
+      "configurePreset": "zero"
+    },
+    {
+      "name": "zero-device",
+      "configurePreset": "zero-device"
+    }
+  ]
+}

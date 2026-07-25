@@ -19,6 +19,26 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 
 ![Drawing](img/photo_drawing.jpg)
 
+### Desktop and Cardputer Zero Simulator
+
+The multiplatform branch includes SDL2 simulators for the 240×135 Cardputer
+ADV layout and the 320×170 Cardputer Zero layout:
+
+```sh
+cmake --preset desktop
+cmake --build --preset desktop
+./build/desktop/bitmap16dx_desktop
+
+cmake --preset zero
+cmake --build --preset zero
+./build_zero/bitmap16dx_desktop
+```
+
+The simulator persists sketches, exports, settings, and custom palettes under
+`~/.local/share/bitmap16dx`. It also opens an RGB-matrix simulation window.
+See [the Cardputer Zero simulator guide](platform_zero/README.md) for desktop
+keyboard mappings and the complete validation checklist.
+
 ### First Boot
 
 1. **Insert SD card** before powering on (FAT32 format recommended)

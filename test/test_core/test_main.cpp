@@ -1,17 +1,27 @@
 #include <unity.h>
 
+#include <algorithm>
 #include <cstring>
+#include <initializer_list>
 
 #include "core/app.h"
+#include "core/charging_view.h"
 #include "core/clock.h"
 #include "core/canvas.h"
+#include "core/canvas_view.h"
 #include "core/editor.h"
+#include "core/help_view.h"
 #include "core/input.h"
 #include "core/led_mapping.h"
+#include "core/memory_view.h"
 #include "core/palette.h"
+#include "core/palette_view.h"
+#include "core/preview_view.h"
 #include "core/shake_detector.h"
 #include "core/sketch.h"
 #include "core/sketch_codec.h"
+#include "core/settings.h"
+#include "core/settings_view.h"
 
 using bitmap16::Editor;
 using bitmap16::Sketch;
@@ -102,6 +112,61 @@ void test_canvas_clips_rectangles_and_pixels() {
   TEST_ASSERT_EQUAL_HEX16(0x2222, canvas.readPixel(5, 4));
 }
 
+void test_canvas_view_layout_is_resolution_and_grid_aware() {
+  const bitmap16::CanvasView::Layout small =
+      bitmap16::CanvasView::layoutFor(240, 135, 8);
+  TEST_ASSERT_EQUAL_INT(128, small.gridPixels);
+  TEST_ASSERT_EQUAL_INT(16, small.cellSize);
+  TEST_ASSERT_EQUAL_INT(56, small.gridX);
+  TEST_ASSERT_EQUAL_INT(3, small.toolsX);
+  TEST_ASSERT_EQUAL_INT(203, small.paletteX);
+  TEST_ASSERT_EQUAL_INT(3, small.statusX);
+
+  const bitmap16::CanvasView::Layout large =
+      bitmap16::CanvasView::layoutFor(320, 170, 16);
+  TEST_ASSERT_EQUAL_INT(128, large.gridPixels);
+  TEST_ASSERT_EQUAL_INT(8, large.cellSize);
+  TEST_ASSERT_EQUAL_INT(96, large.gridX);
+  TEST_ASSERT_EQUAL_INT(43, large.toolsX);
+  TEST_ASSERT_EQUAL_INT(243, large.paletteX);
+  TEST_ASSERT_EQUAL_INT(43, large.statusX);
+}
+
+void test_canvas_view_renders_editor_at_both_target_sizes() {
+  uint8_t pixels[16][16] = {};
+  uint16_t colors[16] = {};
+  colors[0] = 0xf800;
+  colors[1] = 0x07e0;
+  pixels[2][3] = 2;
+  const bitmap16::CanvasView::State state = {
+      pixels, 8, colors, 2, 3, 2, 2, true, false, "COLOR 2", 75};
+  const bitmap16::CanvasView::Theme theme = {
+      0x1111, 0x2222, 0xeeee, 0x0808, 0xffff, 0x8888, 0x4444,
+      0x0000, 0xffff, false};
+
+  for (const int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    bitmap16::CanvasView::render(canvas, state, theme);
+    const bitmap16::CanvasView::Layout layout =
+        bitmap16::CanvasView::layoutFor(width, height, 8);
+    TEST_ASSERT_NOT_EQUAL(
+        theme.background,
+        canvas.readPixel(layout.gridX + 3, layout.gridY + 3));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.text,
+        canvas.readPixel(
+            layout.gridX + 3 * layout.cellSize,
+            layout.gridY + 2 * layout.cellSize));
+    TEST_ASSERT_EQUAL_HEX16(
+        colors[1],
+        canvas.readPixel(
+            layout.paletteX + layout.paletteSwatchSize + 4,
+            layout.gridY + layout.paletteSwatchSize + 4));
+  }
+}
+
 void test_canvas_draws_lines_and_rectangles() {
   bitmap16::Canvas canvas;
   TEST_ASSERT_TRUE(canvas.create(8, 8));
@@ -146,6 +211,337 @@ void test_canvas_draws_scaled_and_aligned_text() {
   TEST_ASSERT_EQUAL_HEX16(0xffff, canvas.readPixel(5, 3));
 }
 
+void test_help_view_navigation_clamps_to_available_items() {
+  bitmap16::HelpView::State state;
+  TEST_ASSERT_EQUAL_INT(20, bitmap16::HelpView::itemCount(false));
+  TEST_ASSERT_EQUAL_INT(22, bitmap16::HelpView::itemCount(true));
+  TEST_ASSERT_FALSE(bitmap16::HelpView::moveCursor(state, -1, false));
+  TEST_ASSERT_TRUE(bitmap16::HelpView::moveCursor(state, 30, false));
+  TEST_ASSERT_EQUAL_INT(19, state.cursor);
+  TEST_ASSERT_FALSE(bitmap16::HelpView::moveCursor(state, 1, false));
+  TEST_ASSERT_TRUE(bitmap16::HelpView::moveCursor(state, -1, false));
+  TEST_ASSERT_EQUAL_INT(18, state.cursor);
+}
+
+void test_help_view_renders_and_scrolls_at_both_target_sizes() {
+  bitmap16::HelpView::Theme theme = {0x1111, 0xffff, 0x7777};
+  for (const int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    bitmap16::HelpView::State state;
+    state.cursor = bitmap16::HelpView::itemCount(true) - 1;
+
+    bitmap16::HelpView::render(canvas, state, theme, true);
+
+    TEST_ASSERT_GREATER_THAN_INT(0, state.scrollOffset);
+    TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.background,
+        canvas.readPixel(width - 1, height - 1));
+  }
+}
+
+void test_settings_view_navigation_and_actions_are_portable() {
+  bitmap16::SettingsView::State state;
+  bitmap16::Settings settings;
+  TEST_ASSERT_EQUAL_INT(6, bitmap16::SettingsView::itemCount(false));
+  TEST_ASSERT_EQUAL_INT(7, bitmap16::SettingsView::itemCount(true));
+
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(state, settings, false) ==
+      bitmap16::SettingsView::Action::ThemeChanged);
+  TEST_ASSERT_TRUE(settings.theme == bitmap16::ThemeId::Dark);
+
+  state.cursor = 5;
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(state, settings, false) ==
+      bitmap16::SettingsView::Action::ShakeUndoChanged);
+  TEST_ASSERT_TRUE(settings.shakeUndoEnabled);
+  TEST_ASSERT_FALSE(
+      bitmap16::SettingsView::moveCursor(state, 1, false));
+
+  state.cursor = 6;
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(state, settings, true) ==
+      bitmap16::SettingsView::Action::BluetoothRequested);
+}
+
+void test_settings_view_renders_at_both_target_sizes() {
+  const bitmap16::SettingsView::Theme theme = {
+      0x1111,
+      0xffff,
+      0x7777,
+  };
+  for (const int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    bitmap16::Settings settings;
+    bitmap16::SettingsView::State state;
+    state.cursor = bitmap16::SettingsView::itemCount(false) - 1;
+
+    bitmap16::SettingsView::render(
+        canvas, state, settings, theme, false, nullptr, "Saved");
+
+    TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.background,
+        canvas.readPixel(width - 1, height - 1));
+    if (width == 240) {
+      TEST_ASSERT_GREATER_THAN_INT(0, state.scrollOffset);
+    }
+  }
+}
+
+void test_preview_view_background_selection_is_bounded() {
+  bitmap16::PreviewView::State state;
+  TEST_ASSERT_TRUE(bitmap16::PreviewView::selectBackground(state, 2));
+  TEST_ASSERT_TRUE(
+      state.background == bitmap16::PreviewView::Background::Gray);
+  TEST_ASSERT_FALSE(bitmap16::PreviewView::selectBackground(state, 2));
+  TEST_ASSERT_FALSE(bitmap16::PreviewView::selectBackground(state, -1));
+  TEST_ASSERT_FALSE(bitmap16::PreviewView::selectBackground(state, 4));
+  TEST_ASSERT_TRUE(
+      state.background == bitmap16::PreviewView::Background::Gray);
+}
+
+void test_preview_view_renders_indexed_pixels_at_both_target_sizes() {
+  uint8_t pixels[16][16] = {};
+  uint16_t palette[16] = {};
+  pixels[0][0] = 1;
+  pixels[0][1] = 2;
+  pixels[0][2] = 3;
+  palette[0] = 0xf800;
+  palette[1] = 0x07e0;
+  palette[2] = 0x001f;
+  const bitmap16::PreviewView::Image image = {
+      pixels,
+      16,
+      palette,
+      2,
+  };
+  const bitmap16::PreviewView::Theme theme = {
+      0x0000,
+      0xffff,
+      0x7777,
+      0x1111,
+  };
+
+  for (const int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    bitmap16::PreviewView::State state;
+    bitmap16::PreviewView::selectBackground(state, 2);
+
+    bitmap16::PreviewView::render(canvas, state, image, theme);
+
+    const int viewX = (width - 128) / 2;
+    const int viewY = (height - 128) / 2;
+    TEST_ASSERT_EQUAL_HEX16(palette[0], canvas.readPixel(viewX, viewY));
+    TEST_ASSERT_EQUAL_HEX16(
+        palette[1], canvas.readPixel(viewX + 8, viewY));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.gray, canvas.readPixel(viewX + 16, viewY));
+    TEST_ASSERT_EQUAL_HEX16(theme.gray, canvas.readPixel(0, 0));
+  }
+}
+
+void test_charging_view_initializes_and_bounces_within_bounds() {
+  uint8_t iconData[4][144] = {};
+  const uint8_t* const icons[4] = {
+      iconData[0], iconData[1], iconData[2], iconData[3]};
+  bitmap16::ChargingView::State state;
+  bitmap16::ChargingView::initialize(
+      state, 240, 135, 1234, icons, 140, false);
+  TEST_ASSERT_EQUAL_INT(100, state.batteryPercent);
+  TEST_ASSERT_FALSE(state.sketchAvailable);
+
+  state.items[0] = {0.0f, 0.0f, -1.0f, -1.0f, iconData[0]};
+  state.items[1] = {80.0f, 0.0f, 1.0f, 1.0f, iconData[1]};
+  state.items[2] = {120.0f, 60.0f, 1.0f, 1.0f, iconData[2]};
+  state.items[3] = {180.0f, 100.0f, 1.0f, 1.0f, iconData[3]};
+
+  bitmap16::ChargingView::update(state, 240, 135);
+
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, state.items[0].x);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, state.items[0].y);
+  TEST_ASSERT_GREATER_THAN_FLOAT(0.0f, state.items[0].dx);
+  TEST_ASSERT_GREATER_THAN_FLOAT(0.0f, state.items[0].dy);
+  TEST_ASSERT_LESS_OR_EQUAL_FLOAT(186.0f, state.items[3].x);
+  TEST_ASSERT_LESS_OR_EQUAL_FLOAT(111.0f, state.items[3].y);
+}
+
+void test_charging_view_renders_icons_sketch_and_battery_at_target_sizes() {
+  uint8_t icons[4][144];
+  std::memset(icons, 0xaa, sizeof(icons));
+  uint8_t sketchPixels[16][16] = {};
+  uint16_t sketchPalette[16] = {};
+  sketchPixels[0][0] = 1;
+  sketchPalette[0] = 0xf800;
+  const bitmap16::ChargingView::SketchImage sketch = {
+      sketchPixels, 16, sketchPalette, 1};
+  const bitmap16::ChargingView::Theme theme = {
+      0x0000, 0x1111, 0xffff, 0xffff};
+
+  for (const int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    bitmap16::ChargingView::State state;
+    state.batteryPercent = 78;
+    state.sketchAvailable = true;
+    for (int item = 0; item < 4; ++item) {
+      state.items[item].x = static_cast<float>(item * 30);
+      state.items[item].y = 4.0f;
+      state.items[item].icon = icons[item];
+    }
+    state.items[bitmap16::ChargingView::kSketchItem].x = 10.0f;
+    state.items[bitmap16::ChargingView::kSketchItem].y = 60.0f;
+
+    bitmap16::ChargingView::render(canvas, state, theme, &sketch);
+
+    TEST_ASSERT_EQUAL_HEX16(theme.iconLight, canvas.readPixel(0, 4));
+    TEST_ASSERT_EQUAL_HEX16(sketchPalette[0], canvas.readPixel(10, 60));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.background, canvas.readPixel(width - 1, height - 1));
+  }
+}
+
+void test_palette_view_filters_navigates_and_animates_selection() {
+  uint16_t colors[4][16] = {};
+  bitmap16::PaletteView::Entry entries[4] = {
+      {colors[0], "A", 4, false},
+      {colors[1], "B", 8, false},
+      {colors[2], "C", 16, false},
+      {colors[3], "D", 8, true},
+  };
+  const bitmap16::PaletteView::Catalog catalog = {entries, 4};
+  bitmap16::PaletteView::State state;
+  bitmap16::PaletteView::reset(state, catalog);
+  TEST_ASSERT_EQUAL_INT(4, state.filteredCount);
+  TEST_ASSERT_TRUE(bitmap16::PaletteView::moveCursor(state, 2));
+  TEST_ASSERT_EQUAL_INT(2, state.cursor);
+
+  TEST_ASSERT_TRUE(
+      bitmap16::PaletteView::toggleSizeFilter(state, catalog, 8));
+  TEST_ASSERT_EQUAL_INT(2, state.filteredCount);
+  TEST_ASSERT_EQUAL_INT(0, state.cursor);
+  TEST_ASSERT_TRUE(
+      bitmap16::PaletteView::toggleUserFilter(state, catalog));
+  TEST_ASSERT_EQUAL_INT(1, state.filteredCount);
+  TEST_ASSERT_EQUAL_INT(3, bitmap16::PaletteView::selectedCatalogIndex(state));
+
+  TEST_ASSERT_TRUE(bitmap16::PaletteView::beginSelection(state));
+  TEST_ASSERT_TRUE(
+      bitmap16::PaletteView::advance(state, 1.0f, 0.5f) ==
+      bitmap16::PaletteView::AnimationResult::Animating);
+  TEST_ASSERT_TRUE(
+      bitmap16::PaletteView::advance(state, 1.0f, 0.5f) ==
+      bitmap16::PaletteView::AnimationResult::SelectionComplete);
+}
+
+void test_palette_view_renders_carousel_at_both_target_sizes() {
+  uint16_t colors[2][16] = {};
+  uint16_t cartridge[80 * 92];
+  std::fill(
+      std::begin(cartridge), std::end(cartridge), 0x3456);
+  for (int color = 0; color < 16; ++color) {
+    colors[0][color] = static_cast<uint16_t>(0x1000 + color);
+    colors[1][color] = static_cast<uint16_t>(0x2000 + color);
+  }
+  bitmap16::PaletteView::Entry entries[2] = {
+      {colors[0], "FIRST", 4, false},
+      {colors[1], "SECOND", 16, true},
+  };
+  const bitmap16::PaletteView::Catalog catalog = {entries, 2};
+  const bitmap16::PaletteView::Theme theme = {
+      0x7777, 0xffff, 0x1111, false};
+
+  for (const int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    bitmap16::PaletteView::State state;
+    bitmap16::PaletteView::reset(state, catalog);
+
+    bitmap16::PaletteView::render(
+        canvas, state, catalog, 0, theme, cartridge, "Ready");
+
+    const int swatchX = width / 2 - 32;
+    const int swatchY = std::max(66, height / 2 - 1) - 40;
+    const int cartridgeTop = std::max(66, height / 2 - 1) - 46;
+    TEST_ASSERT_EQUAL_HEX16(
+        0x3456, canvas.readPixel(width / 2, cartridgeTop));
+    TEST_ASSERT_EQUAL_HEX16(colors[0][0], canvas.readPixel(
+        swatchX + 2, swatchY));
+    TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.background, canvas.readPixel(width - 1, height - 1));
+  }
+}
+
+void test_memory_view_navigation_and_scroll_are_resolution_aware() {
+  bitmap16::MemoryView::State state;
+  TEST_ASSERT_EQUAL_INT(4, bitmap16::MemoryView::columnCount(240));
+  TEST_ASSERT_EQUAL_INT(5, bitmap16::MemoryView::columnCount(320));
+  TEST_ASSERT_TRUE(
+      bitmap16::MemoryView::moveCursor(state, 0, 1, 8, 240));
+  TEST_ASSERT_EQUAL_INT(4, state.cursor);
+  TEST_ASSERT_TRUE(
+      bitmap16::MemoryView::moveCursor(state, 1, 0, 8, 240));
+  TEST_ASSERT_EQUAL_INT(5, state.cursor);
+  state.cursor = 8;
+  bitmap16::MemoryView::advance(state, 8, 240, 135, 0.016f, 1.0f);
+  TEST_ASSERT_GREATER_THAN_INT(0, state.scrollOffset);
+  TEST_ASSERT_GREATER_THAN_FLOAT(0.0f, state.scrollPosition);
+  bitmap16::MemoryView::clamp(state, 2);
+  TEST_ASSERT_EQUAL_INT(2, state.cursor);
+}
+
+void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
+  uint8_t pixels[16][16] = {};
+  uint16_t palette[16] = {};
+  pixels[0][0] = 1;
+  palette[0] = 0xf800;
+  const bitmap16::MemoryView::Entry entries[1] = {
+      {pixels, 16, palette, 1, true},
+  };
+  const bitmap16::MemoryView::Catalog catalog = {entries, 1};
+  const bitmap16::MemoryView::Theme theme = {
+      0x7777, 0x1111, 0xffff, 0x0000, 0x2222, 0xffe0};
+  uint8_t selector[16 * 16 / 4] = {};
+  selector[0] = 0x80;
+  const bitmap16::MemoryView::Assets assets = {
+      selector, 16, 16};
+
+  for (const int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    bitmap16::MemoryView::State state;
+
+    bitmap16::MemoryView::render(
+        canvas, state, catalog, theme, "Ready", &assets);
+
+    const int columns = bitmap16::MemoryView::columnCount(width);
+    const int startX =
+        (width - (columns * 48 + (columns - 1) * 8)) / 2;
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.background, canvas.readPixel(startX, 19));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.thumbnail, canvas.readPixel(startX + 2, 19));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.selectionLight, canvas.readPixel(startX - 4, 15));
+    TEST_ASSERT_EQUAL_HEX16(
+        palette[0], canvas.readPixel(startX + 58, 19));
+    TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
+    TEST_ASSERT_EQUAL_HEX16(
+        theme.background, canvas.readPixel(width - 1, height - 1));
+  }
+}
+
 void test_editor_flood_fill_is_four_way_and_bounded() {
   Sketch sketch = makeSketch(8);
   sketch.pixels[0][0] = 2;
@@ -179,6 +575,21 @@ void test_editor_shift_wraps_active_grid() {
   TEST_ASSERT_EQUAL_UINT8(6, editor.sketch().pixels[1][0]);
   TEST_ASSERT_EQUAL_UINT8(9, editor.sketch().pixels[0][1]);
   TEST_ASSERT_EQUAL_UINT8(11, editor.sketch().pixels[12][12]);
+}
+
+void test_editor_repeated_shift_preserves_one_undo_snapshot() {
+  Sketch sketch = makeSketch(8);
+  sketch.pixels[0][0] = 3;
+
+  Editor editor;
+  editor.reset(sketch);
+  TEST_ASSERT_TRUE(editor.shift(1, 0));
+  TEST_ASSERT_TRUE(editor.shift(1, 0, false));
+  TEST_ASSERT_EQUAL_UINT8(3, editor.sketch().pixels[0][2]);
+
+  TEST_ASSERT_TRUE(editor.undo());
+  TEST_ASSERT_EQUAL_UINT8(3, editor.sketch().pixels[0][0]);
+  TEST_ASSERT_EQUAL_UINT8(0, editor.sketch().pixels[0][2]);
 }
 
 void test_editor_toggle_grid_clamps_cursor_and_undo_restores_grid() {
@@ -661,6 +1072,56 @@ void test_app_view_history_supports_help_return_navigation() {
       static_cast<int>(app.previousView()));
 }
 
+void test_settings_normalization_preserves_valid_values() {
+  bitmap16::Settings settings;
+  settings.theme = bitmap16::ThemeId::Dark;
+  settings.defaultGridSize = 16;
+  settings.matrixUnits = 4;
+  settings.matrixRotation = 3;
+  settings.exportFormat = bitmap16::ExportFormat::Rgb565;
+  settings.shakeUndoEnabled = true;
+  settings.matrixEnabled = true;
+  settings.displayBrightness = 70;
+  settings.matrixBrightness = 12;
+
+  const bitmap16::Settings normalized =
+      bitmap16::normalizeSettings(settings);
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(bitmap16::ThemeId::Dark),
+      static_cast<int>(normalized.theme));
+  TEST_ASSERT_EQUAL_UINT8(16, normalized.defaultGridSize);
+  TEST_ASSERT_EQUAL_UINT8(4, normalized.matrixUnits);
+  TEST_ASSERT_EQUAL_UINT8(3, normalized.matrixRotation);
+  TEST_ASSERT_TRUE(normalized.matrixEnabled);
+  TEST_ASSERT_EQUAL_UINT8(70, normalized.displayBrightness);
+  TEST_ASSERT_EQUAL_UINT8(12, normalized.matrixBrightness);
+}
+
+void test_settings_normalization_repairs_invalid_values() {
+  bitmap16::Settings settings;
+  settings.theme = static_cast<bitmap16::ThemeId>(99);
+  settings.defaultGridSize = 12;
+  settings.matrixUnits = 2;
+  settings.matrixRotation = 7;
+  settings.exportFormat = static_cast<bitmap16::ExportFormat>(99);
+  settings.displayBrightness = 0;
+  settings.matrixBrightness = 100;
+
+  const bitmap16::Settings normalized =
+      bitmap16::normalizeSettings(settings);
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(bitmap16::ThemeId::Light),
+      static_cast<int>(normalized.theme));
+  TEST_ASSERT_EQUAL_UINT8(8, normalized.defaultGridSize);
+  TEST_ASSERT_EQUAL_UINT8(1, normalized.matrixUnits);
+  TEST_ASSERT_EQUAL_UINT8(3, normalized.matrixRotation);
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(bitmap16::ExportFormat::Rgb888),
+      static_cast<int>(normalized.exportFormat));
+  TEST_ASSERT_EQUAL_UINT8(10, normalized.displayBrightness);
+  TEST_ASSERT_EQUAL_UINT8(20, normalized.matrixBrightness);
+}
+
 }  // namespace
 
 void setUp() {}
@@ -671,11 +1132,27 @@ int main(int, char**) {
   RUN_TEST(test_editor_draw_erase_and_undo);
   RUN_TEST(test_canvas_allocation_fill_and_release);
   RUN_TEST(test_canvas_clips_rectangles_and_pixels);
+  RUN_TEST(test_canvas_view_layout_is_resolution_and_grid_aware);
+  RUN_TEST(test_canvas_view_renders_editor_at_both_target_sizes);
   RUN_TEST(test_canvas_draws_lines_and_rectangles);
   RUN_TEST(test_canvas_pushes_clipped_and_byte_swapped_images);
   RUN_TEST(test_canvas_draws_scaled_and_aligned_text);
+  RUN_TEST(test_help_view_navigation_clamps_to_available_items);
+  RUN_TEST(test_help_view_renders_and_scrolls_at_both_target_sizes);
+  RUN_TEST(test_settings_view_navigation_and_actions_are_portable);
+  RUN_TEST(test_settings_view_renders_at_both_target_sizes);
+  RUN_TEST(test_preview_view_background_selection_is_bounded);
+  RUN_TEST(test_preview_view_renders_indexed_pixels_at_both_target_sizes);
+  RUN_TEST(test_charging_view_initializes_and_bounces_within_bounds);
+  RUN_TEST(
+      test_charging_view_renders_icons_sketch_and_battery_at_target_sizes);
+  RUN_TEST(test_palette_view_filters_navigates_and_animates_selection);
+  RUN_TEST(test_palette_view_renders_carousel_at_both_target_sizes);
+  RUN_TEST(test_memory_view_navigation_and_scroll_are_resolution_aware);
+  RUN_TEST(test_memory_view_renders_new_and_sketch_tiles_at_target_sizes);
   RUN_TEST(test_editor_flood_fill_is_four_way_and_bounded);
   RUN_TEST(test_editor_shift_wraps_active_grid);
+  RUN_TEST(test_editor_repeated_shift_preserves_one_undo_snapshot);
   RUN_TEST(test_editor_toggle_grid_clamps_cursor_and_undo_restores_grid);
   RUN_TEST(test_palette_index_collapse_matches_existing_rules);
   RUN_TEST(test_sketch_initialization_repeats_small_palettes);
@@ -706,5 +1183,7 @@ int main(int, char**) {
   RUN_TEST(test_app_ticks_initialized_runtime);
   RUN_TEST(test_app_tracks_view_transitions);
   RUN_TEST(test_app_view_history_supports_help_return_navigation);
+  RUN_TEST(test_settings_normalization_preserves_valid_values);
+  RUN_TEST(test_settings_normalization_repairs_invalid_values);
   return UNITY_END();
 }

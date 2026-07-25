@@ -17,6 +17,9 @@
 Thumbs.db
 
 # Build outputs
+build/
+build_zero/
+build_zero_device/
 *.bin
 *.elf
 *.map

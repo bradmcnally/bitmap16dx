@@ -67,6 +67,17 @@ void LEDMatrix::clear() {
 }
 
 bool LEDMatrix::setPixelRgb565(uint8_t x, uint8_t y, uint16_t color) {
+  const bitmap16::LedMapping::Rgb888 rgb =
+      bitmap16::LedMapping::rgb565ToRgb888(color);
+  return setPixelRgb888(x, y, rgb.red, rgb.green, rgb.blue);
+}
+
+bool LEDMatrix::setPixelRgb888(
+    uint8_t x,
+    uint8_t y,
+    uint8_t red,
+    uint8_t green,
+    uint8_t blue) {
   const uint8_t size = gridSize();
   if (leds == nullptr || !enabled || x >= size || y >= size) {
     return false;
@@ -78,9 +89,7 @@ bool LEDMatrix::setPixelRgb565(uint8_t x, uint8_t y, uint16_t color) {
           y,
           configuredUnits,
           configuredRotation);
-  const bitmap16::LedMapping::Rgb888 rgb =
-      bitmap16::LedMapping::rgb565ToRgb888(color);
-  leds[index] = CRGB(rgb.red, rgb.green, rgb.blue);
+  leds[index] = CRGB(red, green, blue);
   return true;
 }
 

@@ -21,8 +21,11 @@ struct Settings {
   uint8_t matrixRotation = 2;
   ExportFormat exportFormat = ExportFormat::Rgb888;
   bool shakeUndoEnabled = false;
+  bool matrixEnabled = false;
   uint8_t displayBrightness = 80;
   uint8_t matrixBrightness = 5;
 };
+
+Settings normalizeSettings(Settings settings);
 
 }  // namespace bitmap16

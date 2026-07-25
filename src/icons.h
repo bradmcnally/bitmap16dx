@@ -10,7 +10,13 @@
 #ifndef ICONS_H
 #define ICONS_H
 
+#ifdef ARDUINO
 #include <Arduino.h>
+#else
+#ifndef PROGMEM
+#define PROGMEM
+#endif
+#endif
 
 // ============================================================================
 // TOOL ICONS

@@ -10,6 +10,12 @@ void setEnabled(bool enabled);
 bool isEnabled();
 void setBrightness(uint8_t percent);
 void clear();
+bool setPixelRgb888(
+    uint8_t x,
+    uint8_t y,
+    uint8_t red,
+    uint8_t green,
+    uint8_t blue);
 bool setPixelRgb565(uint8_t x, uint8_t y, uint16_t color);
 void show();
 

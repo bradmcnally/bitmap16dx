@@ -18,7 +18,7 @@
  * - S to save current canvas as snapshot
  * - Fn+S to save as new sketch
  * - O to open Memory View (browse/load saved snapshots)
- * - I to open Controls/Help screen
+ * - H to open Controls/Help screen
  * - T to open Settings menu (theme, RGB matrix, export, shake undo)
  * - V to view canvas (128×128, centered)
  *   - In view mode: 1=black bg, 2=white bg, 3=gray bg, 4=dark gray bg
@@ -45,9 +45,6 @@
  */
 
 #include <M5Cardputer.h>
-#include <SD.h>
-#include <SPI.h>
-#include <Preferences.h>
 
 // Include NimBLE before PNGENC to avoid macro conflicts
 #define ENABLE_BLUETOOTH 0  // DISABLED - crashes on init, debugging needed
@@ -65,15 +62,28 @@
 #include <algorithm>
 #include "boot_image.h"
 #include "core/app.h"
+#include "core/canvas_view.h"
+#include "core/charging_view.h"
+#include "core/help_view.h"
+#include "core/led_mapping.h"
+#include "core/memory_view.h"
+#include "core/palette.h"
+#include "core/palette_view.h"
+#include "core/preview_view.h"
+#include "core/settings.h"
+#include "core/settings_view.h"
 #include "core/shake_detector.h"
+#include "core/sketch_codec.h"
 #include "platform/clock.h"
+#include "platform/display.h"
+#include "platform/filesystem.h"
 #include "platform/imu.h"
 #include "platform/indicator.h"
 #include "platform/input.h"
+#include "platform/led_matrix.h"
 #include "platform/power.h"
+#include "platform/preference_store.h"
 
-// Preferences for persistent storage across reboots
-Preferences preferences;
 bitmap16::App app;
 bitmap16::ShakeDetector shakeDetector;
 
@@ -87,6 +97,9 @@ bitmap16::ShakeDetector shakeDetector;
 // Enable external 8×8 WS2812 LED matrix support
 // Set to 0 to disable LED matrix features and save memory (~9KB flash, 880 bytes RAM)
 #define ENABLE_LED_MATRIX 1  // Set to 0 to disable
+
+// Phase 4 Help-view framebuffer benchmark output on the serial monitor.
+#define ENABLE_CANVAS_PROOF_TELEMETRY 1
 
 // Macro for LED matrix canvas updates (no-op when feature disabled)
 #if ENABLE_LED_MATRIX
@@ -117,28 +130,25 @@ const int SKETCH_FILE_SIZE_V2 = 291;  // Current format with version byte
 // The canvas is always 16×16 to support both modes
 const int MAX_currentGridSize = 16;
 
-// Current grid size (can be 8 or 16, toggled with 'G' key)
-int currentGridSize = 8;
+struct EditorState {
+  int gridSize = 8;
+  int cellSize = 16;
+  int cursorX = 0;
+  int cursorY = 0;
+  int lastCursorScreenX = -1;
+  int lastCursorScreenY = -1;
+  bool moveModeActive = false;
+  uint8_t canvas[16][16] = {};
+  uint8_t selectedColor = 1;
+  bool rulersVisible = false;
+  uint8_t undoCanvas[16][16] = {};
+  bool undoAvailable = false;
+  uint8_t undoPaletteSize = 0;
+  uint16_t undoPaletteColors[16] = {};
+  uint8_t undoGridSize = 0;
+};
 
-// Cell size changes based on grid mode:
-// - 8×8 mode: 16px cells (128×128 total)
-// - 16×16 mode: 8px cells (128×128 total)
-int currentCellSize = 16;
-
-// Palette column configuration (right side)
-const int PALETTE_SWATCH_SIZE = 16;   // Each color swatch is 16×16 pixels
-const int PALETTE_WIDTH = 32;         // Width of the palette column (2 columns × 16px)
-const int PALETTE_MARGIN = 5;         // Margin from right edge
-const int PALETTE_X = 240 - PALETTE_WIDTH - PALETTE_MARGIN;  // Position: 5px from right edge
-
-// Where to draw the grid on screen
-// Cardputer display is 240×135 pixels
-// Grid is always 128×128 pixels on screen (regardless of 8×8 or 16×16 mode):
-//   - 8×8 mode: 8 cells × 16px = 128px
-//   - 16×16 mode: 16 cells × 8px = 128px
-// Center the canvas horizontally: (240 - 128) / 2 = 56px
-const int GRID_X = 56;   // Start X position (horizontally centered)
-const int GRID_Y = 4;    // Start Y position (centered vertically)
+EditorState editorState;
 
 // ============================================================================
 // ICON DATA
@@ -152,9 +162,6 @@ const int GRID_Y = 4;    // Start Y position (centered vertically)
 // RGB565 format, fixed colors (not affected by palette swap)
 
 #include "cartridge_graphic.h"
-
-const int CARTRIDGE_WIDTH = 80;
-const int CARTRIDGE_HEIGHT = 92;
 
 // ============================================================================
 // PALETTE DEFINITIONS
@@ -238,15 +245,6 @@ const uint16_t VIEW_BG_DARK = THEME_DARK.background;   // Dark mode background
 // STATE
 // ============================================================================
 
-// Current cursor position (in grid coordinates, not screen pixels)
-int cursorX = 0;
-int cursorY = 0;
-
-// Previous cursor screen position (to clear the old cursor icon)
-int lastCursorScreenX = -1;
-int lastCursorScreenY = -1;
-bool moveModeActive = false;
-
 // Bluetooth keeps a separate repeat state until its disabled legacy path is
 // folded into the platform input adapter.
 #if ENABLE_BLUETOOTH
@@ -257,18 +255,6 @@ bool keyRepeating = false;            // Whether we're in repeat mode
 char lastKey = 0;                     // Track which arrow key is held
 #endif
 
-// Canvas data - stores color indices for each pixel
-// 0 = empty/transparent (show checkerboard)
-// 1-16 = color indices into the PALETTE array
-// Canvas is always 16×16 to support both grid modes
-uint8_t canvas[16][16] = {0};
-
-// Currently selected color (1-16)
-uint8_t selectedColor = 1;  // Start with color 1 (black)
-
-// Center rulers/guides visibility
-bool rulersVisible = false;  // Toggle with R key
-
 // Display brightness level (stored as percentage: 10-100%)
 // Converted to hardware range (0-255) when setting display
 uint8_t displayBrightness = 80;  // Start at 80% brightness
@@ -278,20 +264,13 @@ uint8_t displayBrightness = 80;  // Start at 80% brightness
 // LED MATRIX CONFIGURATION (8×8 WS2812 RGB LEDs)
 // ============================================================================
 
-#include <FastLED.h>
-
 // WS2812E RGB LED matrix (8×8 or 16×16)
 // Supports 1 Puzzle Unit (64 LEDs) or 4 Units (256 LEDs)
 // Mirrors the canvas in real-time when enabled
-// Connected to Port A: Yellow wire (G2) = GPIO2
-#define LED_PIN 2                     // GPIO2 (Port A - Yellow wire)
-#define NUM_LEDS 256                  // Max size: 16×16 matrix (4 units)
 #define DEFAULT_LED_BRIGHTNESS 5      // 5% brightness default
 #define MIN_LED_BRIGHTNESS 1          // Minimum 1% (very dim)
 #define MAX_LED_BRIGHTNESS 20         // Maximum 20% (for battery safety)
 
-CRGB leds[256];                       // LED array for FastLED (max 4 units)
-bool ledMatrixEnabled = false;        // User must explicitly enable
 uint8_t ledBrightness = DEFAULT_LED_BRIGHTNESS;  // 1-20%
 bool canvasNeedsUpdate = false;       // Flag to trigger LED update
 #endif // ENABLE_LED_MATRIX
@@ -356,15 +335,6 @@ const unsigned long BT_NOTIFY_DURATION = 1500;  // 1.5 seconds
 char btNotifyMsg[32] = "";
 #endif // ENABLE_BLUETOOTH
 
-// Undo state - stores a single previous canvas state
-uint8_t undoCanvas[16][16] = {0};
-bool undoAvailable = false;
-
-// Undo palette state - stores palette info for sketch undo operations
-uint8_t undoPaletteSize = 0;
-uint16_t undoPaletteColors[16] = {0};
-uint8_t undoGridSize = 0;
-
 // ============================================================================
 // SKETCH SYSTEM
 // ============================================================================
@@ -382,10 +352,13 @@ struct Sketch {
   bool isEmpty;                  // Is this sketch empty?
 };
 
-// Active sketch in memory (only one sketch loaded at a time)
-Sketch activeSketch;
-bool activeSketchIsNew = true;           // True if never saved
-String activeSketchFilename = "";        // e.g., "sketch_1737849600.dat"
+struct DocumentState {
+  Sketch sketch;
+  bool isNew = true;
+  String filename;
+};
+
+DocumentState documentState;
 
 // Dynamic sketch list for memory view
 struct SketchInfo {
@@ -397,39 +370,72 @@ struct SketchInfo {
 
 std::vector<SketchInfo> sketchList;      // Populated when entering memory view
 
-// Memory View state
-int memoryViewCursor = 0;  // Which item is selected (0 = "+", 1+ = sketches)
-int memoryViewScrollOffset = 0;  // Target scroll position (pixels scrolled left)
-float memoryViewScrollPos = 0.0f;  // Actual animated scroll position for smooth transitions
+struct CanvasProofMetrics {
+  uint32_t allocationMicros = 0;
+  uint32_t heapBeforeAllocation = 0;
+  uint32_t heapAfterAllocation = 0;
+  uint32_t lastRenderMicros = 0;
+  uint32_t maxRenderMicros = 0;
+  uint32_t lastBlitMicros = 0;
+  uint32_t maxBlitMicros = 0;
+  uint32_t minimumFreeHeap = UINT32_MAX;
+  uint32_t frameCount = 0;
+};
+
+struct ViewState {
+  struct {
+    bitmap16::MemoryView::State navigation;
+    bool canvasAvailable = false;
+    bool ownsCanvas = false;
+    unsigned long lastAnimationTime = 0;
+  } memory;
+  struct {
+    bitmap16::HelpView::State navigation;
+    bool canvasAvailable = false;
+    bool softwareCanvas = false;
+    bool ownsCanvas = false;
+    CanvasProofMetrics metrics;
+  } help;
+  struct {
+    bitmap16::PreviewView::State display;
+    bool canvasAvailable = false;
+    bool ownsCanvas = false;
+    bool galleryMode = false;
+    int galleryIndex = 0;
+    unsigned long lastAdvanceTime = 0;
+    bool autoAdvance = false;
+  } preview;
+  struct {
+    bitmap16::PaletteView::State navigation;
+    bool canvasAvailable = false;
+    bool ownsCanvas = false;
+    unsigned long lastAnimationTime = 0;
+  } palette;
+  struct {
+    bitmap16::SettingsView::State navigation;
+    bool canvasAvailable = false;
+    bool ownsCanvas = false;
+  } settings;
+  struct {
+    bitmap16::ChargingView::State animation;
+    unsigned long lastFrameTime = 0;
+    int batteryPercent = -1;
+    unsigned long lastBatteryCheck = 0;
+    Sketch sketch = {};
+    bool sketchLoaded = false;
+    bool canvasAvailable = false;
+    bool ownsCanvas = false;
+  } charging;
+};
+
+ViewState viewState;
+
 const float MEMORY_SCROLL_SPEED = 0.35f;  // Animation speed (0.0-1.0, higher = faster)
-unsigned long lastMemoryAnimTime = 0;  // For frame rate limiting
 const int MEMORY_ANIM_FRAME_MS = 16;  // Milliseconds between animation frames (16ms = 60fps - now we can afford it with caching!)
 
-// Memory View cursor animation (diagonal breathing effect)
-float memoryCursorAnimPhase = 0.0f;  // Animation phase (0.0 to 1.0, loops)
-const float MEMORY_CURSOR_ANIM_SPEED = 0.010f;  // How fast the animation cycles (lower = slower, more calm)
-const int MEMORY_CURSOR_ANIM_DISTANCE = 6;  // Max pixels to move diagonally (more pixels = smoother animation)
-
-// Help screen state
-int helpViewCursor = 0;
-int helpViewScrollOffset = 0;
-
-// View mode state
-uint8_t previewViewBackground = 0;  // 0=black, 1=white, 2=light gray, 3=dark gray
-
-// Gallery mode state (preview from Memory View with navigation)
-bool galleryMode = false;                   // Gallery browsing vs single sketch viewing
-int galleryCurrentIndex = 0;                // Current sketch in gallery (0-based index into sketchList)
-unsigned long galleryLastAdvanceTime = 0;   // Timer for auto-advance
-bool galleryAutoAdvance = false;            // Slideshow auto-advance active
 const unsigned long GALLERY_ADVANCE_INTERVAL = 3000;  // Auto-advance every 3 seconds
 
-// Palette menu state
-bool paletteCanvasAvailable = false;  // Track if canvas allocation succeeded
-int paletteViewCursor = 0;  // Currently selected palette (0 to totalPaletteCount-1)
-float paletteViewScrollPos = 0.0f;  // Animated scroll position for smooth transitions
 const float PALETTE_SCROLL_SPEED = 0.25f;  // Animation speed (0.0-1.0, higher = faster)
-unsigned long lastPaletteAnimTime = 0;  // For frame rate limiting
 
 // Heap monitoring state
 unsigned long lastHeapCheckTime = 0;
@@ -437,44 +443,8 @@ const unsigned long HEAP_CHECK_INTERVAL = 60000;  // Check every 60 seconds
 const int HEAP_WARNING_THRESHOLD = 50000;  // Warn if free heap drops below 50KB
 const int PALETTE_ANIM_FRAME_MS = 16;  // Milliseconds between animation frames (16ms = 60fps)
 
-// Palette insertion animation state
-bool paletteInsertionAnimating = false;
-float paletteInsertionProgress = 0.0f;  // 0.0 = start position, 1.0 = inserted
-float paletteInsertionFrozenScrollPos = 0.0f;  // Frozen scroll position for side cartridges during animation
 const float PALETTE_INSERT_SPEED = 0.12f;  // Animation speed (with impact feel)
-const int PALETTE_INSERT_DISTANCE = 36;  // Distance to move down (top goes from Y=20 to Y=56)
-
-// Canvas for smooth palette menu rendering (eliminates screen tearing)
-M5Canvas paletteCanvas(&M5Cardputer.Display);
-
-// Canvas for smooth memory view rendering (eliminates screen tearing)
-M5Canvas memoryCanvas(&M5Cardputer.Display);
-
-// Settings view state
-int settingsViewCursor = 0;  // 0-5 for the 6 menu items (0-6 with BT)
-#if ENABLE_BLUETOOTH
-const int SETTINGS_ITEM_COUNT = 7;
-#else
-const int SETTINGS_ITEM_COUNT = 6;
-#endif
-
-// Charging mode state (DVD screensaver)
-unsigned long lastChargeFrameTime = 0;
 const int CHARGE_FRAME_MS = 33;  // ~30fps
-int chargeBatteryPercent = -1;
-unsigned long lastChargeBatteryCheck = 0;
-
-struct BouncingIcon {
-  float x, y;
-  float dx, dy;
-  const unsigned char* icon;
-};
-const int CHARGE_ICON_COUNT = 5;  // 4 icons + 1 sketch sprite
-BouncingIcon chargeIcons[5];
-M5Canvas chargeSketchSprite(&M5Cardputer.Display);
-M5Canvas chargeCanvas(&M5Cardputer.Display);
-bool chargeSketchLoaded = false;
-bool chargeCanvasAvailable = false;
 
 // Settings preferences (loaded from NVS)
 uint8_t defaultGridSize = 8;        // 8 or 16 (default grid size on boot/new sketch)
@@ -483,22 +453,12 @@ uint8_t matrixRotation = 2;         // 0=0°, 1=90°, 2=180°, 3=270°
 bool exportRGB565 = false;           // false=RGB888, true=RGB565
 bool shakeUndoEnabled = false;       // true=enabled, false=disabled
 
-// Settings canvas for tear-free rendering
-M5Canvas settingsCanvas(&M5Cardputer.Display);
-bool settingsCanvasAvailable = false;
-
-// Help view canvas for tear-free rendering
-M5Canvas helpCanvas(&M5Cardputer.Display);
-bool helpCanvasAvailable = false;
-
 // Battery display
 int lastBatteryPercent = -1;  // Track last drawn battery % to avoid unnecessary redraws
 unsigned long lastBatteryCheckTime = 0;  // Track when we last checked battery
 const unsigned long BATTERY_CHECK_INTERVAL = 30000;  // Check battery every 30 seconds
 bool batteryFirstCheck = true;  // Flag to force first battery check
 
-// Display power-enable pin, also used by the legacy brightness path.
-#define ONBOARD_LED_EN 38
 bool lowBattery = false;  // Latches true when battery <= 10%
 
 // ============================================================================
@@ -571,65 +531,6 @@ bool sdCardAvailable = false;
 // Hardware detection (determined at boot)
 const char* detectedBoardName = "Unknown";
 
-// SD card pins (same for both M5Cardputer and M5Cardputer ADV)
-#define SD_SPI_SCK_PIN  40
-#define SD_SPI_MISO_PIN 39
-#define SD_SPI_MOSI_PIN 14
-#define SD_SPI_CS_PIN   12
-
-// ============================================================================
-// ICON DRAWING FUNCTIONS
-// ============================================================================
-
-/**
- * Draw an icon - supports both 1-bit and 2-bit indexed formats
- *
- * @param x X position
- * @param y Y position
- * @param bitmap Icon data
- * @param w Width in pixels
- * @param h Height in pixels
- * @param indexed If true, uses 2-bit indexed format (0=transparent, 1=black, 2=white)
- *                If false, uses 1-bit format (1=black, 0=transparent)
- */
-void drawIcon(int x, int y, const unsigned char* bitmap, int w, int h, bool indexed = false) {
-  if (indexed) {
-    // 2-bit indexed format: 4 pixels per byte
-    // 0 = transparent, 1 = dark, 2 = light
-    for (int row = 0; row < h; row++) {
-      for (int col = 0; col < w; col++) {
-        int pixelIndex = row * w + col;
-        int byteIndex = pixelIndex / 4;
-        int bitShift = (3 - (pixelIndex % 4)) * 2;  // 6, 4, 2, 0
-
-        uint8_t byte = pgm_read_byte(&bitmap[byteIndex]);
-        uint8_t value = (byte >> bitShift) & 0x03;
-
-        if (value == 1) {
-          M5Cardputer.Display.drawPixel(x + col, y + row, currentTheme->iconDark);
-        } else if (value == 2) {
-          M5Cardputer.Display.drawPixel(x + col, y + row, currentTheme->iconLight);
-        }
-        // value == 0 is transparent, skip
-      }
-    }
-  } else {
-    // 1-bit format: 1 = dark, 0 = transparent
-    int byteWidth = (w + 7) / 8;
-    for (int row = 0; row < h; row++) {
-      for (int col = 0; col < w; col++) {
-        if (col % 8 == 0) {
-          uint8_t byte = pgm_read_byte(&bitmap[row * byteWidth + col / 8]);
-          if (byte & (0x80 >> (col % 8))) {
-            M5Cardputer.Display.drawPixel(x + col, y + row, currentTheme->iconDark);
-          }
-        }
-      }
-    }
-  }
-}
-
-
 /**
  * Set a status message to display temporarily
  */
@@ -637,34 +538,6 @@ void setStatusMessage(const char* message) {
   strncpy(statusMessage, message, sizeof(statusMessage) - 1);
   statusMessage[sizeof(statusMessage) - 1] = '\0';  // Ensure null termination
   statusMessageTime = millis();
-}
-
-/**
- * Set display backlight brightness via GPIO38 (WS2812 enable pin).
- * Maps input (0-255) to 160-255 range so the LED always has enough power.
- * On Arduino core 3.x, analogWrite re-attaches the pin to LEDC on each call.
- */
-void setDisplayBrightness(uint8_t value) {
-  uint8_t mapped = 160 + (uint16_t)value * (255 - 160) / 255;
-  analogWrite(ONBOARD_LED_EN, mapped);
-}
-
-// ============================================================================
-// ANIMATION HELPER FUNCTIONS
-// ============================================================================
-
-/**
- * Ease-in-out function (cubic easing)
- * Takes a value from 0.0 to 1.0 and returns eased value from 0.0 to 1.0
- * The output smoothly accelerates at the start and decelerates at the end
- */
-float easeInOutCubic(float t) {
-  if (t < 0.5f) {
-    return 4.0f * t * t * t;  // Ease in (accelerate)
-  } else {
-    float f = (2.0f * t - 2.0f);
-    return 0.5f * f * f * f + 1.0f;  // Ease out (decelerate)
-  }
 }
 
 // ============================================================================
@@ -679,54 +552,22 @@ void initializeActiveSketch() {
   // Clear pixel data (all transparent)
   for (int y = 0; y < 16; y++) {
     for (int x = 0; x < 16; x++) {
-      activeSketch.pixels[y][x] = 0;
+      documentState.sketch.pixels[y][x] = 0;
     }
   }
 
   // Use default grid size from settings, 16-color palette
-  activeSketch.gridSize = defaultGridSize;
-  activeSketch.paletteSize = 16;
+  documentState.sketch.gridSize = defaultGridSize;
+  documentState.sketch.paletteSize = 16;
 
   // Copy the default palette (first palette in catalog: SWEETIE-16)
   for (int i = 0; i < 16; i++) {
-    activeSketch.paletteColors[i] = pgm_read_word(&allPalettes[0][i]);
+    documentState.sketch.paletteColors[i] = pgm_read_word(&allPalettes[0][i]);
   }
 
-  activeSketch.isEmpty = true;
-  activeSketchIsNew = true;
-  activeSketchFilename = "";
-}
-
-/**
- * Collapse a pixel index to valid range for smaller palettes
- * Rules:
- * - 4-color: collapsedIndex = ((index - 1) % 4) + 1 (Examples: 5→1, 6→2, ... 16→4)
- * - 8-color: collapsedIndex = ((index - 1) % 8) + 1 (Examples: 9→1, 10→2, ... 16→8)
- */
-uint8_t collapseIndex(uint8_t index, uint8_t paletteSize) {
-  if (index == 0) return 0;  // Transparent stays transparent
-  if (index <= paletteSize) return index;  // Already valid
-  return ((index - 1) % paletteSize) + 1;
-}
-
-/**
- * Get the rendered color for a pixel index in the active sketch
- * Handles color collapse for smaller palettes (4 or 8 colors)
- */
-uint16_t getActiveSketchPixelColor(uint8_t pixelIndex) {
-  if (pixelIndex == 0) {
-    // Transparent - return 0 (caller should render checkerboard)
-    return 0;
-  }
-
-  // If palette is smaller than 16 colors and index exceeds palette size, collapse it
-  if (activeSketch.paletteSize < 16 && pixelIndex > activeSketch.paletteSize) {
-    pixelIndex = collapseIndex(pixelIndex, activeSketch.paletteSize);
-  }
-
-  // Return the color (array is 0-indexed, so pixelIndex 1 → array[0])
-  // paletteColors[0..15] stores colors for pixel indices 1..16
-  return activeSketch.paletteColors[pixelIndex - 1];
+  documentState.sketch.isEmpty = true;
+  documentState.isNew = true;
+  documentState.filename = "";
 }
 
 // ============================================================================
@@ -741,68 +582,82 @@ uint16_t getActiveSketchPixelColor(uint8_t pixelIndex) {
  * Returns true if SD card is available, false otherwise
  */
 bool initSDCard() {
-  // Only try to initialize once
   if (sdCardInitialized) {
     return sdCardAvailable;
   }
-
-  // Mark as initialized before attempting (prevent retry loops)
   sdCardInitialized = true;
-
-  // Small delay to let SD card stabilize after power-on
-  // This helps with timing-sensitive cards
-  delay(100);
-
-  // Initialize SPI with explicit pins (same for both Cardputer models)
-  // Pins: CLK=40, MOSI=14, MISO=39, CS=12
-  SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
-
-  // Try multiple times with delays between attempts
-  // Some SD cards need more time to initialize
-  for (int attempt = 0; attempt < 3; attempt++) {
-    // Try to initialize SD card with explicit CS pin at 25MHz
-    if (SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
-      // Card initialized - verify card type
-      uint8_t cardType = SD.cardType();
-
-      if (cardType != CARD_NONE) {
-        // Final verification - check card size
-        uint64_t cardSize = SD.cardSize() / (1024 * 1024);  // Convert to MB
-
-        // Create base directory structure if it doesn't exist
-        if (!SD.exists("/bitmap16dx")) {
-          SD.mkdir("/bitmap16dx");
-        }
-        if (!SD.exists("/bitmap16dx/sketches")) {
-          SD.mkdir("/bitmap16dx/sketches");
-        }
-        if (!SD.exists("/bitmap16dx/exports")) {
-          SD.mkdir("/bitmap16dx/exports");
-        }
-#if ENABLE_SCREENSHOTS
-        if (!SD.exists("/bitmap16dx/screenshots")) {
-          SD.mkdir("/bitmap16dx/screenshots");
-        }
-#endif
-        if (!SD.exists("/bitmap16dx/palettes")) {
-          SD.mkdir("/bitmap16dx/palettes");
-        }
-
-        // SD card is ready
-        sdCardAvailable = true;
-        return true;
-      }
-    }
-
-    // Wait before retry (except on last attempt)
-    if (attempt < 2) {
-      delay(100);
-    }
+  sdCardAvailable = Filesystem::init();
+  if (!sdCardAvailable) {
+    return false;
   }
 
-  // All attempts failed
-  sdCardAvailable = false;
-  return false;
+  Filesystem::createDirectory("/bitmap16dx");
+  Filesystem::createDirectory("/bitmap16dx/sketches");
+  Filesystem::createDirectory("/bitmap16dx/exports");
+#if ENABLE_SCREENSHOTS
+  Filesystem::createDirectory("/bitmap16dx/screenshots");
+#endif
+  Filesystem::createDirectory("/bitmap16dx/palettes");
+  return true;
+}
+
+bitmap16::Sketch toPortableSketch(const Sketch& source) {
+  bitmap16::Sketch result;
+  result.gridSize = source.gridSize;
+  result.paletteSize = source.paletteSize;
+  result.isEmpty = source.isEmpty;
+  for (int i = 0; i < 16; ++i) {
+    result.paletteColors[i] = source.paletteColors[i];
+  }
+  for (int y = 0; y < 16; ++y) {
+    for (int x = 0; x < 16; ++x) {
+      result.pixels[y][x] = source.pixels[y][x];
+    }
+  }
+  return result;
+}
+
+void fromPortableSketch(const bitmap16::Sketch& source, Sketch& destination) {
+  destination.gridSize = source.gridSize;
+  destination.paletteSize = source.paletteSize;
+  destination.isEmpty = source.isEmpty;
+  for (int i = 0; i < 16; ++i) {
+    destination.paletteColors[i] = source.paletteColors[i];
+  }
+  for (int y = 0; y < 16; ++y) {
+    for (int x = 0; x < 16; ++x) {
+      destination.pixels[y][x] = source.pixels[y][x];
+    }
+  }
+}
+
+bool readSketchFile(const char* path, Sketch& sketch) {
+  uint8_t data[bitmap16::SketchCodec::kCurrentFileSize];
+  std::size_t bytesRead = 0;
+  if (!Filesystem::readFile(path, data, sizeof(data), bytesRead)) {
+    return false;
+  }
+
+  bitmap16::Sketch decoded;
+  if (bitmap16::SketchCodec::decode(data, bytesRead, decoded) !=
+      bitmap16::SketchCodec::Result::Ok) {
+    return false;
+  }
+  fromPortableSketch(decoded, sketch);
+  return true;
+}
+
+bool writeSketchFile(const char* path, const Sketch& sketch) {
+  uint8_t data[bitmap16::SketchCodec::kCurrentFileSize];
+  std::size_t bytesWritten = 0;
+  if (bitmap16::SketchCodec::encode(
+          toPortableSketch(sketch),
+          data,
+          sizeof(data),
+          bytesWritten) != bitmap16::SketchCodec::Result::Ok) {
+    return false;
+  }
+  return Filesystem::writeFile(path, data, bytesWritten);
 }
 
 /**
@@ -824,6 +679,44 @@ bool initSDCard() {
  * Populates sketchList vector with sketch filenames and timestamps
  * Sorted by timestamp (newest first)
  */
+bool collectSketchFile(
+    const Filesystem::FileInfo& file,
+    void*) {
+  if (file.isDirectory) {
+    return true;
+  }
+
+  String filename(file.name);
+  const int lastSlash = filename.lastIndexOf('/');
+  if (lastSlash >= 0) {
+    filename = filename.substring(lastSlash + 1);
+  }
+  if (!filename.startsWith("sketch_") || !filename.endsWith(".dat")) {
+    return true;
+  }
+
+  const int underscorePos = filename.indexOf('_');
+  const int dotPos = filename.lastIndexOf('.');
+  if (underscorePos < 0 || dotPos <= underscorePos) {
+    return true;
+  }
+
+  const unsigned long timestamp =
+      filename.substring(underscorePos + 1, dotPos).toInt();
+  if ((file.size != SKETCH_FILE_SIZE_V1 &&
+       file.size != SKETCH_FILE_SIZE_V2) ||
+      timestamp == 0) {
+    return true;
+  }
+
+  SketchInfo info;
+  info.filename = filename;
+  info.timestamp = timestamp;
+  info.dataLoaded = false;
+  sketchList.push_back(info);
+  return true;
+}
+
 void loadSketchListFromSD() {
   sketchList.clear();
 
@@ -832,67 +725,51 @@ void loadSketchListFromSD() {
     return;
   }
 
-  // Quick card check
-  if (SD.cardType() == CARD_NONE) {
+  if (!Filesystem::isAvailable()) {
     sdCardAvailable = false;
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return;
   }
 
-  // Open /bitmap16dx/sketches directory
-  File root = SD.open("/bitmap16dx/sketches");
-  if (!root || !root.isDirectory()) {
+  if (!Filesystem::listDirectory(
+          "/bitmap16dx/sketches",
+          collectSketchFile,
+          nullptr)) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return;
   }
-
-  // Iterate through all files
-  File file = root.openNextFile();
-  while (file) {
-    if (!file.isDirectory()) {
-      String filename = String(file.name());
-
-      // ESP32 SD library might return full path or just filename
-      // Extract just the filename if it contains a path
-      int lastSlash = filename.lastIndexOf('/');
-      if (lastSlash >= 0) {
-        filename = filename.substring(lastSlash + 1);
-      }
-
-      // Check if it matches "sketch_XXXXXXXXXX.dat" pattern
-      if (filename.startsWith("sketch_") && filename.endsWith(".dat")) {
-        // Extract timestamp from filename
-        // Format: sketch_1234567890.dat
-        //         0123456789...
-        int underscorePos = filename.indexOf('_');
-        int dotPos = filename.lastIndexOf('.');
-
-        if (underscorePos >= 0 && dotPos > underscorePos) {
-          String timestampStr = filename.substring(underscorePos + 1, dotPos);
-          unsigned long timestamp = timestampStr.toInt();
-
-          // Verify file size is correct (290 or 291 bytes) and timestamp is valid
-          if ((file.size() == SKETCH_FILE_SIZE_V1 || file.size() == SKETCH_FILE_SIZE_V2) && timestamp > 0) {
-            SketchInfo info;
-            info.filename = filename;
-            info.timestamp = timestamp;
-            info.dataLoaded = false;  // Will load data on demand
-            sketchList.push_back(info);
-          }
-        }
-      }
-    }
-
-    file = root.openNextFile();
-  }
-
-  root.close();
 
   // Sort by timestamp (newest first)
   std::sort(sketchList.begin(), sketchList.end(),
             [](const SketchInfo& a, const SketchInfo& b) {
               return a.timestamp > b.timestamp;
             });
+}
+
+bool findHighestSketchCounter(
+    const Filesystem::FileInfo& file,
+    void* context) {
+  if (file.isDirectory || context == nullptr) {
+    return true;
+  }
+
+  String filename(file.name);
+  const int lastSlash = filename.lastIndexOf('/');
+  if (lastSlash >= 0) {
+    filename = filename.substring(lastSlash + 1);
+  }
+  if (!filename.startsWith("sketch_") || !filename.endsWith(".dat")) {
+    return true;
+  }
+
+  const int dotPos = filename.lastIndexOf('.');
+  const unsigned long number =
+      filename.substring(7, dotPos).toInt();
+  auto* highest = static_cast<unsigned long*>(context);
+  if (number > *highest) {
+    *highest = number;
+  }
+  return true;
 }
 
 /**
@@ -913,105 +790,52 @@ bool saveActiveSketchToSD() {
     return false;
   }
 
-  // Quick card check
-  if (SD.cardType() == CARD_NONE) {
+  if (!Filesystem::isAvailable()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     sdCardAvailable = false;
     return false;
   }
 
-  // Create directories if needed
-  if (!SD.exists("/bitmap16dx/sketches")) {
-    if (!SD.mkdir("/bitmap16dx/sketches")) {
-      setStatusMessage(StatusMsg::SD_NOT_READY);
-      sdCardAvailable = false;
-      return false;
-    }
-  }
-
-  // Generate filename (use existing if saving in place, or new timestamp if new)
-  String fullPath;
-  if (activeSketchFilename.length() > 0 && !activeSketchIsNew) {
-    // Save to existing file
-    fullPath = "/bitmap16dx/sketches/" + activeSketchFilename;
-  } else {
-    // Create new file with incrementing counter (persists across reboots)
-    preferences.begin("bitmap16dx", false);
-    unsigned long counter = preferences.getULong("sketchCounter", 0);
-
-    // If counter is 0 (first time or after NVS reset), scan existing files to find highest number
-    if (counter == 0 && SD.exists("/bitmap16dx/sketches")) {
-      File root = SD.open("/bitmap16dx/sketches");
-      if (root && root.isDirectory()) {
-        File file = root.openNextFile();
-        while (file) {
-          if (!file.isDirectory()) {
-            String filename = String(file.name());
-            int lastSlash = filename.lastIndexOf('/');
-            if (lastSlash >= 0) {
-              filename = filename.substring(lastSlash + 1);
-            }
-
-            // Extract number from "sketch_NNNN.dat"
-            if (filename.startsWith("sketch_") && filename.endsWith(".dat")) {
-              int underscorePos = filename.indexOf('_');
-              int dotPos = filename.lastIndexOf('.');
-              if (underscorePos >= 0 && dotPos > underscorePos) {
-                String numStr = filename.substring(underscorePos + 1, dotPos);
-                unsigned long num = numStr.toInt();
-                if (num > counter) {
-                  counter = num;
-                }
-              }
-            }
-          }
-          file = root.openNextFile();
-        }
-        root.close();
-      }
-    }
-
-    counter++;
-    preferences.putULong("sketchCounter", counter);
-    preferences.end();
-
-    fullPath = "/bitmap16dx/sketches/sketch_" + String(counter) + ".dat";
-    activeSketchFilename = "sketch_" + String(counter) + ".dat";
-
-    activeSketchIsNew = false;
-  }
-
-  // Delete existing file if it exists (FILE_WRITE appends, we want to overwrite)
-  if (SD.exists(fullPath.c_str())) {
-    SD.remove(fullPath.c_str());
-  }
-
-  // Open file for writing
-  File file = SD.open(fullPath.c_str(), FILE_WRITE);
-  if (!file) {
-    setStatusMessage(StatusMsg::FAILED_TO_SAVE);
+  if (!Filesystem::createDirectory("/bitmap16dx/sketches")) {
+    setStatusMessage(StatusMsg::SD_NOT_READY);
     sdCardAvailable = false;
     return false;
   }
 
-  // Write data (291-byte format with version byte)
-  file.write(SKETCH_FORMAT_VERSION);  // Version 2
-  file.write(activeSketch.gridSize);
-  file.write(activeSketch.paletteSize);
+  // Generate filename (use existing if saving in place, or new timestamp if new)
+  String fullPath;
+  if (documentState.filename.length() > 0 && !documentState.isNew) {
+    // Save to existing file
+    fullPath = "/bitmap16dx/sketches/" + documentState.filename;
+  } else {
+    // Create new file with incrementing counter (persists across reboots)
+    unsigned long counter =
+        PreferenceStore::readUInt32("sketchCounter", 0);
 
-  for (int i = 0; i < 16; i++) {
-    file.write((activeSketch.paletteColors[i] >> 8) & 0xFF);  // High byte
-    file.write(activeSketch.paletteColors[i] & 0xFF);          // Low byte
-  }
-
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
-      file.write(activeSketch.pixels[y][x]);
+    // If counter is 0 (first time or after NVS reset), scan existing files to find highest number
+    if (counter == 0 &&
+        Filesystem::exists("/bitmap16dx/sketches")) {
+      Filesystem::listDirectory(
+          "/bitmap16dx/sketches",
+          findHighestSketchCounter,
+          &counter);
     }
+
+    counter++;
+    PreferenceStore::writeUInt32("sketchCounter", counter);
+
+    fullPath = "/bitmap16dx/sketches/sketch_" + String(counter) + ".dat";
+    documentState.filename = "sketch_" + String(counter) + ".dat";
+
+    documentState.isNew = false;
   }
 
-  file.close();
-  activeSketch.isEmpty = false;
+  if (!writeSketchFile(fullPath.c_str(), documentState.sketch)) {
+    setStatusMessage(StatusMsg::FAILED_TO_SAVE);
+    sdCardAvailable = false;
+    return false;
+  }
+  documentState.sketch.isEmpty = false;
 
   setStatusMessage(StatusMsg::SAVED);
   return true;
@@ -1023,13 +847,13 @@ bool saveActiveSketchToSD() {
  */
 bool saveActiveSketchAsNew() {
   // Force creation of new file regardless of existing filename
-  activeSketchFilename = "";
-  activeSketchIsNew = true;
+  documentState.filename = "";
+  documentState.isNew = true;
   return saveActiveSketchToSD();
 }
 
 /**
- * Load a sketch from SD card into activeSketch
+ * Load a sketch from SD card into active sketch
  * Filename should be just the filename, not full path
  * Returns true if successful, false if failed
  */
@@ -1039,8 +863,7 @@ bool loadSketchFromSD(String filename) {
     return false;
   }
 
-  // Quick card check
-  if (SD.cardType() == CARD_NONE) {
+  if (!Filesystem::isAvailable()) {
     sdCardAvailable = false;
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
@@ -1048,61 +871,19 @@ bool loadSketchFromSD(String filename) {
 
   String fullPath = "/bitmap16dx/sketches/" + filename;
 
-  if (!SD.exists(fullPath.c_str())) {
+  if (!Filesystem::exists(fullPath.c_str())) {
     setStatusMessage(StatusMsg::FILE_NOT_FOUND);
     return false;
   }
 
-  File file = SD.open(fullPath.c_str(), FILE_READ);
-  if (!file) {
-    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
-    return false;
-  }
-
-  // Verify file size and detect format version
-  size_t fileSize = file.size();
-  uint8_t formatVersion = 1;  // Default to legacy format
-
-  if (fileSize == SKETCH_FILE_SIZE_V2) {
-    // New format with version byte
-    formatVersion = file.read();
-    if (formatVersion != SKETCH_FORMAT_VERSION) {
-      // Unknown version, try to read anyway but could fail
-      file.close();
-      setStatusMessage(StatusMsg::FILE_CORRUPT);
-      return false;
-    }
-  } else if (fileSize == SKETCH_FILE_SIZE_V1) {
-    // Legacy format without version byte (version 1)
-    formatVersion = 1;
-  } else {
-    // Invalid file size
-    file.close();
+  if (!readSketchFile(fullPath.c_str(), documentState.sketch)) {
     setStatusMessage(StatusMsg::FILE_CORRUPT);
     return false;
   }
 
-  // Read data (same for both versions after version byte)
-  activeSketch.gridSize = file.read();
-  activeSketch.paletteSize = file.read();
-
-  for (int i = 0; i < 16; i++) {
-    uint8_t high = file.read();
-    uint8_t low = file.read();
-    activeSketch.paletteColors[i] = (high << 8) | low;
-  }
-
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
-      activeSketch.pixels[y][x] = file.read();
-    }
-  }
-
-  file.close();
-
-  activeSketch.isEmpty = false;
-  activeSketchFilename = filename;
-  activeSketchIsNew = false;
+  documentState.sketch.isEmpty = false;
+  documentState.filename = filename;
+  documentState.isNew = false;
 
   return true;
 }
@@ -1142,8 +923,8 @@ bool exportCanvasToPNG(bool scale) {
   }
 
   // Determine output size
-  int outputSize = scale ? 128 : currentGridSize;
-  int pixelScale = scale ? (128 / currentGridSize) : 1;
+  int outputSize = scale ? 128 : editorState.gridSize;
+  int pixelScale = scale ? (128 / editorState.gridSize) : 1;
 
   // Allocate line buffer (RGB, 3 bytes per pixel)
   uint8_t* lineBuffer = (uint8_t*)malloc(outputSize * 3);
@@ -1202,13 +983,13 @@ bool exportCanvasToPNG(bool scale) {
 
   // Write each line of the PNG
   for (int y = 0; y < outputSize; y++) {
-    int canvasY = y / pixelScale;  // Map to canvas coordinate
+    int canvasY = y / pixelScale;  // Map to editorState.canvas coordinate
 
     for (int x = 0; x < outputSize; x++) {
-      int canvasX = x / pixelScale;  // Map to canvas coordinate
+      int canvasX = x / pixelScale;  // Map to editorState.canvas coordinate
 
       // Get color index from canvas
-      uint8_t colorIndex = canvas[canvasY][canvasX];
+      uint8_t colorIndex = editorState.canvas[canvasY][canvasX];
       uint8_t r, g, b, a;
 
       if (colorIndex == 0) {
@@ -1217,7 +998,7 @@ bool exportCanvasToPNG(bool scale) {
         a = 0;  // Fully transparent
       } else {
         // Get palette color from the active sketch's palette
-        uint16_t color565 = activeSketch.paletteColors[colorIndex - 1];
+        uint16_t color565 = documentState.sketch.paletteColors[colorIndex - 1];
 
         if (exportRGB565) {
           // Export as RGB565 (simple bit shift, faster but less accurate)
@@ -1272,10 +1053,7 @@ bool exportCanvasToPNG(bool scale) {
   setStatusMessage(StatusMsg::WRITING_FILE);
   delay(50);
 
-  // Create exports directory if it doesn't exist
-  if (!SD.exists("/bitmap16dx/exports")) {
-    SD.mkdir("/bitmap16dx/exports");
-  }
+  Filesystem::createDirectory("/bitmap16dx/exports");
 
   // Generate filename with counter
   int exportNum = 0;
@@ -1283,7 +1061,7 @@ bool exportCanvasToPNG(bool scale) {
   do {
     snprintf(filename, sizeof(filename), "/bitmap16dx/exports/dx_%04d.png", exportNum);
     exportNum++;
-  } while (SD.exists(filename) && exportNum < 10000);
+  } while (Filesystem::exists(filename) && exportNum < 10000);
 
   if (exportNum >= 10000) {
     free(pngBuffer);
@@ -1291,19 +1069,11 @@ bool exportCanvasToPNG(bool scale) {
     return false;
   }
 
-  // Write to SD card
-  File file = SD.open(filename, FILE_WRITE);
-  if (!file) {
-    free(pngBuffer);
-    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
-    return false;
-  }
-
-  size_t written = file.write(pngBuffer, pngSize);
-  file.close();
+  const bool wroteFile =
+      Filesystem::writeFile(filename, pngBuffer, pngSize);
   free(pngBuffer);
 
-  if (written != (size_t)pngSize) {
+  if (!wroteFile) {
     setStatusMessage(StatusMsg::WRITE_INCOMPLETE);
     return false;
   }
@@ -1464,10 +1234,7 @@ bool takeScreenshot() {
   setStatusMessage(StatusMsg::WRITING);
   delay(50);
 
-  // Create screenshots directory if it doesn't exist
-  if (!SD.exists("/bitmap16dx/screenshots")) {
-    SD.mkdir("/bitmap16dx/screenshots");
-  }
+  Filesystem::createDirectory("/bitmap16dx/screenshots");
 
   // Generate filename with counter
   int screenshotNum = 0;
@@ -1475,7 +1242,7 @@ bool takeScreenshot() {
   do {
     snprintf(filename, sizeof(filename), "/bitmap16dx/screenshots/screenshot_%04d.png", screenshotNum);
     screenshotNum++;
-  } while (SD.exists(filename) && screenshotNum < 10000);
+  } while (Filesystem::exists(filename) && screenshotNum < 10000);
 
   if (screenshotNum >= 10000) {
     free(pngBuffer);
@@ -1483,19 +1250,11 @@ bool takeScreenshot() {
     return false;
   }
 
-  // Write to SD card
-  File file = SD.open(filename, FILE_WRITE);
-  if (!file) {
-    free(pngBuffer);
-    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
-    return false;
-  }
-
-  size_t written = file.write(pngBuffer, pngSize);
-  file.close();
+  const bool wroteFile =
+      Filesystem::writeFile(filename, pngBuffer, pngSize);
   free(pngBuffer);
 
-  if (written != (size_t)pngSize) {
+  if (!wroteFile) {
     setStatusMessage(StatusMsg::WRITE_FAIL);
     return false;
   }
@@ -1552,26 +1311,9 @@ void drawBatteryIndicator() {
   // Get current battery percentage
   int batteryPercent = Power::getBatteryPercent();
 
-  // Redraw if changed or forced
+  // The shared Canvas view draws the icon; this poll only updates indicator
+  // state and the cached percentage.
   if (batteryPercent != lastBatteryPercent || forceRedraw) {
-    // Clear old icon area (24×24 icon below fill icon)
-    M5Cardputer.Display.fillRect(3, 85, 24, 24, currentTheme->background);
-
-    // Select icon based on battery level
-    const unsigned char* batteryIcon;
-    if (batteryPercent < 10) {
-      batteryIcon = ICON_BATTERY_0;  // Low (<10%)
-    } else if (batteryPercent < 50) {
-      batteryIcon = ICON_BATTERY_10;  // Medium (10-50%)
-    } else if (batteryPercent < 90) {
-      batteryIcon = ICON_BATTERY_50;  // High (50-90%)
-    } else {
-      batteryIcon = ICON_BATTERY_90;  // Full (>90%)
-    }
-
-    // Draw battery icon at (3, 85) - below fill icon with 4px spacing
-    drawIcon(3, 85, batteryIcon, 24, 24, true);
-
     // Low battery LED indicator (latches red at <= 10%)
     if (!lowBattery && batteryPercent <= 10) {
       lowBattery = true;
@@ -1585,15 +1327,9 @@ void drawBatteryIndicator() {
 // ============================================================================
 // FORWARD DECLARATIONS
 // ============================================================================
-void drawGrid();
-void drawPalette();
-void drawCursor();
+void drawSharedCanvasView();
 void drawHelpView();
 void drawMemoryView(bool fullRedraw = true);
-void drawMemorySketchThumbnail(int slotIndex, int x, int y, int thumbSize);
-void drawCreateNewSketchThumbnail(int x, int y, int thumbSize);
-void drawSketchThumbnail(int sketchIndex, int x, int y, int thumbSize);
-void drawMemoryViewCursor(int itemIndex, int x, int y, int thumbSize);
 void updatePaletteFilter();
 void loadGallerySketch(int index);  // Load and display sketch in gallery preview mode
 
@@ -1603,6 +1339,58 @@ void updateLEDMatrix(bool showCursor = true);
 void updateLEDMatrixFromSketch(Sketch& sketch);
 void toggleLEDMatrix();
 #endif
+
+void drawSharedCanvasView() {
+  if (!Display::isReady() && !Display::init()) {
+    return;
+  }
+  const bitmap16::CanvasView::State state = {
+      editorState.canvas,
+      static_cast<uint8_t>(editorState.gridSize),
+      documentState.sketch.paletteColors,
+      documentState.sketch.paletteSize,
+      static_cast<uint8_t>(editorState.cursorX),
+      static_cast<uint8_t>(editorState.cursorY),
+      editorState.selectedColor,
+      editorState.rulersVisible,
+      editorState.moveModeActive,
+      statusMessage,
+      Power::getBatteryPercent(),
+  };
+  const bitmap16::CanvasView::Theme theme = {
+      currentTheme->background,
+      currentTheme->cellDark,
+      currentTheme->cellLight,
+      currentTheme->shadow,
+      currentTheme->text,
+      currentTheme->textSecondary,
+      currentTheme->centerLine,
+      currentTheme->iconDark,
+      currentTheme->iconLight,
+      currentTheme == &THEME_DARK,
+  };
+  const bitmap16::CanvasView::Assets assets = {
+      {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
+      {ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT},
+      {ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT},
+      {
+          {ICON_BATTERY_0, 24, 24},
+          {ICON_BATTERY_10, 24, 24},
+          {ICON_BATTERY_50, 24, 24},
+          {ICON_BATTERY_90, 24, 24},
+      },
+      {ICON_CANVAS_CURSOR,
+       ICON_CANVAS_CURSOR_WIDTH,
+       ICON_CANVAS_CURSOR_HEIGHT},
+      {ICON_MOVE_CURSOR, ICON_MOVE_CURSOR_WIDTH, ICON_MOVE_CURSOR_HEIGHT},
+      CURSOR_OFFSET_X,
+      CURSOR_OFFSET_Y,
+      MOVE_CURSOR_OFFSET_X,
+      MOVE_CURSOR_OFFSET_Y,
+  };
+  bitmap16::CanvasView::render(Display::canvas(), state, theme, &assets);
+  Display::endFrame();
+}
 
 #if ENABLE_BLUETOOTH
 // Bluetooth keyboard support functions
@@ -1630,53 +1418,53 @@ void btUpdateNotify();
  * Note: This is for regular drawing undo, not sketch deletion operations
  */
 void saveUndo() {
-  for (int y = 0; y < currentGridSize; y++) {
-    for (int x = 0; x < currentGridSize; x++) {
-      undoCanvas[y][x] = canvas[y][x];
+  for (int y = 0; y < editorState.gridSize; y++) {
+    for (int x = 0; x < editorState.gridSize; x++) {
+      editorState.undoCanvas[y][x] = editorState.canvas[y][x];
     }
   }
   // Clear palette undo info (this is just a regular drawing undo)
-  undoPaletteSize = 0;
-  undoGridSize = 0;
-  undoAvailable = true;
+  editorState.undoPaletteSize = 0;
+  editorState.undoGridSize = 0;
+  editorState.undoAvailable = true;
 }
 
 /**
  * Restore canvas from undo buffer
  */
 void restoreUndo() {
-  if (!undoAvailable) {
+  if (!editorState.undoAvailable) {
     setStatusMessage(StatusMsg::NO_UNDO);
     return;
   }
 
   // If we have saved grid size info (from sketch deletion), restore it
-  if (undoGridSize > 0) {
-    currentGridSize = undoGridSize;
-    currentCellSize = (currentGridSize == 8) ? 16 : 8;
+  if (editorState.undoGridSize > 0) {
+    editorState.gridSize = editorState.undoGridSize;
+    editorState.cellSize = (editorState.gridSize == 8) ? 16 : 8;
 
     // Keep cursor in bounds
-    if (cursorX >= currentGridSize) cursorX = currentGridSize - 1;
-    if (cursorY >= currentGridSize) cursorY = currentGridSize - 1;
+    if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
+    if (editorState.cursorY >= editorState.gridSize) editorState.cursorY = editorState.gridSize - 1;
   }
 
   // Restore all pixels (always restore full 16x16 to handle grid size changes)
   for (int y = 0; y < 16; y++) {
     for (int x = 0; x < 16; x++) {
-      canvas[y][x] = undoCanvas[y][x];
+      editorState.canvas[y][x] = editorState.undoCanvas[y][x];
     }
   }
 
   // If we have palette info saved (from sketch deletion), restore it to the active sketch
-  if (undoPaletteSize > 0) {
-    activeSketch.paletteSize = undoPaletteSize;
-    activeSketch.gridSize = undoGridSize;
+  if (editorState.undoPaletteSize > 0) {
+    documentState.sketch.paletteSize = editorState.undoPaletteSize;
+    documentState.sketch.gridSize = editorState.undoGridSize;
     for (int i = 0; i < 16; i++) {
-      activeSketch.paletteColors[i] = undoPaletteColors[i];
+      documentState.sketch.paletteColors[i] = editorState.undoPaletteColors[i];
     }
   }
 
-  undoAvailable = false;
+  editorState.undoAvailable = false;
 
   // Update LED matrix with restored canvas
   LED_CANVAS_UPDATED();
@@ -1691,9 +1479,9 @@ void restoreUndo() {
 void clearCanvas() {
   saveUndo();
 
-  for (int y = 0; y < currentGridSize; y++) {
-    for (int x = 0; x < currentGridSize; x++) {
-      canvas[y][x] = 0;
+  for (int y = 0; y < editorState.gridSize; y++) {
+    for (int x = 0; x < editorState.gridSize; x++) {
+      editorState.canvas[y][x] = 0;
     }
   }
 
@@ -1703,17 +1491,17 @@ void clearCanvas() {
 // Shift the entire canvas by (dx, dy) with wrapping
 void shiftCanvas(int dx, int dy) {
   uint8_t temp[16][16];
-  int size = currentGridSize;
+  int size = editorState.gridSize;
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
       int srcX = (x - dx + size) % size;
       int srcY = (y - dy + size) % size;
-      temp[y][x] = canvas[srcY][srcX];
+      temp[y][x] = editorState.canvas[srcY][srcX];
     }
   }
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
-      canvas[y][x] = temp[y][x];
+      editorState.canvas[y][x] = temp[y][x];
     }
   }
 }
@@ -1733,7 +1521,7 @@ void shiftCanvas(int dx, int dy) {
  */
 void floodFill(int startX, int startY, uint8_t fillColor) {
   // Get the original color at the starting position
-  uint8_t originalColor = canvas[startY][startX];
+  uint8_t originalColor = editorState.canvas[startY][startX];
 
   // If the original color is the same as fill color, nothing to do
   if (originalColor == fillColor) {
@@ -1763,17 +1551,17 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
     Point p = stack[--stackSize];
 
     // Skip if out of bounds (shouldn't happen, but safety check)
-    if (p.x < 0 || p.x >= currentGridSize || p.y < 0 || p.y >= currentGridSize) {
+    if (p.x < 0 || p.x >= editorState.gridSize || p.y < 0 || p.y >= editorState.gridSize) {
       continue;
     }
 
     // Skip if this pixel isn't the original color
-    if (canvas[p.y][p.x] != originalColor) {
+    if (editorState.canvas[p.y][p.x] != originalColor) {
       continue;
     }
 
     // Fill this pixel
-    canvas[p.y][p.x] = fillColor;
+    editorState.canvas[p.y][p.x] = fillColor;
 
     // Add adjacent pixels to stack (4-way connectivity: up, down, left, right)
     // Only add if not visited and within bounds
@@ -1783,7 +1571,7 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
       visited[p.y - 1][p.x] = true;
     }
     // Down
-    if (p.y < currentGridSize - 1 && !visited[p.y + 1][p.x]) {
+    if (p.y < editorState.gridSize - 1 && !visited[p.y + 1][p.x]) {
       stack[stackSize++] = {p.x, p.y + 1};
       visited[p.y + 1][p.x] = true;
     }
@@ -1793,7 +1581,7 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
       visited[p.y][p.x - 1] = true;
     }
     // Right
-    if (p.x < currentGridSize - 1 && !visited[p.y][p.x + 1]) {
+    if (p.x < editorState.gridSize - 1 && !visited[p.y][p.x + 1]) {
       stack[stackSize++] = {p.x + 1, p.y};
       visited[p.y][p.x + 1] = true;
     }
@@ -1808,19 +1596,19 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
  */
 void toggleGridSize() {
   // Toggle between 8 and 16
-  if (currentGridSize == 8) {
-    currentGridSize = 16;
-    currentCellSize = 8;  // Smaller cells for more pixels
+  if (editorState.gridSize == 8) {
+    editorState.gridSize = 16;
+    editorState.cellSize = 8;  // Smaller cells for more pixels
     setStatusMessage(StatusMsg::GRID_16X16);
   } else {
-    currentGridSize = 8;
-    currentCellSize = 16;  // Larger cells for fewer pixels
+    editorState.gridSize = 8;
+    editorState.cellSize = 16;  // Larger cells for fewer pixels
     setStatusMessage(StatusMsg::GRID_8X8);
   }
 
   // Keep cursor in bounds
-  if (cursorX >= currentGridSize) cursorX = currentGridSize - 1;
-  if (cursorY >= currentGridSize) cursorY = currentGridSize - 1;
+  if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
+  if (editorState.cursorY >= editorState.gridSize) editorState.cursorY = editorState.gridSize - 1;
 
   // Update LED matrix (turn off in 16×16 mode, turn on in 8×8 mode)
   LED_CANVAS_UPDATED();
@@ -1836,24 +1624,24 @@ void openSketch(String filename) {
   }
 
   // Validate palette
-  if (activeSketch.paletteSize == 0 || activeSketch.paletteSize > 16) {
-    activeSketch.paletteSize = 16;
+  if (documentState.sketch.paletteSize == 0 || documentState.sketch.paletteSize > 16) {
+    documentState.sketch.paletteSize = 16;
   }
 
   // Copy to canvas
-  currentGridSize = activeSketch.gridSize;
-  currentCellSize = (currentGridSize == 8) ? 16 : 8;
+  editorState.gridSize = documentState.sketch.gridSize;
+  editorState.cellSize = (editorState.gridSize == 8) ? 16 : 8;
 
   for (int y = 0; y < 16; y++) {
     for (int x = 0; x < 16; x++) {
-      canvas[y][x] = activeSketch.pixels[y][x];
+      editorState.canvas[y][x] = documentState.sketch.pixels[y][x];
     }
   }
 
-  if (cursorX >= currentGridSize) cursorX = currentGridSize - 1;
-  if (cursorY >= currentGridSize) cursorY = currentGridSize - 1;
+  if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
+  if (editorState.cursorY >= editorState.gridSize) editorState.cursorY = editorState.gridSize - 1;
 
-  selectedColor = 1;
+  editorState.selectedColor = 1;
 
   // Update LED matrix with newly loaded canvas
   LED_CANVAS_UPDATED();
@@ -1869,17 +1657,17 @@ void createNewSketch() {
 
   for (int y = 0; y < 16; y++) {
     for (int x = 0; x < 16; x++) {
-      canvas[y][x] = 0;
+      editorState.canvas[y][x] = 0;
     }
   }
 
   // Use default grid size from settings instead of hardcoded 16
-  currentGridSize = defaultGridSize;
-  currentCellSize = (currentGridSize == 16) ? 8 : 16;
-  activeSketch.gridSize = currentGridSize;
-  cursorX = 0;
-  cursorY = 0;
-  selectedColor = 1;
+  editorState.gridSize = defaultGridSize;
+  editorState.cellSize = (editorState.gridSize == 16) ? 8 : 16;
+  documentState.sketch.gridSize = editorState.gridSize;
+  editorState.cursorX = 0;
+  editorState.cursorY = 0;
+  editorState.selectedColor = 1;
 
   // setStatusMessage("New sketch");  // Removed - no message on boot
 }
@@ -1887,24 +1675,38 @@ void createNewSketch() {
 /**
  * Enter Memory View mode
  */
+bitmap16::MemoryView::Catalog currentMemoryCatalog() {
+  static std::vector<bitmap16::MemoryView::Entry> entries;
+  entries.resize(sketchList.size());
+  for (int index = 0; index < sketchList.size(); ++index) {
+    SketchInfo& info = sketchList[index];
+    if (!info.dataLoaded) {
+      const String path = "/bitmap16dx/sketches/" + info.filename;
+      info.dataLoaded = readSketchFile(path.c_str(), info.sketchData);
+    }
+    entries[index] = {
+        info.dataLoaded ? info.sketchData.pixels : nullptr,
+        info.dataLoaded ? info.sketchData.gridSize : static_cast<uint8_t>(8),
+        info.dataLoaded ? info.sketchData.paletteColors : nullptr,
+        info.dataLoaded ? info.sketchData.paletteSize : static_cast<uint8_t>(16),
+        info.filename == documentState.filename && !documentState.isNew,
+    };
+  }
+  return {
+      entries.empty() ? nullptr : entries.data(),
+      static_cast<int>(entries.size()),
+  };
+}
+
 void enterMemoryView() {
   loadSketchListFromSD();  // Load sketch list (sketch data will be cached on first draw)
   app.setView(bitmap16::ViewId::Memory);
-
-  // Keep cursor and scroll position persistent between sessions
-  // This remembers where you were browsing in the list
-  // Just clamp cursor to valid range in case list changed (e.g., deleted items)
-  int totalItems = 1 + sketchList.size();
-  if (memoryViewCursor >= totalItems) {
-    memoryViewCursor = max(0, totalItems - 1);
-  }
-  if (memoryViewCursor < 0) {
-    memoryViewCursor = 0;
-  }
-
-  lastMemoryAnimTime = millis();
-  memoryCursorAnimPhase = 0.0f;
-  M5Cardputer.Display.fillScreen(currentTheme->background);
+  bitmap16::MemoryView::clamp(
+      viewState.memory.navigation, sketchList.size());
+  viewState.memory.lastAnimationTime = millis();
+  viewState.memory.navigation.cursorAnimationPhase = 0.0f;
+  viewState.memory.ownsCanvas = !Display::isReady();
+  viewState.memory.canvasAvailable = Display::init();
   drawMemoryView(true);
 }
 
@@ -1913,25 +1715,15 @@ void enterMemoryView() {
  */
 void exitMemoryView() {
   app.setView(bitmap16::ViewId::Canvas);
+  if (viewState.memory.ownsCanvas) {
+    Display::shutdown();
+  }
+  viewState.memory.canvasAvailable = false;
+  viewState.memory.ownsCanvas = false;
   sketchList.clear();
   sketchList.shrink_to_fit();
 
-  // Redraw the canvas view
-  M5Cardputer.Display.fillScreen(currentTheme->background);
-  drawGrid();
-  drawPalette();
-  drawCursor();
-
-  // Redraw icons in upper left corner
-  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-  // drawIcon(3, 84, ICON_INFO, ICON_INFO_WIDTH, ICON_INFO_HEIGHT, ICON_INFO_IS_INDEXED);
-
-  // Redraw battery indicator
-  lastBatteryPercent = -1;  // Force redraw
-  batteryFirstCheck = true;  // Force immediate check
-  drawBatteryIndicator();
+  drawSharedCanvasView();
 
 #if ENABLE_LED_MATRIX
   // Restore active canvas on LED matrix
@@ -1943,44 +1735,55 @@ void exitMemoryView() {
 /**
  * Enter Charging Mode - DVD-style bouncing battery screensaver
  */
-void enterChargingMode() {
-  app.setView(bitmap16::ViewId::Charging);
-  lastChargeFrameTime = millis();
-  chargeBatteryPercent = Power::getBatteryPercent();
-  lastChargeBatteryCheck = millis();
+const uint8_t* chargingBatteryIcon(int batteryPercent) {
+  if (batteryPercent < 10) return ICON_BATTERY_0;
+  if (batteryPercent < 50) return ICON_BATTERY_10;
+  if (batteryPercent < 90) return ICON_BATTERY_50;
+  return ICON_BATTERY_90;
+}
 
-  // Select battery icon
-  const unsigned char* batIcon;
-  if (chargeBatteryPercent < 10) batIcon = ICON_BATTERY_0;
-  else if (chargeBatteryPercent < 50) batIcon = ICON_BATTERY_10;
-  else if (chargeBatteryPercent < 90) batIcon = ICON_BATTERY_50;
-  else batIcon = ICON_BATTERY_90;
-
-  // Initialize icons with random positions and velocities (no overlap)
-  randomSeed(millis());
-  const unsigned char* icons[] = {ICON_DRAW, ICON_ERASE, ICON_FILL, batIcon, nullptr};
-  for (int i = 0; i < CHARGE_ICON_COUNT; i++) {
-    float x, y;
-    bool tooClose;
-    int attempts = 0;
-    do {
-      x = random(10, 190);
-      y = random(10, 90);
-      tooClose = false;
-      for (int j = 0; j < i; j++) {
-        if (abs(x - chargeIcons[j].x) < 48 && abs(y - chargeIcons[j].y) < 48) {
-          tooClose = true;
-          break;
-        }
-      }
-    } while (tooClose && ++attempts < 50);
-    float dx = (random(70, 130) / 100.0f) * (random(2) ? 1 : -1);
-    float dy = (random(70, 130) / 100.0f) * (random(2) ? 1 : -1);
-    chargeIcons[i] = {x, y, dx, dy, icons[i]};
+void drawChargingFrame() {
+  if (!viewState.charging.canvasAvailable) {
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+    M5Cardputer.Display.setTextColor(TFT_RED);
+    M5Cardputer.Display.setCursor(10, 60);
+    M5Cardputer.Display.println("CHARGE BUFFER FAILED");
+    return;
   }
 
-  // Load a random sketch into the sprite
-  chargeSketchLoaded = false;
+  const bitmap16::ChargingView::Theme theme = {
+      TFT_BLACK,
+      THEME_DARK.iconDark,
+      THEME_DARK.iconLight,
+      THEME_DARK.text,
+  };
+  bitmap16::ChargingView::SketchImage sketch;
+  const bitmap16::ChargingView::SketchImage* sketchPointer = nullptr;
+  if (viewState.charging.sketchLoaded) {
+    sketch = {
+        viewState.charging.sketch.pixels,
+        viewState.charging.sketch.gridSize,
+        viewState.charging.sketch.paletteColors,
+        viewState.charging.sketch.paletteSize,
+    };
+    sketchPointer = &sketch;
+  }
+  bitmap16::ChargingView::render(
+      Display::canvas(),
+      viewState.charging.animation,
+      theme,
+      sketchPointer);
+  Display::endFrame();
+}
+
+void enterChargingMode() {
+  app.setView(bitmap16::ViewId::Charging);
+  viewState.charging.lastFrameTime = millis();
+  viewState.charging.batteryPercent = Power::getBatteryPercent();
+  viewState.charging.lastBatteryCheck = millis();
+
+  // Load a random sketch for the shared renderer.
+  viewState.charging.sketchLoaded = false;
   loadSketchListFromSD();
 
   if (sketchList.size() > 0) {
@@ -1988,62 +1791,33 @@ void enterChargingMode() {
     int randIndex = millis() % sketchList.size();
     SketchInfo& info = sketchList[randIndex];
 
-    // Load sketch data from SD
+    // Load sketch data from storage
     String fullPath = "/bitmap16dx/sketches/" + info.filename;
-    File file = SD.open(fullPath.c_str(), FILE_READ);
-    if (file) {
-      Sketch tempSketch;
-      size_t fileSize = file.size();
-
-      // Skip version byte if present
-      if (fileSize == SKETCH_FILE_SIZE_V2) {
-        file.read();  // version byte
-      }
-
-      tempSketch.gridSize = file.read();
-      tempSketch.paletteSize = file.read();
-
-      for (int i = 0; i < 16; i++) {
-        uint8_t high = file.read();
-        uint8_t low = file.read();
-        tempSketch.paletteColors[i] = (high << 8) | low;
-      }
-
-      for (int py = 0; py < 16; py++) {
-        for (int px = 0; px < 16; px++) {
-          tempSketch.pixels[py][px] = file.read();
-        }
-      }
-      file.close();
-
-      // Render into 48x48 sprite
-      if (chargeSketchSprite.createSprite(48, 48)) {
-        chargeSketchSprite.fillSprite(TFT_BLACK);
-        int pixelSize = (tempSketch.gridSize == 16) ? 3 : 6;
-        int gridSize = tempSketch.gridSize;
-
-        for (int py = 0; py < gridSize; py++) {
-          for (int px = 0; px < gridSize; px++) {
-            uint8_t colorIdx = tempSketch.pixels[py][px];
-            if (colorIdx > 0 && colorIdx <= tempSketch.paletteSize) {
-              uint16_t color = tempSketch.paletteColors[colorIdx - 1];
-              chargeSketchSprite.fillRect(px * pixelSize, py * pixelSize, pixelSize, pixelSize, color);
-            }
-          }
-        }
-        chargeSketchLoaded = true;
-      }
-    }
+    viewState.charging.sketchLoaded =
+        readSketchFile(fullPath.c_str(), viewState.charging.sketch);
   }
 
-  // Allocate full-screen canvas for tear-free rendering
-  chargeCanvasAvailable = chargeCanvas.createSprite(240, 135);
+  viewState.charging.ownsCanvas = !Display::isReady();
+  viewState.charging.canvasAvailable = Display::init();
+  const uint8_t* const icons[4] = {
+      ICON_DRAW,
+      ICON_ERASE,
+      ICON_FILL,
+      chargingBatteryIcon(viewState.charging.batteryPercent),
+  };
+  bitmap16::ChargingView::initialize(
+      viewState.charging.animation,
+      M5Cardputer.Display.width(),
+      M5Cardputer.Display.height(),
+      millis(),
+      icons,
+      viewState.charging.batteryPercent,
+      viewState.charging.sketchLoaded);
 
   // Dim display
-  setDisplayBrightness(50);
+  Display::setBrightness(20);
 
-  // Dark background
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
+  drawChargingFrame();
 }
 
 /**
@@ -2052,32 +1826,17 @@ void enterChargingMode() {
 void exitChargingMode() {
   app.setView(bitmap16::ViewId::Canvas);
 
-  // Free sprites
-  if (chargeSketchLoaded) {
-    chargeSketchSprite.deleteSprite();
-    chargeSketchLoaded = false;
+  if (viewState.charging.ownsCanvas) {
+    Display::shutdown();
   }
-  if (chargeCanvasAvailable) {
-    chargeCanvas.deleteSprite();
-    chargeCanvasAvailable = false;
-  }
+  viewState.charging.canvasAvailable = false;
+  viewState.charging.ownsCanvas = false;
+  viewState.charging.sketchLoaded = false;
 
   // Restore brightness
-  uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
-  setDisplayBrightness(hardwareBrightness);
+  Display::setBrightness(displayBrightness);
 
-  // Redraw canvas
-  M5Cardputer.Display.fillScreen(currentTheme->background);
-  drawGrid();
-  drawPalette();
-  drawCursor();
-
-  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-
-  lastBatteryPercent = -1;
-  batteryFirstCheck = true;
+  drawSharedCanvasView();
   drawBatteryIndicator();
 }
 
@@ -2086,12 +1845,50 @@ void exitChargingMode() {
  */
 void enterHelpView() {
   app.setView(bitmap16::ViewId::Help);
-  helpViewCursor = 0;
-  helpViewScrollOffset = 0;
-  helpCanvasAvailable = helpCanvas.createSprite(240, 135);
+  viewState.help.navigation = {};
+  viewState.help.metrics = {};
+  viewState.help.metrics.minimumFreeHeap = UINT32_MAX;
+  viewState.help.metrics.heapBeforeAllocation = ESP.getFreeHeap();
+  const uint32_t allocationStart = micros();
+  viewState.help.ownsCanvas = !Display::isReady();
+  viewState.help.softwareCanvas = Display::init();
+  viewState.help.metrics.allocationMicros = micros() - allocationStart;
+  viewState.help.metrics.heapAfterAllocation = ESP.getFreeHeap();
+  viewState.help.metrics.minimumFreeHeap =
+      viewState.help.metrics.heapAfterAllocation;
+
+  viewState.help.canvasAvailable = viewState.help.softwareCanvas;
+
+#if ENABLE_CANVAS_PROOF_TELEMETRY
+  Serial.printf(
+      "[canvas-proof] allocation=%luus heap_before=%lu heap_after=%lu "
+      "heap_delta=%ld backend=%s success=%d\n",
+      static_cast<unsigned long>(viewState.help.metrics.allocationMicros),
+      static_cast<unsigned long>(
+          viewState.help.metrics.heapBeforeAllocation),
+      static_cast<unsigned long>(
+          viewState.help.metrics.heapAfterAllocation),
+      static_cast<long>(viewState.help.metrics.heapAfterAllocation) -
+          static_cast<long>(viewState.help.metrics.heapBeforeAllocation),
+      viewState.help.softwareCanvas ? "software" : "unavailable",
+      viewState.help.canvasAvailable);
+#endif
+
+  if (!viewState.help.canvasAvailable) {
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+    M5Cardputer.Display.setTextColor(TFT_RED);
+    M5Cardputer.Display.setCursor(8, 58);
+    M5Cardputer.Display.print("HELP BUFFER FAILED");
+    return;
+  }
 
   // Draw help screen
   drawHelpView();
+  if (viewState.help.softwareCanvas) {
+    // A second initial presentation prevents a partial first LCD transfer from
+    // leaving pixels from the previous static view until the first input.
+    drawHelpView();
+  }
 }
 
 /**
@@ -2104,39 +1901,82 @@ void exitHelpView() {
           : bitmap16::ViewId::Canvas;
   app.setView(returnView);
 
-  if (helpCanvasAvailable) {
-    helpCanvas.deleteSprite();
-    helpCanvasAvailable = false;
+#if ENABLE_CANVAS_PROOF_TELEMETRY
+  Serial.printf(
+      "[canvas-proof] summary frames=%lu max_render=%luus "
+      "max_blit=%luus min_heap=%lu\n",
+      static_cast<unsigned long>(viewState.help.metrics.frameCount),
+      static_cast<unsigned long>(viewState.help.metrics.maxRenderMicros),
+      static_cast<unsigned long>(viewState.help.metrics.maxBlitMicros),
+      static_cast<unsigned long>(viewState.help.metrics.minimumFreeHeap));
+#endif
+
+  if (viewState.help.softwareCanvas && viewState.help.ownsCanvas) {
+    Display::shutdown();
   }
+  viewState.help.canvasAvailable = false;
+  viewState.help.softwareCanvas = false;
+  viewState.help.ownsCanvas = false;
 
   // Return to the view we came from
   if (returnView == bitmap16::ViewId::Memory) {
     // Return to memory view
     drawMemoryView(true);
   } else {
-    // Return to canvas/drawing view
-    M5Cardputer.Display.fillScreen(currentTheme->background);
-    drawGrid();
-    drawPalette();
-    drawCursor();
-
-    // Redraw icons in upper left corner
-    drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-    drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-    drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-    // drawIcon(3, 84, ICON_INFO, ICON_INFO_WIDTH, ICON_INFO_HEIGHT, ICON_INFO_IS_INDEXED);
-
-    // Redraw battery indicator
-    lastBatteryPercent = -1;  // Force redraw
-    batteryFirstCheck = true;  // Force immediate check
-    drawBatteryIndicator();
+    drawSharedCanvasView();
   }
 }
 
 /**
  * Load and display a sketch from the gallery in fullscreen preview
- * Uses lazy loading pattern from drawSketchThumbnail
+ * Uses the cached sketch list populated by the Memory view
  */
+bitmap16::PreviewView::Theme previewTheme() {
+  return {
+      VIEW_BG_BLACK,
+      VIEW_BG_WHITE,
+      VIEW_BG_GRAY,
+      VIEW_BG_DARK,
+  };
+}
+
+void drawPreviewImage(
+    const uint8_t pixels[][16],
+    uint8_t gridSize,
+    const uint16_t* paletteColors,
+    uint8_t paletteSize) {
+  if (!viewState.preview.canvasAvailable) {
+    M5Cardputer.Display.fillScreen(TFT_BLACK);
+    M5Cardputer.Display.setTextColor(TFT_RED);
+    M5Cardputer.Display.setCursor(10, 50);
+    M5Cardputer.Display.println("WARNING: Low memory!");
+    M5Cardputer.Display.setCursor(10, 65);
+    M5Cardputer.Display.println("Cannot show preview.");
+    return;
+  }
+
+  const bitmap16::PreviewView::Image image = {
+      pixels,
+      gridSize,
+      paletteColors,
+      paletteSize,
+  };
+  bitmap16::PreviewView::render(
+      Display::canvas(),
+      viewState.preview.display,
+      image,
+      previewTheme());
+  Display::endFrame();
+}
+
+void drawCanvasPreview() {
+  drawPreviewImage(
+      editorState.canvas,
+      editorState.gridSize,
+      documentState.sketch.paletteColors,
+      documentState.sketch.paletteSize);
+}
+
 void loadGallerySketch(int index) {
   if (index < 0 || index >= sketchList.size()) {
     return;
@@ -2147,88 +1987,20 @@ void loadGallerySketch(int index) {
   // Load data from SD if not already cached
   if (!info.dataLoaded) {
     String fullPath = "/bitmap16dx/sketches/" + info.filename;
-    File file = SD.open(fullPath.c_str(), FILE_READ);
-    if (!file) {
+    if (!readSketchFile(fullPath.c_str(), info.sketchData)) {
       setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
       return;
     }
-
-    // Verify file size and detect format version
-    size_t fileSize = file.size();
-    uint8_t formatVersion = 1;
-
-    if (fileSize == SKETCH_FILE_SIZE_V2) {
-      // New format with version byte
-      formatVersion = file.read();
-      if (formatVersion != SKETCH_FORMAT_VERSION) {
-        file.close();
-        return;
-      }
-    } else if (fileSize == SKETCH_FILE_SIZE_V1) {
-      // Legacy format without version byte
-      formatVersion = 1;
-    } else {
-      // Invalid file size
-      file.close();
-      return;
-    }
-
-    // Read sketch data into cache
-    info.sketchData.gridSize = file.read();
-    info.sketchData.paletteSize = file.read();
-
-    for (int i = 0; i < 16; i++) {
-      uint8_t high = file.read();
-      uint8_t low = file.read();
-      info.sketchData.paletteColors[i] = (high << 8) | low;
-    }
-
-    for (int py = 0; py < 16; py++) {
-      for (int px = 0; px < 16; px++) {
-        info.sketchData.pixels[py][px] = file.read();
-      }
-    }
-
-    file.close();
     info.dataLoaded = true;  // Mark as cached
   }
 
-  // Now render the sketch fullscreen using preview rendering pattern
+  // Render cached sketch through the shared preview view.
   Sketch& sketch = info.sketchData;
-
-  // Get the background color
-  uint16_t bgColor;
-  switch (previewViewBackground) {
-    case 0: bgColor = VIEW_BG_BLACK; break;
-    case 1: bgColor = VIEW_BG_WHITE; break;
-    case 2: bgColor = VIEW_BG_GRAY; break;
-    case 3: bgColor = VIEW_BG_DARK; break;
-    default: bgColor = VIEW_BG_BLACK; break;
-  }
-
-  // Fill screen with background color
-  M5Cardputer.Display.fillScreen(bgColor);
-
-  // Calculate position to center 128×128 canvas on 240×135 screen
-  const int viewX = 56;
-  const int viewY = 4;
-  const int viewSize = 128;
-  const int viewCellSize = 128 / sketch.gridSize;  // 16px for 8×8, 8px for 16×16
-
-  // Draw each cell
-  for (int y = 0; y < sketch.gridSize; y++) {
-    for (int x = 0; x < sketch.gridSize; x++) {
-      int screenX = viewX + (x * viewCellSize);
-      int screenY = viewY + (y * viewCellSize);
-
-      // Get color for this cell
-      if (sketch.pixels[y][x] != 0) {
-        uint16_t cellColor = sketch.paletteColors[sketch.pixels[y][x] - 1];
-        M5Cardputer.Display.fillRect(screenX, screenY, viewCellSize, viewCellSize, cellColor);
-      }
-      // If empty (pixels[y][x] == 0), it stays the background color
-    }
-  }
+  drawPreviewImage(
+      sketch.pixels,
+      sketch.gridSize,
+      sketch.paletteColors,
+      sketch.paletteSize);
 
 #if ENABLE_LED_MATRIX
   // Update LED matrix to mirror the sketch (8×8 only)
@@ -2244,65 +2016,33 @@ void enterPreviewView() {
   const bool fromMemoryView =
       app.currentView() == bitmap16::ViewId::Memory;
   app.setView(bitmap16::ViewId::Preview);
+  viewState.preview.ownsCanvas = !Display::isReady();
+  viewState.preview.canvasAvailable = Display::init();
 
   // Check if we're coming from Memory View (gallery mode)
   if (fromMemoryView) {
-    galleryMode = true;
-    galleryAutoAdvance = false;  // Start paused
+    viewState.preview.galleryMode = true;
+    viewState.preview.autoAdvance = false;  // Start paused
 
-    // Start at selected sketch (memoryViewCursor - 1 because cursor 0 is "+")
-    if (memoryViewCursor > 0 && memoryViewCursor - 1 < sketchList.size()) {
-      galleryCurrentIndex = memoryViewCursor - 1;
+    // Start at selected sketch (viewState.memory.cursor - 1 because cursor 0 is "+")
+    if (viewState.memory.navigation.cursor > 0 &&
+        viewState.memory.navigation.cursor - 1 < sketchList.size()) {
+      viewState.preview.galleryIndex =
+          viewState.memory.navigation.cursor - 1;
     } else {
-      galleryCurrentIndex = 0;  // Fallback to first sketch
+      viewState.preview.galleryIndex = 0;  // Fallback to first sketch
     }
 
-    galleryLastAdvanceTime = millis();
+    viewState.preview.lastAdvanceTime = millis();
 
     // Load and display sketch from gallery
-    loadGallerySketch(galleryCurrentIndex);
+    loadGallerySketch(viewState.preview.galleryIndex);
     return;  // Exit early - loadGallerySketch handles rendering
   }
 
   // Canvas preview mode (not from Memory View)
-  galleryMode = false;
-
-  // Get the background color based on current selection
-  uint16_t bgColor;
-  switch (previewViewBackground) {
-    case 0: bgColor = VIEW_BG_BLACK; break;
-    case 1: bgColor = VIEW_BG_WHITE; break;
-    case 2: bgColor = VIEW_BG_GRAY; break;
-    case 3: bgColor = VIEW_BG_DARK; break;
-    default: bgColor = VIEW_BG_BLACK; break;
-  }
-
-  // Fill screen with selected background color
-  M5Cardputer.Display.fillScreen(bgColor);
-
-  // Calculate position to center 128×128 canvas on 240×135 screen
-  // X: (240 - 128) / 2 = 56
-  // Y: (135 - 128) / 2 = 3.5, use 4 for integer alignment
-  const int viewX = 56;
-  const int viewY = 4;
-  const int viewSize = 128;
-  const int viewCellSize = 128 / currentGridSize;  // 16px for 8×8, 8px for 16×16
-
-  // Draw each cell of the canvas
-  for (int y = 0; y < currentGridSize; y++) {
-    for (int x = 0; x < currentGridSize; x++) {
-      int screenX = viewX + (x * viewCellSize);
-      int screenY = viewY + (y * viewCellSize);
-
-      // Get color for this cell
-      if (canvas[y][x] != 0) {
-        // There's a pixel here - use its color from the active sketch's palette
-        uint16_t cellColor = activeSketch.paletteColors[canvas[y][x] - 1];
-        M5Cardputer.Display.fillRect(screenX, screenY, viewCellSize, viewCellSize, cellColor);
-      }
-      // If empty (canvas[y][x] == 0), it stays the background color
-    }
-  }
+  viewState.preview.galleryMode = false;
+  drawCanvasPreview();
 
 #if ENABLE_LED_MATRIX
   // Update LED matrix to mirror the live canvas (8×8 only, no cursor)
@@ -2315,11 +2055,18 @@ void enterPreviewView() {
  * Context-aware: returns to Memory View if in gallery mode
  */
 void exitPreviewView() {
-  if (galleryMode) {
+  if (viewState.preview.ownsCanvas) {
+    Display::shutdown();
+  }
+  viewState.preview.canvasAvailable = false;
+  viewState.preview.ownsCanvas = false;
+
+  if (viewState.preview.galleryMode) {
     // Return to Memory View at current gallery position
-    memoryViewCursor = galleryCurrentIndex + 1;  // +1 for "+" button offset
-    galleryMode = false;
-    galleryAutoAdvance = false;
+    viewState.memory.navigation.cursor =
+        viewState.preview.galleryIndex + 1;  // +1 for "+" button offset
+    viewState.preview.galleryMode = false;
+    viewState.preview.autoAdvance = false;
     app.setView(bitmap16::ViewId::Memory);
 
     // Redraw Memory View
@@ -2328,19 +2075,19 @@ void exitPreviewView() {
 
 #if ENABLE_LED_MATRIX
     // Keep displaying the currently viewed sketch on LED matrix
-    if (galleryCurrentIndex >= 0 && galleryCurrentIndex < sketchList.size()) {
-      SketchInfo& info = sketchList[galleryCurrentIndex];
+    if (viewState.preview.galleryIndex >= 0 && viewState.preview.galleryIndex < sketchList.size()) {
+      SketchInfo& info = sketchList[viewState.preview.galleryIndex];
       if (info.dataLoaded) {
         updateLEDMatrixFromSketch(info.sketchData);
       } else {
         // If data not loaded, clear LED matrix
-        FastLED.clear();
-        FastLED.show();
+        LEDMatrix::clear();
+        LEDMatrix::show();
       }
     } else {
       // Invalid index, clear LED matrix
-      FastLED.clear();
-      FastLED.show();
+      LEDMatrix::clear();
+      LEDMatrix::show();
     }
 #endif
 
@@ -2349,21 +2096,7 @@ void exitPreviewView() {
 
   // Return to canvas view (existing behavior)
   app.setView(bitmap16::ViewId::Canvas);
-  M5Cardputer.Display.fillScreen(currentTheme->background);
-  drawGrid();
-  drawPalette();
-  drawCursor();
-
-  // Redraw icons in upper left corner
-  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-  // drawIcon(3, 84, ICON_INFO, ICON_INFO_WIDTH, ICON_INFO_HEIGHT, ICON_INFO_IS_INDEXED);
-
-  // Redraw battery indicator
-  lastBatteryPercent = -1;  // Force redraw
-  batteryFirstCheck = true;  // Force immediate check
-  drawBatteryIndicator();
+  drawSharedCanvasView();
 
 #if ENABLE_LED_MATRIX
   // Restore canvas display on LED matrix
@@ -2374,49 +2107,45 @@ void exitPreviewView() {
 /**
  * Enter Palette Menu - horizontally scrolling palette selector
  */
-void enterPaletteView() {
-  app.setView(bitmap16::ViewId::Palette);
-
-  // Create canvas sprite on-demand (64KB)
-  if (!paletteCanvas.createSprite(240, 135)) {
-    paletteCanvasAvailable = false;
-  } else {
-    paletteCanvasAvailable = true;
+bitmap16::PaletteView::Catalog currentPaletteCatalog() {
+  static bitmap16::PaletteView::Entry entries[32];
+  const int count = min(32, static_cast<int>(totalPaletteCount));
+  for (int index = 0; index < count; ++index) {
+    entries[index] = {
+        allPalettes[index],
+        allPaletteNames[index],
+        allPaletteSizes[index],
+        paletteIsUserLoaded[index],
+    };
   }
+  return {entries, count};
+}
 
-  // Reset filters to "all" when entering palette menu
-  paletteFilterSize = 0;
-  paletteFilterUser = false;
-  updatePaletteFilter();
-
-  // Set cursor to currently active palette (if we can identify it)
-  paletteViewCursor = 0;  // Default to first palette
-  // Compare active sketch's palette with each catalog palette to find active one
-  for (int p = 0; p < totalPaletteCount; p++) {
+int activePaletteCatalogIndex() {
+  for (int palette = 0; palette < totalPaletteCount; ++palette) {
     bool matches = true;
-    for (int c = 0; c < 16; c++) {
-      if (activeSketch.paletteColors[c] != pgm_read_word(&allPalettes[p][c])) {
+    for (int color = 0; color < 16; ++color) {
+      if (documentState.sketch.paletteColors[color] !=
+          pgm_read_word(&allPalettes[palette][color])) {
         matches = false;
         break;
       }
     }
     if (matches) {
-      // Find this palette in the filtered list
-      for (int f = 0; f < filteredPaletteCount; f++) {
-        if (filteredPaletteIndices[f] == p) {
-          paletteViewCursor = f;
-          break;
-        }
-      }
-      break;
+      return palette;
     }
   }
+  return -1;
+}
 
-  // Initialize scroll position to cursor (no animation on first show)
-  paletteViewScrollPos = (float)paletteViewCursor;
-
-  // Clear screen and draw palette menu
-  M5Cardputer.Display.fillScreen(currentTheme->background);
+void enterPaletteView() {
+  app.setView(bitmap16::ViewId::Palette);
+  viewState.palette.ownsCanvas = !Display::isReady();
+  viewState.palette.canvasAvailable = Display::init();
+  const bitmap16::PaletteView::Catalog catalog = currentPaletteCatalog();
+  bitmap16::PaletteView::reset(viewState.palette.navigation, catalog);
+  bitmap16::PaletteView::selectCatalogIndex(
+      viewState.palette.navigation, activePaletteCatalogIndex());
 }
 
 /**
@@ -2425,48 +2154,60 @@ void enterPaletteView() {
 void exitPaletteView() {
   app.setView(bitmap16::ViewId::Canvas);
 
-  // Free canvas sprite memory (64KB)
-  paletteCanvas.deleteSprite();
-  paletteCanvasAvailable = false;
+  if (viewState.palette.ownsCanvas) {
+    Display::shutdown();
+  }
+  viewState.palette.canvasAvailable = false;
+  viewState.palette.ownsCanvas = false;
 
-  // Redraw the canvas view
-  M5Cardputer.Display.fillScreen(currentTheme->background);
-  drawGrid();
-  drawPalette();
-  drawCursor();
-
-  // Redraw icons in upper left corner
-  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-  // drawIcon(3, 84, ICON_INFO, ICON_INFO_WIDTH, ICON_INFO_HEIGHT, ICON_INFO_IS_INDEXED);
-
-  // Redraw battery indicator
-  lastBatteryPercent = -1;  // Force redraw
-  batteryFirstCheck = true;  // Force immediate check
-  drawBatteryIndicator();
+  drawSharedCanvasView();
 }
 
 // ============================================================================
 // SETTINGS VIEW
 // ============================================================================
 
+bitmap16::Settings currentSettingsValues() {
+  bitmap16::Settings settings;
+  settings.theme = currentTheme == &THEME_DARK
+      ? bitmap16::ThemeId::Dark
+      : bitmap16::ThemeId::Light;
+  settings.defaultGridSize = defaultGridSize;
+  settings.matrixUnits = rgbMatrixUnits;
+  settings.matrixRotation = matrixRotation;
+  settings.exportFormat = exportRGB565
+      ? bitmap16::ExportFormat::Rgb565
+      : bitmap16::ExportFormat::Rgb888;
+  settings.shakeUndoEnabled = shakeUndoEnabled;
+  settings.displayBrightness = displayBrightness;
+#if ENABLE_LED_MATRIX
+  settings.matrixBrightness = ledBrightness;
+#endif
+  return settings;
+}
+
+#if ENABLE_BLUETOOTH
+const char* bluetoothSettingsValue() {
+  static char value[16];
+  if (btConnected) return "Paired";
+  if (btScanning) {
+    snprintf(value, sizeof(value), "Scan %d", btScanCountdown);
+    return value;
+  }
+  if (btEnabled && btHasBondedDevice) return "Reconnect";
+  if (btEnabled) return "Scan";
+  return "OFF";
+}
+#endif
+
 /**
  * Enter Settings Menu - vertical list of persistent preferences
  */
 void enterSettingsView() {
   app.setView(bitmap16::ViewId::Settings);
-  settingsViewCursor = 0;  // Start at top
-
-  // Create canvas sprite on-demand (64KB)
-  if (!settingsCanvas.createSprite(240, 135)) {
-    settingsCanvasAvailable = false;
-  } else {
-    settingsCanvasAvailable = true;
-  }
-
-  // Clear screen
-  M5Cardputer.Display.fillScreen(currentTheme->background);
+  viewState.settings.navigation = {};
+  viewState.settings.ownsCanvas = !Display::isReady();
+  viewState.settings.canvasAvailable = Display::init();
 }
 
 /**
@@ -2475,24 +2216,13 @@ void enterSettingsView() {
 void exitSettingsView() {
   app.setView(bitmap16::ViewId::Canvas);
 
-  // Free canvas sprite memory (64KB)
-  settingsCanvas.deleteSprite();
-  settingsCanvasAvailable = false;
+  if (viewState.settings.ownsCanvas) {
+    Display::shutdown();
+  }
+  viewState.settings.canvasAvailable = false;
+  viewState.settings.ownsCanvas = false;
 
-  // Redraw the canvas view (same pattern as exitPaletteView)
-  M5Cardputer.Display.fillScreen(currentTheme->background);
-  drawGrid();
-  drawPalette();
-  drawCursor();
-
-  // Redraw icons
-  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-
-  // Redraw battery indicator
-  lastBatteryPercent = -1;
-  batteryFirstCheck = true;
+  drawSharedCanvasView();
   drawBatteryIndicator();
 }
 
@@ -2501,8 +2231,7 @@ void exitSettingsView() {
  * Draw Settings Menu UI to canvas
  */
 void drawSettingsView() {
-  // Check if canvas is available
-  if (!settingsCanvasAvailable) {
+  if (!viewState.settings.canvasAvailable) {
     M5Cardputer.Display.fillScreen(currentTheme->background);
     M5Cardputer.Display.setTextColor(TFT_RED);
     M5Cardputer.Display.setCursor(10, 50);
@@ -2515,122 +2244,26 @@ void drawSettingsView() {
     return;
   }
 
-  // Clear canvas
-  settingsCanvas.fillSprite(currentTheme->background);
-
-  // Draw title
-  settingsCanvas.setTextColor(currentTheme->text);
-  settingsCanvas.setTextSize(1);
-  settingsCanvas.setCursor(4, 4);
-  settingsCanvas.print("SETTINGS");
-
-  const int startY = 18;
-  const int lineHeight = 16;
-  const int selectedLineHeight = 28;
-  const int labelX = 12;
-
-  const char* menuLabels[SETTINGS_ITEM_COUNT] = {
-    "UI theme",
-    "Grid default",
-    "RGB matrix",
-    "Rotate matrix",
-    "Export",
-    "Shake undo",
+  bitmap16::SettingsView::Theme theme;
+  theme.background = currentTheme->background;
+  theme.text = currentTheme->text;
+  theme.textSecondary = currentTheme->textSecondary;
+  const bool showStatus =
+      statusMessage[0] != '\0' &&
+      millis() - statusMessageTime < STATUS_DISPLAY_DURATION;
+  bitmap16::SettingsView::render(
+      Display::canvas(),
+      viewState.settings.navigation,
+      currentSettingsValues(),
+      theme,
+      ENABLE_BLUETOOTH != 0,
 #if ENABLE_BLUETOOTH
-    "Bluetooth"
+      bluetoothSettingsValue(),
+#else
+      nullptr,
 #endif
-  };
-
-  int y = startY;
-  for (int i = 0; i < SETTINGS_ITEM_COUNT; i++) {
-    bool isSelected = (i == settingsViewCursor);
-    int rowH = isSelected ? selectedLineHeight : lineHeight;
-    int textY = isSelected ? y + 4 : y;
-    uint16_t color = isSelected ? currentTheme->text : currentTheme->textSecondary;
-
-    // Draw label
-    settingsCanvas.setTextSize(isSelected ? 2 : 1);
-    settingsCanvas.setTextColor(color);
-    settingsCanvas.setCursor(labelX, textY);
-    settingsCanvas.print(menuLabels[i]);
-
-    // Determine current value string
-    const char* valueText;
-    static char btBuf[16];
-
-    static char rotBuf[8];
-    switch(i) {
-      case 0:
-        valueText = currentTheme == &THEME_LIGHT ? "Light" : "Dark";
-        break;
-      case 1:
-        valueText = defaultGridSize == 8 ? "8" : "16";
-        break;
-      case 2:
-        valueText = rgbMatrixUnits == 1 ? "1" : "4";
-        break;
-      case 3:
-        snprintf(rotBuf, sizeof(rotBuf), "%d", matrixRotation * 90);
-        valueText = rotBuf;
-        break;
-      case 4:
-        valueText = exportRGB565 ? "RGB565" : "RGB888";
-        break;
-      case 5:
-        valueText = shakeUndoEnabled ? "ON" : "OFF";
-        break;
-#if ENABLE_BLUETOOTH
-      case 6:
-        if (btConnected) {
-          valueText = "Paired";
-        } else if (btScanning) {
-          snprintf(btBuf, sizeof(btBuf), "Scan %d", btScanCountdown);
-          valueText = btBuf;
-        } else if (btEnabled && btHasBondedDevice) {
-          valueText = "Reconnect";
-        } else if (btEnabled) {
-          valueText = "Scan";
-        } else {
-          valueText = "OFF";
-        }
-        break;
-#endif
-      default:
-        valueText = "";
-        break;
-    }
-
-    // Draw value right-aligned, with < > on selected row
-    settingsCanvas.setTextSize(isSelected ? 2 : 1);
-    settingsCanvas.setTextColor(color);
-    const int valueRight = 228;
-    int charW = isSelected ? 12 : 6;
-    int valueLen;
-    if (isSelected) {
-      valueLen = strlen(valueText) + 2;  // "<" + text + ">"
-    } else {
-      valueLen = strlen(valueText);
-    }
-    settingsCanvas.setCursor(valueRight - (valueLen * charW), textY);
-    if (isSelected) {
-      settingsCanvas.printf("<%s>", valueText);
-    } else {
-      settingsCanvas.print(valueText);
-    }
-
-    y += rowH;
-  }
-
-  // Draw status message if one exists
-  if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
-    settingsCanvas.setTextColor(currentTheme->text);
-    settingsCanvas.setTextSize(1);
-    settingsCanvas.setCursor(3, 124);
-    settingsCanvas.print(statusMessage);
-  }
-
-  // Push canvas to display
-  settingsCanvas.pushSprite(0, 0);
+      showStatus ? statusMessage : nullptr);
+  Display::endFrame();
 }
 
 /**
@@ -2642,10 +2275,10 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
   static int lastSettingsViewCursor = -1;
 
   // Redraw if cursor changed or first time
-  if (settingsViewNeedsRedraw || lastSettingsViewCursor != settingsViewCursor) {
+  if (settingsViewNeedsRedraw || lastSettingsViewCursor != viewState.settings.navigation.cursor) {
     drawSettingsView();
     settingsViewNeedsRedraw = false;
-    lastSettingsViewCursor = settingsViewCursor;
+    lastSettingsViewCursor = viewState.settings.navigation.cursor;
   }
 
   // Check for BT enter (edge-triggered)
@@ -2666,7 +2299,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
 
     if (activateSelected) {
 
-      switch(settingsViewCursor) {
+      switch(viewState.settings.navigation.cursor) {
         case 0:  // Theme
           // Toggle theme
           if (currentTheme == &THEME_LIGHT) {
@@ -2678,9 +2311,9 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           }
 
           // Save preference
-          preferences.begin("bitmap16dx", false);
-          preferences.putBool("darkMode", (currentTheme == &THEME_DARK));
-          preferences.end();
+          PreferenceStore::writeBool(
+              "darkMode",
+              currentTheme == &THEME_DARK);
 
           break;
 
@@ -2689,9 +2322,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           defaultGridSize = (defaultGridSize == 8) ? 16 : 8;
 
           // Save preference
-          preferences.begin("bitmap16dx", false);
-          preferences.putUChar("defaultGrid", defaultGridSize);
-          preferences.end();
+          PreferenceStore::writeUInt8("defaultGrid", defaultGridSize);
 
           setStatusMessage(defaultGridSize == 8 ? "Default: 8x8" : "Default: 16x16");
           break;
@@ -2701,18 +2332,17 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           rgbMatrixUnits = (rgbMatrixUnits == 1) ? 4 : 1;
 
           // Save preference
-          preferences.begin("bitmap16dx", false);
-          preferences.putUChar("puzzleUnits", rgbMatrixUnits);
-          preferences.end();
+          PreferenceStore::writeUInt8("puzzleUnits", rgbMatrixUnits);
 
 #if ENABLE_LED_MATRIX
+          LEDMatrix::setConfiguration(rgbMatrixUnits, matrixRotation);
           // Clear all LEDs first (in case going from 4 to 1 unit)
-          FastLED.clear();
-          FastLED.show();
+          LEDMatrix::clear();
+          LEDMatrix::show();
 
           // Update LED matrix immediately with current canvas
-          if (ledMatrixEnabled) {
-            updateLEDMatrix(false);  // Show canvas without cursor while in settings
+          if (LEDMatrix::isEnabled()) {
+            updateLEDMatrix(false);  // Show editorState.canvas without cursor while in settings
           }
 #endif
 
@@ -2723,12 +2353,11 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           matrixRotation = (matrixRotation + 1) % 4;
 
           // Save preference
-          preferences.begin("bitmap16dx", false);
-          preferences.putUChar("matrixRot", matrixRotation);
-          preferences.end();
+          PreferenceStore::writeUInt8("matrixRot", matrixRotation);
 
 #if ENABLE_LED_MATRIX
-          if (ledMatrixEnabled) {
+          LEDMatrix::setConfiguration(rgbMatrixUnits, matrixRotation);
+          if (LEDMatrix::isEnabled()) {
             updateLEDMatrix(false);
           }
 #endif
@@ -2745,9 +2374,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           exportRGB565 = !exportRGB565;
 
           // Save preference
-          preferences.begin("bitmap16dx", false);
-          preferences.putBool("exportRGB565", exportRGB565);
-          preferences.end();
+          PreferenceStore::writeBool("exportRGB565", exportRGB565);
 
           setStatusMessage(exportRGB565 ? "Export: RGB565" : "Export: RGB888");
           break;
@@ -2757,9 +2384,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           shakeUndoEnabled = !shakeUndoEnabled;
 
           // Save preference
-          preferences.begin("bitmap16dx", false);
-          preferences.putBool("shakeUndo", shakeUndoEnabled);
-          preferences.end();
+          PreferenceStore::writeBool("shakeUndo", shakeUndoEnabled);
 
           setStatusMessage(shakeUndoEnabled ? "Shake: ON" : "Shake: OFF");
           break;
@@ -2773,9 +2398,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
             if (input.fnHeld) {
               // Fn held - forget bonded device
               btHasBondedDevice = false;
-              preferences.begin("bitmap16dx", false);
-              preferences.putBool("btHasBonded", false);
-              preferences.end();
+              PreferenceStore::writeBool("btHasBonded", false);
               setStatusMessage("BT Forgotten");
             } else {
               setStatusMessage("BT Disconnected");
@@ -2795,19 +2418,15 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
             if (input.fnHeld && btHasBondedDevice) {
               // Forget old pairing first
               btHasBondedDevice = false;
-              preferences.begin("bitmap16dx", false);
-              preferences.putBool("btHasBonded", false);
-              preferences.end();
+              PreferenceStore::writeBool("btHasBonded", false);
             }
             btStartScan();
             if (btAdvDevice) {
               btConnect();
               if (btConnected) {
                 // Save bonded device
-                preferences.begin("bitmap16dx", false);
-                preferences.putBytes("btBonded", btBondedAddr, 6);
-                preferences.putBool("btHasBonded", true);
-                preferences.end();
+                PreferenceStore::writeBytes("btBonded", btBondedAddr, 6);
+                PreferenceStore::writeBool("btHasBonded", true);
                 setStatusMessage("BT Connected!");
               } else {
                 btDeinit();  // Free BLE memory on connect failure
@@ -2822,9 +2441,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           } else {
             // Enable Bluetooth (stack will init on scan/reconnect)
             btEnabled = true;
-            preferences.begin("bitmap16dx", false);
-            preferences.putBool("btEnabled", btEnabled);
-            preferences.end();
+            PreferenceStore::writeBool("btEnabled", btEnabled);
             setStatusMessage(btHasBondedDevice ? "BT On - Reconnect" : "BT On - Scan");
           }
           break;
@@ -2843,13 +2460,16 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
       return;
     }
 
-    if (input.event == bitmap16::InputEvent::Up &&
-        settingsViewCursor > 0) {
-      --settingsViewCursor;
-      settingsViewNeedsRedraw = true;
-    } else if (input.event == bitmap16::InputEvent::Down &&
-               settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
-      ++settingsViewCursor;
+    int settingsMovement = 0;
+    if (input.event == bitmap16::InputEvent::Up) {
+      settingsMovement = -1;
+    } else if (input.event == bitmap16::InputEvent::Down) {
+      settingsMovement = 1;
+    }
+    if (bitmap16::SettingsView::moveCursor(
+            viewState.settings.navigation,
+            settingsMovement,
+            ENABLE_BLUETOOTH != 0)) {
       settingsViewNeedsRedraw = true;
     }
 
@@ -2867,12 +2487,14 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
   static bool btPrevUpSettings = false, btPrevDownSettings = false;
   static bool btPrevEscSettings = false;
 
-  if (btArrowUp && !btPrevUpSettings && settingsViewCursor > 0) {
-    settingsViewCursor--;
+  if (btArrowUp && !btPrevUpSettings &&
+      bitmap16::SettingsView::moveCursor(
+          viewState.settings.navigation, -1, true)) {
     settingsViewNeedsRedraw = true;
   }
-  if (btArrowDown && !btPrevDownSettings && settingsViewCursor < SETTINGS_ITEM_COUNT - 1) {
-    settingsViewCursor++;
+  if (btArrowDown && !btPrevDownSettings &&
+      bitmap16::SettingsView::moveCursor(
+          viewState.settings.navigation, 1, true)) {
     settingsViewNeedsRedraw = true;
   }
   if (btEscape && !btPrevEscSettings) {
@@ -2886,1266 +2508,110 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
 #endif
 }
 
-// ============================================================================
-// DRAWING HELPERS
-// ============================================================================
-
-// Corner flags for cut corner rectangles
-#define CORNER_NONE         0b0000
-#define CORNER_TOP_LEFT     0b0001
-#define CORNER_TOP_RIGHT    0b0010
-#define CORNER_BOTTOM_LEFT  0b0100
-#define CORNER_BOTTOM_RIGHT 0b1000
-#define CORNER_ALL          0b1111
-
-// Forward declaration
-void drawCutCornerRect(int x, int y, int w, int h, int cutSize, uint16_t color, uint8_t corners, M5Canvas* canvas);
-
-/**
- * Helper function to get theme-appropriate cartridge color
- * Maps light theme cartridge colors to dark theme equivalents
- */
-inline uint16_t getCartridgeColor(uint16_t originalColor) {
-  if (currentTheme == &THEME_DARK) {
-    // Map light theme colors to dark theme
-    const uint16_t LIGHT_BG = RGB565(0xD3, 0xD3, 0xDD);    // #d3d3dd
-    const uint16_t LIGHT_SHADOW = RGB565(0xC1, 0xC4, 0xD6); // #c1c4d6
-    const uint16_t DARK_BG = RGB565(0x0e, 0x0e, 0x0e);      // #0e0e0e
-    const uint16_t DARK_SHADOW = TFT_BLACK;                 // #000000
-
-    if (originalColor == LIGHT_BG || originalColor == RGB565(0xD6, 0x9B, 0x00)) { // 0xD69B
-      return DARK_BG;
-    }
-    if (originalColor == LIGHT_SHADOW || originalColor == RGB565(0xC6, 0x3A, 0x00)) { // 0xC63A
-      return DARK_SHADOW;
-    }
-  }
-  return originalColor; // Return unchanged in light mode or if no match
-}
-
-/**
- * Draw theme-aware cartridge graphic
- * Transforms colors for dark mode on-the-fly
- */
-void drawThemedCartridge(int x, int y, M5Canvas* canvas = nullptr) {
-  // For light mode, use original graphic directly
-  if (currentTheme == &THEME_LIGHT) {
-    if (canvas != nullptr) {
-      bool oldSwap = canvas->getSwapBytes();
-      canvas->setSwapBytes(true);
-      canvas->pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, CARTRIDGE_GRAPHIC);
-      canvas->setSwapBytes(oldSwap);
-    } else {
-      bool oldSwap = M5Cardputer.Display.getSwapBytes();
-      M5Cardputer.Display.setSwapBytes(true);
-      M5Cardputer.Display.pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, CARTRIDGE_GRAPHIC);
-      M5Cardputer.Display.setSwapBytes(oldSwap);
-    }
-    return;
-  }
-
-  // For dark mode, transform colors
-  // Create a temporary buffer for the transformed graphic
-  static uint16_t cartridgeBuffer[CARTRIDGE_WIDTH * CARTRIDGE_HEIGHT];
-
-  // Copy and transform colors
-  for (int i = 0; i < CARTRIDGE_WIDTH * CARTRIDGE_HEIGHT; i++) {
-    cartridgeBuffer[i] = getCartridgeColor(pgm_read_word(&CARTRIDGE_GRAPHIC[i]));
-  }
-
-  // Draw the transformed graphic
-  if (canvas != nullptr) {
-    bool oldSwap = canvas->getSwapBytes();
-    canvas->setSwapBytes(true);
-    canvas->pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, cartridgeBuffer);
-    canvas->setSwapBytes(oldSwap);
-  } else {
-    bool oldSwap = M5Cardputer.Display.getSwapBytes();
-    M5Cardputer.Display.setSwapBytes(true);
-    M5Cardputer.Display.pushImage(x, y, CARTRIDGE_WIDTH, CARTRIDGE_HEIGHT, cartridgeBuffer);
-    M5Cardputer.Display.setSwapBytes(oldSwap);
-  }
-}
-
-/**
- * Draw a single palette preview at given position
- * Shows cartridge graphic with color swatches displayed on it
- * @param canvas Optional canvas to draw to (defaults to main display)
- */
-void drawPalettePreview(int x, int y, const uint16_t* palette, bool isCursor, bool isActive, int paletteIndex, M5Canvas* canvas = nullptr) {
-  int numColors = allPaletteSizes[paletteIndex];
-
-  // Draw cartridge background graphic (80×92)
-  // Center it at the given x, y position
-  int cartX = x - (CARTRIDGE_WIDTH / 2);
-  int cartY = y - (CARTRIDGE_HEIGHT / 2);
-
-  // Apply insertion animation if active and this is the cursor
-  if (paletteInsertionAnimating && isCursor) {
-    // Apply quartic ease-in: slow start, accelerates dramatically (gravity/force feel)
-    float t = paletteInsertionProgress;
-    float eased = t * t * t * t;  // Quartic ease-in
-
-    // Animate cartridge moving DOWN with easing
-    cartY = cartY + (int)(PALETTE_INSERT_DISTANCE * eased);
-  }
-
-  // Draw theme-aware cartridge graphic
-  drawThemedCartridge(cartX, cartY, canvas);
-
-  // Draw color swatches: 64×64 area positioned 8px from left, 6px from top of cartridge
-  const int swatchAreaWidth = 64;
-  const int swatchAreaHeight = 64;
-  int swatchX = cartX + 8;   // 8 pixels from left edge of cartridge
-  int swatchY = cartY + 6;   // 6 pixels from top edge of cartridge
-
-  const int cutSize = 2;  // Size of corner cuts
-
-  if (numColors == 4) {
-    // 4-color: 1 column × 4 rows, 64×16 each (single wide column)
-    const int colorWidth = 64;
-    const int colorHeight = 16;
-
-    for (int i = 0; i < 4; i++) {
-      int px = swatchX;
-      int py = swatchY + (i * colorHeight);
-
-      // Determine which corners to cut based on position
-      uint8_t corners = CORNER_NONE;
-      if (i == 0) corners = CORNER_TOP_LEFT | CORNER_TOP_RIGHT;        // Top row: cut both top corners
-      else if (i == 3) corners = CORNER_BOTTOM_LEFT | CORNER_BOTTOM_RIGHT;  // Bottom row: cut both bottom corners
-
-      drawCutCornerRect(px, py, colorWidth, colorHeight, cutSize, pgm_read_word(&palette[i]), corners, canvas);
-    }
-  } else if (numColors == 8) {
-    // 8-color: 2 colors wide × 4 colors tall = 8 colors, 32×16 each (colors go DOWN)
-    const int colorWidth = 32;
-    const int colorHeight = 16;
-
-    for (int i = 0; i < 8; i++) {
-      int col = i / 4;  // Column changes every 4 colors (0-3 in col 0, 4-7 in col 1)
-      int row = i % 4;  // Row cycles 0-3
-      int px = swatchX + (col * colorWidth);
-      int py = swatchY + (row * colorHeight);
-
-      // Determine which corners to cut based on position
-      uint8_t corners = CORNER_NONE;
-      if (col == 0 && row == 0) corners = CORNER_TOP_LEFT;           // Top-left swatch
-      else if (col == 1 && row == 0) corners = CORNER_TOP_RIGHT;     // Top-right swatch
-      else if (col == 0 && row == 3) corners = CORNER_BOTTOM_LEFT;   // Bottom-left swatch
-      else if (col == 1 && row == 3) corners = CORNER_BOTTOM_RIGHT;  // Bottom-right swatch
-
-      drawCutCornerRect(px, py, colorWidth, colorHeight, cutSize, pgm_read_word(&palette[i]), corners, canvas);
-    }
-  } else {
-    // 16-color: 4×4 grid, 16×16 each (colors go DOWN columns - VERTICAL LAYOUT)
-    const int colorSize = 16;
-
-    for (int i = 0; i < 16; i++) {
-      int col = i / 4;  // Column changes every 4 colors
-      int row = i % 4;  // Row cycles 0-3
-      int px = swatchX + (col * colorSize);
-      int py = swatchY + (row * colorSize);
-
-      // Determine which corners to cut based on position in 4×4 grid
-      uint8_t corners = CORNER_NONE;
-      if (col == 0 && row == 0) corners = CORNER_TOP_LEFT;           // Top-left corner
-      else if (col == 3 && row == 0) corners = CORNER_TOP_RIGHT;     // Top-right corner
-      else if (col == 0 && row == 3) corners = CORNER_BOTTOM_LEFT;   // Bottom-left corner
-      else if (col == 3 && row == 3) corners = CORNER_BOTTOM_RIGHT;  // Bottom-right corner
-
-      drawCutCornerRect(px, py, colorSize, colorSize, cutSize, pgm_read_word(&palette[i]), corners, canvas);
-    }
-  }
-
-  // No border around cartridge
-  // Active palette is indicated by ">" before the name
-}
-
-/**
- * Draw Palette Menu - horizontally scrolling carousel of palettes
- * Center palette is selected, left/right arrows navigate
- *
- * @param fullRedraw If true, clears entire screen. If false, only redraws content area for animation
- */
-void drawPaletteView(bool fullRedraw = true) {
-  // Check if canvas is available
-  if (!paletteCanvasAvailable) {
-    // Canvas wasn't allocated - show error message
+void drawPaletteView(bool = true) {
+  if (!viewState.palette.canvasAvailable) {
     M5Cardputer.Display.fillScreen(currentTheme->background);
     M5Cardputer.Display.setTextColor(TFT_RED);
-    M5Cardputer.Display.setCursor(10, 50);
-    M5Cardputer.Display.println("WARNING: Low memory!");
-    M5Cardputer.Display.setCursor(10, 65);
-    M5Cardputer.Display.println("Cannot show palette menu.");
-    M5Cardputer.Display.setCursor(10, 85);
-    M5Cardputer.Display.setTextColor(currentTheme->text);
-    M5Cardputer.Display.println("Press ESC (`) to exit");
-    M5Cardputer.Display.setCursor(10, 100);
-    M5Cardputer.Display.println("Restart device to recover");
-    return;  // Skip drawing, but allow keyboard handling
-  }
-
-  // Clear the canvas buffer (full screen)
-  paletteCanvas.fillSprite(currentTheme->background);
-
-  // Draw title to canvas
-  paletteCanvas.setTextColor(currentTheme->text);
-  paletteCanvas.setTextSize(1);
-  paletteCanvas.setCursor(4, 4);
-  paletteCanvas.print("PALETTES");
-
-  // Draw filter status in top-right corner (only if filters are active)
-  if (paletteFilterSize > 0 || paletteFilterUser) {
-    String filterText = "";
-    if (paletteFilterSize > 0 && paletteFilterUser) {
-      filterText = "USER+" + String(paletteFilterSize);
-    } else if (paletteFilterSize > 0) {
-      filterText = String(paletteFilterSize) + "-COLOR";
-    } else if (paletteFilterUser) {
-      filterText = "USER";
-    }
-    // Right-align text: calculate position based on text width
-    int16_t textWidth = paletteCanvas.textWidth(filterText);
-    paletteCanvas.setCursor(240 - textWidth - 4, 4);  // 4px padding from right edge
-    paletteCanvas.print(filterText);
-  }
-
-  const int paletteGap = 20;  // Gap between cartridges
-  const int centerX = 120;  // Center of 240px screen (horizontal)
-  // Cartridge top at Y=20 from screen top, cartridge is 92px tall
-  // So center is at Y=20+46=66 (simple screen coordinates now!)
-  const int centerY = 66;  // Browsing position: top of cartridge at Y=20 on screen
-
-  // Determine which palette is currently active on the sketch
-  int activePaletteIndex = -1;
-  // Compare active sketch's palette with each catalog palette
-  for (int p = 0; p < totalPaletteCount; p++) {
-    bool matches = true;
-    for (int c = 0; c < 16; c++) {
-      if (activeSketch.paletteColors[c] != pgm_read_word(&allPalettes[p][c])) {
-        matches = false;
-        break;
-      }
-    }
-    if (matches) {
-      activePaletteIndex = p;
-      break;
-    }
-  }
-
-  // Smooth scroll animation - now tear-free thanks to M5Canvas!
-  // Skip scroll interpolation during insertion animation (keeps everything frozen)
-  if (!paletteInsertionAnimating) {
-    // Interpolate scroll position towards cursor position
-    float targetPos = (float)paletteViewCursor;
-    float diff = targetPos - paletteViewScrollPos;
-
-    if (fabs(diff) > 0.01f) {
-      // Smoothly animate towards target
-      paletteViewScrollPos += diff * PALETTE_SCROLL_SPEED;
-    } else {
-      // Close enough - snap to target
-      paletteViewScrollPos = targetPos;
-    }
-  }
-
-  // Draw filtered palettes to canvas - selected one in center, others offset to sides
-  for (int i = 0; i < filteredPaletteCount; i++) {
-    // Get actual palette index from filtered list
-    uint8_t paletteIdx = filteredPaletteIndices[i];
-
-    // During insertion animation, freeze ALL cartridges horizontally using frozen scroll position
-    // This keeps everything stable - only vertical (Y) movement happens during insertion
-    float scrollPosToUse = paletteInsertionAnimating ? paletteInsertionFrozenScrollPos : paletteViewScrollPos;
-
-    float offset = (i - scrollPosToUse) * (CARTRIDGE_WIDTH + paletteGap);
-    int paletteX = centerX + (int)offset;  // X is center point for cartridge
-    int paletteY = centerY;
-
-    // Only draw if on screen (with some margin)
-    if (paletteX > -(CARTRIDGE_WIDTH / 2) && paletteX < 240 + (CARTRIDGE_WIDTH / 2)) {
-      bool isCursor = (i == paletteViewCursor);
-      bool isActive = (paletteIdx == activePaletteIndex);
-
-      // Draw palette name FIRST (but not during insertion animation to prevent text peeking out)
-      if (isCursor && !paletteInsertionAnimating) {
-        paletteCanvas.setTextSize(1);
-        paletteCanvas.setTextColor(currentTheme->text);
-
-        // Add checkmark if this is the active palette, star if user-loaded
-        String displayText = String(allPaletteNames[paletteIdx]);
-        if (paletteIsUserLoaded[paletteIdx]) {
-          displayText = "* " + displayText;  // Star for user palettes
-        }
-        if (isActive) {
-          displayText = "> " + displayText;  // Use ">" as checkmark/indicator
-        }
-
-        int textWidth = displayText.length() * 6;  // Approximate width
-        paletteCanvas.setCursor(centerX - (textWidth / 2), centerY + (CARTRIDGE_HEIGHT / 2) + 6);
-        paletteCanvas.print(displayText);
-      }
-
-      // Draw cartridge AFTER label (so it covers the label during animation)
-      drawPalettePreview(paletteX, paletteY, allPalettes[paletteIdx], isCursor, isActive, paletteIdx, &paletteCanvas);
-    }
-  }
-
-  // Draw status message at bottom if one exists
-  if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
-    paletteCanvas.setTextColor(currentTheme->text);
-    paletteCanvas.setTextSize(1);
-    paletteCanvas.setCursor(3, 124);
-    paletteCanvas.print(statusMessage);
-  }
-
-  // NOW push the entire frame to display at once - NO TEARING!
-  paletteCanvas.pushSprite(0, 0);  // Push full-screen canvas
-
-  // No instructions at bottom - keeping the interface minimal
-}
-
-// ============================================================================
-// DRAWING FUNCTIONS
-// ============================================================================
-
-/**
- * Draw a 2px offset shadow behind any rectangle with cut corners
- *
- * Shadow is drawn 2px down and 2px right from the specified position.
- * Draw this BEFORE drawing your main element so the element appears on top.
- *
- * For cut corner elements:
- * - Shadow fills behind element's top-left, top-right, and bottom-left cut corners
- * - Shadow's own top-right corner is cut (2px)
- * - Shadow's own bottom-left corner is cut (2px)
- * - Shadow's bottom-right corner remains filled (visible through element's BR cut)
- *
- * @param x X position of the element (shadow will be at x+2)
- * @param y Y position of the element (shadow will be at y+2)
- * @param w Width of the shadow
- * @param h Height of the shadow
- * @param cutCorners Whether to handle cut corners (default: false)
- */
-void drawShadow(int x, int y, int w, int h, bool cutCorners = false) {
-  // Draw main shadow rectangle (offset 2px down and right)
-  // This extends under the element and will show through any cut corners
-  M5Cardputer.Display.fillRect(x + 2, y + 2, w, h, currentTheme->shadow);
-
-  if (cutCorners) {
-    // Cut the shadow's own visible corners (the parts that stick out beyond the element)
-    M5Cardputer.Display.fillRect(x + w, y + 2, 2, 2, currentTheme->background);  // Cut shadow's TR
-    M5Cardputer.Display.fillRect(x + 2, y + h, 2, 2, currentTheme->background);  // Cut shadow's BL
-    M5Cardputer.Display.fillRect(x + w, y + h, 2, 2, currentTheme->background);  // Cut shadow's BR
-  }
-}
-
-/**
- * Draw a filled rectangle with optional cut corners
- *
- * @param x X position
- * @param y Y position
- * @param w Width
- * @param h Height
- * @param cutSize Size of corner cuts in pixels
- * @param color Fill color
- * @param corners Bitfield of which corners to cut (use CORNER_* flags)
- * @param canvas Optional canvas to draw to (defaults to main display)
- */
-void drawCutCornerRect(int x, int y, int w, int h, int cutSize, uint16_t color, uint8_t corners = CORNER_ALL, M5Canvas* canvas = nullptr) {
-  // Draw main middle section (always full width)
-  if (canvas != nullptr) {
-    canvas->fillRect(x, y + cutSize, w, h - (cutSize * 2), color);
-  } else {
-    M5Cardputer.Display.fillRect(x, y + cutSize, w, h - (cutSize * 2), color);
-  }
-
-  // Top edge
-  int topStart = (corners & CORNER_TOP_LEFT) ? cutSize : 0;
-  int topEnd = (corners & CORNER_TOP_RIGHT) ? w - cutSize : w;
-  if (canvas != nullptr) {
-    canvas->fillRect(x + topStart, y, topEnd - topStart, cutSize, color);
-  } else {
-    M5Cardputer.Display.fillRect(x + topStart, y, topEnd - topStart, cutSize, color);
-  }
-
-  // Bottom edge
-  int bottomStart = (corners & CORNER_BOTTOM_LEFT) ? cutSize : 0;
-  int bottomEnd = (corners & CORNER_BOTTOM_RIGHT) ? w - cutSize : w;
-  if (canvas != nullptr) {
-    canvas->fillRect(x + bottomStart, y + h - cutSize, bottomEnd - bottomStart, cutSize, color);
-  } else {
-    M5Cardputer.Display.fillRect(x + bottomStart, y + h - cutSize, bottomEnd - bottomStart, cutSize, color);
-  }
-}
-
-/**
- * Draw an outline rectangle with optional cut corners
- *
- * @param x X position
- * @param y Y position
- * @param w Width
- * @param h Height
- * @param cutSize Size of corner cuts in pixels
- * @param color Line color
- * @param corners Bitfield of which corners to cut (use CORNER_* flags)
- */
-void drawCutCornerOutline(int x, int y, int w, int h, int cutSize, uint16_t color, uint8_t corners = CORNER_ALL, M5Canvas* canvas = nullptr) {
-  // Draw the four edges with proper gaps at corners to create clean cutouts
-
-  // Top edge - skip cutSize pixels on each end where corners are cut
-  int topStart = (corners & CORNER_TOP_LEFT) ? cutSize : 0;
-  int topEnd = (corners & CORNER_TOP_RIGHT) ? w - cutSize : w;
-  if (topEnd > topStart) {
-    if (canvas != nullptr) {
-      canvas->fillRect(x + topStart, y, topEnd - topStart, 1, color);
-    } else {
-      M5Cardputer.Display.fillRect(x + topStart, y, topEnd - topStart, 1, color);
-    }
-  }
-
-  // Bottom edge
-  int bottomStart = (corners & CORNER_BOTTOM_LEFT) ? cutSize : 0;
-  int bottomEnd = (corners & CORNER_BOTTOM_RIGHT) ? w - cutSize : w;
-  if (bottomEnd > bottomStart) {
-    if (canvas != nullptr) {
-      canvas->fillRect(x + bottomStart, y + h - 1, bottomEnd - bottomStart, 1, color);
-    } else {
-      M5Cardputer.Display.fillRect(x + bottomStart, y + h - 1, bottomEnd - bottomStart, 1, color);
-    }
-  }
-
-  // Left edge - skip cutSize pixels on each end where corners are cut
-  int leftStart = (corners & CORNER_TOP_LEFT) ? cutSize : 0;
-  int leftEnd = (corners & CORNER_BOTTOM_LEFT) ? h - cutSize : h;
-  if (leftEnd > leftStart) {
-    if (canvas != nullptr) {
-      canvas->fillRect(x, y + leftStart, 1, leftEnd - leftStart, color);
-    } else {
-      M5Cardputer.Display.fillRect(x, y + leftStart, 1, leftEnd - leftStart, color);
-    }
-  }
-
-  // Right edge
-  int rightStart = (corners & CORNER_TOP_RIGHT) ? cutSize : 0;
-  int rightEnd = (corners & CORNER_BOTTOM_RIGHT) ? h - cutSize : h;
-  if (rightEnd > rightStart) {
-    if (canvas != nullptr) {
-      canvas->fillRect(x + w - 1, y + rightStart, 1, rightEnd - rightStart, color);
-    } else {
-      M5Cardputer.Display.fillRect(x + w - 1, y + rightStart, 1, rightEnd - rightStart, color);
-    }
-  }
-
-  // Corners are left as empty cutouts (cutSize × cutSize squares removed from each corner)
-}
-
-/**
- * Blend two RGB565 colors with alpha (0.0 = bg only, 1.0 = fg only)
- */
-uint16_t blendRGB565(uint16_t bg, uint16_t fg, float alpha) {
-  // Extract RGB components from RGB565
-  uint8_t bgR = (bg >> 11) & 0x1F;
-  uint8_t bgG = (bg >> 5) & 0x3F;
-  uint8_t bgB = bg & 0x1F;
-
-  uint8_t fgR = (fg >> 11) & 0x1F;
-  uint8_t fgG = (fg >> 5) & 0x3F;
-  uint8_t fgB = fg & 0x1F;
-
-  // Blend
-  uint8_t outR = bgR + (fgR - bgR) * alpha;
-  uint8_t outG = bgG + (fgG - bgG) * alpha;
-  uint8_t outB = bgB + (fgB - bgB) * alpha;
-
-  // Pack back to RGB565
-  return (outR << 11) | (outG << 5) | outB;
-}
-
-/**
- * Draw a line with alpha transparency by blending a color with existing pixels
- */
-void drawLineWithAlpha(int x, int y, int w, int h, uint16_t color, float alpha) {
-  for (int py = 0; py < h; py++) {
-    for (int px = 0; px < w; px++) {
-      uint16_t bgColor = M5Cardputer.Display.readPixel(x + px, y + py);
-      uint16_t blended = blendRGB565(bgColor, color, alpha);
-      M5Cardputer.Display.drawPixel(x + px, y + py, blended);
-    }
-  }
-}
-
-/**
- * Draw a single cell at the given grid coordinates
- *
- * This redraws one cell with either:
- * - The pixel color if a pixel is placed there
- * - The checkerboard background if empty (pattern based on screen pixels)
- */
-void drawCell(int x, int y, bool isSelected = false) {
-  int screenX = GRID_X + (x * currentCellSize);
-  int screenY = GRID_Y + (y * currentCellSize);
-
-  // Check if this cell has a color
-  if (canvas[y][x] != 0) {
-    // FILLED CELL: Draw solid color directly (center lines will be underneath/hidden)
-    uint16_t cellColor = activeSketch.paletteColors[canvas[y][x] - 1];
-
-    // Apply tint if this is the selected cell
-    if (isSelected) {
-      // Darken the cell in both themes
-      uint8_t r = ((cellColor >> 11) & 0x1F) * 0.8;
-      uint8_t g = ((cellColor >> 5) & 0x3F) * 0.8;
-      uint8_t b = (cellColor & 0x1F) * 0.8;
-      cellColor = (r << 11) | (g << 5) | b;
-    }
-
-    M5Cardputer.Display.fillRect(screenX, screenY, currentCellSize, currentCellSize, cellColor);
-  } else {
-    // EMPTY CELL: Draw checkerboard pattern, then center lines on top
-    int checkSize = currentCellSize / 2;
-
-    // Draw checkerboard pattern
-    for (int py = 0; py < currentCellSize; py += checkSize) {
-      for (int px = 0; px < currentCellSize; px += checkSize) {
-        int absX = screenX + px;
-        int absY = screenY + py;
-        bool isDark = ((absX / checkSize) + (absY / checkSize)) % 2 == 0;
-        uint16_t color = isDark ? currentTheme->cellDark : currentTheme->cellLight;
-
-        // Apply tint if this is the selected cell
-        if (isSelected) {
-          if (currentTheme == &THEME_DARK) {
-            // In dark mode, darken each square differently to maintain checkerboard visibility
-            // Dark squares: darken less (0.5) - already very dark, don't over-darken
-            // Light squares: darken more (0.3) - bring them closer to dark squares
-            float multiplier = isDark ? 0.4 : 0.2;
-            uint8_t r = ((color >> 11) & 0x1F) * multiplier;
-            uint8_t g = ((color >> 5) & 0x3F) * multiplier;
-            uint8_t b = (color & 0x1F) * multiplier;
-            color = (r << 11) | (g << 5) | b;
-          } else {
-            // In light mode, darken the cell uniformly
-            uint8_t r = ((color >> 11) & 0x1F) * 0.8;
-            uint8_t g = ((color >> 5) & 0x3F) * 0.8;
-            uint8_t b = (color & 0x1F) * 0.8;
-            color = (r << 11) | (g << 5) | b;
-          }
-        }
-
-        int drawWidth = min(checkSize, currentCellSize - px);
-        int drawHeight = min(checkSize, currentCellSize - py);
-        M5Cardputer.Display.fillRect(absX, absY, drawWidth, drawHeight, color);
-      }
-    }
-
-    // Draw center lines (if rulers are visible and they pass through this cell)
-    if (rulersVisible) {
-      int centerX = GRID_X + 64;  // Vertical line at x=120
-      int centerY = GRID_Y + 64;  // Horizontal line at y=68
-
-      if (centerX >= screenX && centerX < screenX + currentCellSize) {
-        // Redraw the vertical line segment for this cell
-        M5Cardputer.Display.fillRect(centerX, screenY, 1, currentCellSize, currentTheme->centerLine);
-      }
-
-      if (centerY >= screenY && centerY < screenY + currentCellSize) {
-        // Redraw the horizontal line segment for this cell
-        M5Cardputer.Display.fillRect(screenX, centerY, currentCellSize, 1, currentTheme->centerLine);
-      }
-    }
-  }
-
-  // LAYER 4: Apply corner masking for corner cells
-  if (x == 0 && y == 0) {
-    M5Cardputer.Display.fillRect(screenX, screenY, 2, 2, currentTheme->background);
-  }
-  else if (x == currentGridSize - 1 && y == 0) {
-    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY, 2, 2, currentTheme->background);
-  }
-  else if (x == 0 && y == currentGridSize - 1) {
-    M5Cardputer.Display.fillRect(screenX, screenY + currentCellSize - 2, 2, 2, currentTheme->background);
-  }
-  else if (x == currentGridSize - 1 && y == currentGridSize - 1) {
-    M5Cardputer.Display.fillRect(screenX + currentCellSize - 2, screenY + currentCellSize - 2, 2, 2, currentTheme->shadow);
-  }
-}
-
-/**
- * Draw the cursor
- *
- * Draws a simple arrow pointer below and to the right of the selected cell
- */
-void drawCursor() {
-  // Determine which icon to use based on move mode
-  const unsigned char* cursorIcon = moveModeActive ? ICON_MOVE_CURSOR : ICON_CANVAS_CURSOR;
-  int iconW = moveModeActive ? ICON_MOVE_CURSOR_WIDTH : ICON_CANVAS_CURSOR_WIDTH;
-  int iconH = moveModeActive ? ICON_MOVE_CURSOR_HEIGHT : ICON_CANVAS_CURSOR_HEIGHT;
-  int offsetX = moveModeActive ? MOVE_CURSOR_OFFSET_X : CURSOR_OFFSET_X;
-  int offsetY = moveModeActive ? MOVE_CURSOR_OFFSET_Y : CURSOR_OFFSET_Y;
-
-  // Use max dimensions for clearing to handle icon switching
-  int clearW = max(ICON_CANVAS_CURSOR_WIDTH, ICON_MOVE_CURSOR_WIDTH);
-  int clearH = max(ICON_CANVAS_CURSOR_HEIGHT, ICON_MOVE_CURSOR_HEIGHT);
-
-  // Clear the old cursor icon position if it exists
-  if (lastCursorScreenX >= 0 && lastCursorScreenY >= 0) {
-    // Calculate which cells might have been covered by the old cursor icon
-    int oldCursorEndX = lastCursorScreenX + clearW;
-    int oldCursorEndY = lastCursorScreenY + clearH;
-
-    // Find grid cells that overlap with the old cursor area
-    int startCellX = max(0, (lastCursorScreenX - GRID_X) / currentCellSize);
-    int startCellY = max(0, (lastCursorScreenY - GRID_Y) / currentCellSize);
-    int endCellX = min(currentGridSize - 1, (oldCursorEndX - GRID_X) / currentCellSize);
-    int endCellY = min(currentGridSize - 1, (oldCursorEndY - GRID_Y) / currentCellSize);
-
-    // First, fill the old cursor area with background color
-    M5Cardputer.Display.fillRect(
-      lastCursorScreenX,
-      lastCursorScreenY,
-      clearW,
-      clearH,
-      currentTheme->background
-    );
-
-    // Then redraw all cells that were covered by the old cursor
-    for (int y = startCellY; y <= endCellY && y < currentGridSize; y++) {
-      for (int x = startCellX; x <= endCellX && x < currentGridSize; x++) {
-        drawCell(x, y);
-      }
-    }
-
-    // Redraw shadow edges if cursor overlapped them (shadow extends 2px beyond grid)
-    // Right edge shadow: from GRID_X+128 to GRID_X+130
-    if (oldCursorEndX > GRID_X + 128) {
-      M5Cardputer.Display.fillRect(GRID_X + 128, GRID_Y + 2, 2, 128, currentTheme->shadow);
-    }
-    // Bottom edge shadow: from GRID_Y+128 to GRID_Y+130
-    if (oldCursorEndY > GRID_Y + 128) {
-      M5Cardputer.Display.fillRect(GRID_X + 2, GRID_Y + 128, 128, 2, currentTheme->shadow);
-    }
-    // Restore corner cuts if we redrew shadow
-    if (oldCursorEndX > GRID_X + 128 || oldCursorEndY > GRID_Y + 128) {
-      M5Cardputer.Display.fillRect(GRID_X + 128, GRID_Y + 2, 2, 2, currentTheme->background);  // Shadow's TR cut
-      M5Cardputer.Display.fillRect(GRID_X + 2, GRID_Y + 128, 2, 2, currentTheme->background);  // Shadow's BL cut
-      M5Cardputer.Display.fillRect(GRID_X + 128, GRID_Y + 128, 2, 2, currentTheme->background); // Shadow's BR cut
-    }
-  }
-
-  // Draw the selected cell with tint
-  drawCell(cursorX, cursorY, true);
-
-  // Convert grid coordinates to screen coordinates (top-left of cell)
-  int cellX = GRID_X + (cursorX * currentCellSize);
-  int cellY = GRID_Y + (cursorY * currentCellSize);
-
-  // Position cursor below and to the right of the cell, with offset for alignment
-  int cursorX_pos = cellX + currentCellSize + offsetX;
-  int cursorY_pos = cellY + currentCellSize + offsetY;
-
-  // Draw the cursor icon
-  drawIcon(cursorX_pos, cursorY_pos, cursorIcon, iconW, iconH, true);
-
-  // Save this position for next time
-  lastCursorScreenX = cursorX_pos;
-  lastCursorScreenY = cursorY_pos;
-}
-
-/**
- * Draw the palette column with selection indicator
- *
- * Draws color swatches and the selection indicator.
- * This is a simple, complete redraw - no optimization.
- * Layout:
- * - 4-color: single column, right-aligned
- * - 8-color: single column, right-aligned
- * - 16-color: two columns
- */
-void drawPalette() {
-  // Clear the entire palette area (with a bit of margin for the selection border)
-  M5Cardputer.Display.fillRect(
-    PALETTE_X - 4,
-    GRID_Y - 4,
-    PALETTE_WIDTH + 8,
-    (PALETTE_SWATCH_SIZE * 8) + 8,
-    currentTheme->background
-  );
-
-  // Determine layout based on palette size
-  // 4-color and 8-color: one column, right-aligned
-  // 16-color: two columns
-  int numColors = activeSketch.paletteSize;
-  int startX = (numColors <= 8) ? (PALETTE_X + PALETTE_SWATCH_SIZE) : PALETTE_X;  // Right-aligned for 4 and 8-color
-
-  // Draw shadow behind the palette (with cut corners)
-  int paletteWidth = (numColors <= 8) ? PALETTE_SWATCH_SIZE : PALETTE_WIDTH;
-  int paletteHeight = (numColors <= 8) ? (numColors * PALETTE_SWATCH_SIZE) : (8 * PALETTE_SWATCH_SIZE);
-  drawShadow(startX, GRID_Y, paletteWidth, paletteHeight, true);
-
-  // Draw color swatches
-  for (int i = 0; i < numColors; i++) {
-    int col = (numColors <= 8) ? 0 : (i / 8);  // Always column 0 for 4/8-color
-    int row = (numColors <= 8) ? i : (i % 8);   // Row 0-3/0-7 for 4/8-color, 0-7 for 16-color
-
-    int swatchX = startX + (col * PALETTE_SWATCH_SIZE);
-    int swatchY = GRID_Y + (row * PALETTE_SWATCH_SIZE);
-
-    // Draw the 16×16 color swatch using active sketch's palette
-    M5Cardputer.Display.fillRect(
-      swatchX,
-      swatchY,
-      PALETTE_SWATCH_SIZE,
-      PALETTE_SWATCH_SIZE,
-      activeSketch.paletteColors[i]
-    );
-
-    // Apply corner masking for corner swatches (only if NOT currently selected)
-    bool isSelected = (i == selectedColor - 1);
-    if (!isSelected) {
-      if (numColors == 4) {
-        // 4-color: single column, right-aligned
-        if (i == 0) {
-          // Top: mask both top corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, currentTheme->background);  // Top-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, currentTheme->background);  // Top-right
-        }
-        else if (i == 3) {
-          // Bottom: mask both bottom corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->background);  // Bottom-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->shadow);  // Bottom-right (shadow!)
-        }
-      }
-      else if (numColors == 8) {
-        // 8-color: single column, right-aligned
-        if (i == 0) {
-          // Top: mask both top corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, currentTheme->background);  // Top-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, currentTheme->background);  // Top-right
-        }
-        else if (i == 7) {
-          // Bottom: mask both bottom corners
-          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->background);  // Bottom-left
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->shadow);  // Bottom-right (shadow!)
-        }
-      } else {
-        // 16-color: two columns
-        if (i == 0) {
-          // Color 1 (index 0): top-left of left column - mask top-left corner
-          M5Cardputer.Display.fillRect(swatchX, swatchY, 2, 2, currentTheme->background);
-        }
-        else if (i == 7) {
-          // Color 8 (index 7): bottom-left of left column - mask bottom-left corner
-          M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->background);
-        }
-        else if (i == 8) {
-          // Color 9 (index 8): top-right of right column - mask top-right corner
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, 2, currentTheme->background);
-        }
-        else if (i == 15) {
-          // Color 16 (index 15): bottom-right of right column - mask bottom-right corner
-          M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY + PALETTE_SWATCH_SIZE - 2, 2, 2, currentTheme->shadow);  // Bottom-right (shadow!)
-        }
-      }
-    }
-  }
-
-  // Draw selection indicator on the selected color
-  int selectedIndex = selectedColor - 1;
-  int col = (numColors <= 8) ? 0 : (selectedIndex / 8);
-  int row = (numColors <= 8) ? selectedIndex : (selectedIndex % 8);
-
-  int swatchX = startX + (col * PALETTE_SWATCH_SIZE);
-  int swatchY = GRID_Y + (row * PALETTE_SWATCH_SIZE);
-
-  // Draw 2px black outline OUTSIDE the swatch
-  M5Cardputer.Display.fillRect(swatchX - 2, swatchY - 2, PALETTE_SWATCH_SIZE + 4, 2, TFT_BLACK);  // Top
-  M5Cardputer.Display.fillRect(swatchX - 2, swatchY + PALETTE_SWATCH_SIZE, PALETTE_SWATCH_SIZE + 4, 2, TFT_BLACK);  // Bottom
-  M5Cardputer.Display.fillRect(swatchX - 2, swatchY - 2, 2, PALETTE_SWATCH_SIZE + 4, TFT_BLACK);  // Left
-  M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE, swatchY - 2, 2, PALETTE_SWATCH_SIZE + 4, TFT_BLACK);  // Right
-
-  // Draw 2px light inset INSIDE the swatch (right against the edge)
-  M5Cardputer.Display.fillRect(swatchX, swatchY, PALETTE_SWATCH_SIZE, 2, currentTheme->iconLight);  // Top
-  M5Cardputer.Display.fillRect(swatchX, swatchY + PALETTE_SWATCH_SIZE - 2, PALETTE_SWATCH_SIZE, 2, currentTheme->iconLight);  // Bottom
-  M5Cardputer.Display.fillRect(swatchX, swatchY, 2, PALETTE_SWATCH_SIZE, currentTheme->iconLight);  // Left
-  M5Cardputer.Display.fillRect(swatchX + PALETTE_SWATCH_SIZE - 2, swatchY, 2, PALETTE_SWATCH_SIZE, currentTheme->iconLight);  // Right
-}
-
-// ============================================================================
-// DRAW MEMORY VIEW GRID - Vertical scrolling (NEW VERSION)
-// 4 columns, vertical scrolling through rows
-// ============================================================================
-void drawMemoryViewGrid(bool fullRedraw = true) {
-  const int COLS = 4;         // 4 columns across
-  const int thumbSize = 48;   // Each thumbnail is 48×48 pixels
-  const int thumbGap = 8;     // Gap between thumbnails horizontally
-  const int rowGap = 8;       // Gap between rows vertically
-  const int titleHeight = 14; // Height of title area
-  const int titleGap = 5;     // Gap between title and first row
-
-  // Total items = 1 (create new button) + number of sketches
-  int totalItems = 1 + sketchList.size();
-
-  // Calculate which column and row the cursor is in (4 columns)
-  int cursorCol = memoryViewCursor % COLS;
-  int cursorRow = memoryViewCursor / COLS;
-
-  // Vertical scrolling logic: scroll to keep cursor row visible
-  const int topMargin = 5;     // Small margin at screen top
-  const int bottomMargin = 5;  // Space at bottom of screen
-  const int itemHeight = thumbSize + rowGap;
-
-  // Calculate cursor position with current TARGET scroll offset
-  // Grid starts at: titleHeight + topMargin (title at 0, then topMargin gap)
-  int gridStartY = titleHeight + topMargin;
-  int cursorScreenY = gridStartY + (cursorRow * itemHeight) - memoryViewScrollOffset;
-
-  // Define scrolling bounds (area where cursor should stay visible)
-  // When on first row, we want to scroll back to show the title (scroll offset = 0)
-  // So top bound should be where the first row naturally sits when title is visible
-  int topBound = titleHeight + topMargin;  // Allow room for title above
-  int bottomBound = 135 - bottomMargin - thumbSize;
-
-  // Adjust TARGET scroll offset to keep cursor in bounds
-  if (cursorScreenY > bottomBound) {
-    // Cursor is past bottom edge - scroll up (increase offset)
-    memoryViewScrollOffset += (cursorScreenY - bottomBound);
-  } else if (cursorScreenY < topBound) {
-    // Cursor is past top edge - scroll down (decrease offset)
-    memoryViewScrollOffset -= (topBound - cursorScreenY);
-  }
-
-  // Clamp scroll offset to reasonable bounds
-  int totalRows = (totalItems + COLS - 1) / COLS;  // Ceiling division
-  int totalContentHeight = titleHeight + topMargin + (totalRows * thumbSize) + ((totalRows - 1) * rowGap);
-  int visibleHeight = 135 - bottomMargin;  // Can scroll from 0 to bottom
-  int maxScroll = max(0, totalContentHeight - visibleHeight);
-
-  if (memoryViewScrollOffset < 0) memoryViewScrollOffset = 0;
-  if (memoryViewScrollOffset > maxScroll) memoryViewScrollOffset = maxScroll;
-
-  // Smooth animation: interpolate actual scroll position towards target
-  float targetPos = (float)memoryViewScrollOffset;
-  float diff = targetPos - memoryViewScrollPos;
-
-  if (fabs(diff) > 0.5f) {
-    // Smoothly animate towards target
-    memoryViewScrollPos += diff * MEMORY_SCROLL_SPEED;
-  } else {
-    // Close enough - snap to target
-    memoryViewScrollPos = targetPos;
-  }
-
-  // Calculate title Y position (scrolls with content)
-  // Title starts at 0 (to match PALETTES position), not topMargin
-  int titleY = 0 - (int)memoryViewScrollPos;
-
-  // Calculate base Y (where row 0 starts) using animated scroll position
-  // Grid starts after title, with topMargin acting as the gap
-  int baseY = titleHeight + topMargin - (int)memoryViewScrollPos;
-
-  // Calculate column X positions (horizontally centered)
-  // Total width: 4 columns × 48px + 3 gaps × 7px = 213px
-  int totalWidth = (COLS * thumbSize) + ((COLS - 1) * thumbGap);
-  int startX = (240 - totalWidth) / 2;
-
-  // Create canvas for entire screen to eliminate tearing
-  // Memory required: 240×135×2 = 64,800 bytes (~64KB)
-  if (!memoryCanvas.createSprite(240, 135)) {
-    // Memory allocation failed - show warning once to prevent flashing
-    static bool memoryErrorShown = false;
-    if (!memoryErrorShown) {
-      M5Cardputer.Display.fillScreen(currentTheme->background);
-      M5Cardputer.Display.setTextColor(TFT_RED);
-      M5Cardputer.Display.setCursor(10, 50);
-      M5Cardputer.Display.println("WARNING: Low memory!");
-      M5Cardputer.Display.setCursor(10, 65);
-      M5Cardputer.Display.println("Cannot display sketches.");
-      M5Cardputer.Display.setCursor(10, 85);
-      M5Cardputer.Display.setTextColor(currentTheme->text);
-      M5Cardputer.Display.println("Press ESC (`) to exit");
-      M5Cardputer.Display.setCursor(10, 100);
-      M5Cardputer.Display.println("Restart device to recover");
-      memoryErrorShown = true;
-    }
-    return;  // Skip drawing this frame, but allow keyboard handling
-  }
-  memoryCanvas.fillSprite(currentTheme->background);
-
-  // Draw title to canvas (scrollable position)
-  if (titleY > -titleHeight && titleY < 135) {  // Only draw if at least partially visible
-    memoryCanvas.setTextColor(currentTheme->text);
-    memoryCanvas.setTextSize(1);
-    memoryCanvas.setCursor(4, titleY + 4);
-    memoryCanvas.print("SKETCHES");
-  }
-
-  // Draw all items in grid layout
-  for (int itemIndex = 0; itemIndex < totalItems; itemIndex++) {
-    int col = itemIndex % COLS;
-    int row = itemIndex / COLS;
-
-    int screenX = startX + (col * (thumbSize + thumbGap));
-    int screenY = baseY + (row * (thumbSize + rowGap));
-
-    // Only draw if thumbnail is at least partially visible on screen
-    if (screenY < -thumbSize - 10 || screenY > 135 + 10) {
-      continue;  // Skip off-screen thumbnails
-    }
-
-    if (itemIndex == 0) {
-      // First item is the "create new" button
-      drawCreateNewSketchThumbnail(screenX, screenY, thumbSize);
-    } else {
-      // Subsequent items are sketches (using cached data!)
-      drawSketchThumbnail(itemIndex - 1, screenX, screenY, thumbSize);
-    }
-  }
-
-  // Draw breathing cursor AFTER all thumbnails (ensures cursor is on top)
-  int cursorX = startX + (cursorCol * (thumbSize + thumbGap));
-  int cursorY = baseY + (cursorRow * (thumbSize + rowGap));
-
-  // Only draw cursor if it's visible on screen
-  if (cursorY >= -thumbSize - 10 && cursorY <= 135 + 10) {
-    drawMemoryViewCursor(memoryViewCursor, cursorX, cursorY, thumbSize);
-  }
-
-  // Draw status message at bottom if one exists
-  if (statusMessage[0] != '\0' && (millis() - statusMessageTime < STATUS_DISPLAY_DURATION)) {
-    memoryCanvas.setTextColor(currentTheme->text);
-    memoryCanvas.setTextSize(1);
-    memoryCanvas.setCursor(3, 124);
-    memoryCanvas.print(statusMessage);
-  }
-
-  // Push entire canvas to display at (0, 0) to eliminate tearing
-  memoryCanvas.pushSprite(0, 0);
-  memoryCanvas.deleteSprite();
-}
-
-// Helper function to draw a single memory sketch thumbnail (OBSOLETE - kept for compatibility)
-// Now replaced by drawCreateNewSketchThumbnail() and drawSketchThumbnail()
-void drawMemorySketchThumbnail(int sketchIndex, int x, int y, int thumbSize) {
-  // OBSOLETE: This function is no longer used in the unlimited sketches system
-  // It's kept as a stub to avoid breaking any remaining references
-  // The memory view now uses drawCreateNewSketchThumbnail() and drawSketchThumbnail()
-}
-
-// Helper function to draw "+" create new sketch button
-void drawCreateNewSketchThumbnail(int x, int y, int thumbSize) {
-  // Draw dashed outline
-  uint16_t outlineColor = currentTheme->cellDark;
-  const int cutSize = 2;
-  const int dashLength = 4;
-  const int gapLength = 4;
-
-  // Draw dotted outline - 2px thick
-  // Top edge (skip corners)
-  for (int i = cutSize; i < thumbSize - cutSize; i += dashLength + gapLength) {
-    int len = min(dashLength, thumbSize - cutSize - i);
-    memoryCanvas.fillRect(x + i, y, len, 2, outlineColor);
-  }
-  // Bottom edge (skip corners)
-  for (int i = cutSize; i < thumbSize - cutSize; i += dashLength + gapLength) {
-    int len = min(dashLength, thumbSize - cutSize - i);
-    memoryCanvas.fillRect(x + i, y + thumbSize - 2, len, 2, outlineColor);
-  }
-  // Left edge (skip corners)
-  for (int i = cutSize; i < thumbSize - cutSize; i += dashLength + gapLength) {
-    int len = min(dashLength, thumbSize - cutSize - i);
-    memoryCanvas.fillRect(x, y + i, 2, len, outlineColor);
-  }
-  // Right edge (skip corners)
-  for (int i = cutSize; i < thumbSize - cutSize; i += dashLength + gapLength) {
-    int len = min(dashLength, thumbSize - cutSize - i);
-    memoryCanvas.fillRect(x + thumbSize - 2, y + i, 2, len, outlineColor);
-  }
-
-  // Draw "+" symbol in center
-  int centerX = x + thumbSize / 2;
-  int centerY = y + thumbSize / 2;
-  int plusSize = 15;
-  int plusThickness = 3;
-
-  memoryCanvas.fillRect(centerX - plusThickness/2, centerY - plusSize/2,
-                        plusThickness, plusSize, currentTheme->text);
-  memoryCanvas.fillRect(centerX - plusSize/2, centerY - plusThickness/2,
-                        plusSize, plusThickness, currentTheme->text);
-}
-
-// Helper function to draw sketch thumbnail using cached data
-void drawSketchThumbnail(int sketchIndex, int x, int y, int thumbSize) {
-  if (sketchIndex < 0 || sketchIndex >= sketchList.size()) {
+    M5Cardputer.Display.setCursor(10, 55);
+    M5Cardputer.Display.println("PALETTE BUFFER FAILED");
     return;
   }
 
-  SketchInfo& info = sketchList[sketchIndex];
-
-  // Load data from SD if not already cached
-  if (!info.dataLoaded) {
-    String fullPath = "/bitmap16dx/sketches/" + info.filename;
-    File file = SD.open(fullPath.c_str(), FILE_READ);
-    if (!file) {
-      setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
-      return;
-    }
-
-    // Verify file size and detect format version
-    size_t fileSize = file.size();
-    uint8_t formatVersion = 1;
-
-    if (fileSize == SKETCH_FILE_SIZE_V2) {
-      // New format with version byte
-      formatVersion = file.read();
-      if (formatVersion != SKETCH_FORMAT_VERSION) {
-        file.close();
-        return;
-      }
-    } else if (fileSize == SKETCH_FILE_SIZE_V1) {
-      // Legacy format without version byte
-      formatVersion = 1;
-    } else {
-      // Invalid file size
-      file.close();
-      return;
-    }
-
-    // Read sketch data into cache
-    info.sketchData.gridSize = file.read();
-    info.sketchData.paletteSize = file.read();
-
-    for (int i = 0; i < 16; i++) {
-      uint8_t high = file.read();
-      uint8_t low = file.read();
-      info.sketchData.paletteColors[i] = (high << 8) | low;
-    }
-
-    for (int py = 0; py < 16; py++) {
-      for (int px = 0; px < 16; px++) {
-        info.sketchData.pixels[py][px] = file.read();
-      }
-    }
-
-    file.close();
-    info.dataLoaded = true;  // Mark as cached
-  }
-
-  // Use cached data to render thumbnail
-  Sketch& tempSketch = info.sketchData;
-
-  int cellSize = (tempSketch.gridSize == 8) ? 6 : 3;
-  int gridPixelSize = tempSketch.gridSize * cellSize;
-  int offsetX = (thumbSize - gridPixelSize) / 2;
-  int offsetY = (thumbSize - gridPixelSize) / 2;
-
-  for (int py = 0; py < tempSketch.gridSize; py++) {
-    for (int px = 0; px < tempSketch.gridSize; px++) {
-      uint8_t pixelIndex = tempSketch.pixels[py][px];
-      if (pixelIndex == 0) continue;
-
-      uint16_t color = tempSketch.paletteColors[pixelIndex - 1];
-      memoryCanvas.fillRect(x + offsetX + (px * cellSize),
-                           y + offsetY + (py * cellSize),
-                           cellSize, cellSize, color);
-    }
-  }
-
-  // Cut corners
-  const int cutSize = 2;
-  uint16_t bgColor = currentTheme->background;
-  memoryCanvas.fillRect(x, y, cutSize, cutSize, bgColor);
-  memoryCanvas.fillRect(x + thumbSize - cutSize, y, cutSize, cutSize, bgColor);
-  memoryCanvas.fillRect(x, y + thumbSize - cutSize, cutSize, cutSize, bgColor);
-  memoryCanvas.fillRect(x + thumbSize - cutSize, y + thumbSize - cutSize, cutSize, cutSize, bgColor);
-
-  // Draw yellow border if this is the currently active sketch
-  if (info.filename == activeSketchFilename && !activeSketchIsNew) {
-    memoryCanvas.drawRect(x - 1, y - 1, thumbSize + 2, thumbSize + 2, TFT_YELLOW);
-  }
-}
-
-// Helper function to draw breathing cursor animation on selected item
-void drawMemoryViewCursor(int itemIndex, int x, int y, int thumbSize) {
-  if (memoryViewCursor != itemIndex) {
-    return;  // Not the selected item
-  }
-
-  // Breathing cursor animation using corner icons
-  auto drawCorner = [&](int cornerX, int cornerY, bool flipH, bool flipV) {
-    for (int row = 0; row < ICON_SELECTOR_CORNER_HEIGHT; row++) {
-      for (int col = 0; col < ICON_SELECTOR_CORNER_WIDTH; col++) {
-        int pixelIndex = row * ICON_SELECTOR_CORNER_WIDTH + col;
-        int byteIndex = pixelIndex / 4;
-        int bitShift = (3 - (pixelIndex % 4)) * 2;
-
-        uint8_t byte = pgm_read_byte(&ICON_SELECTOR_CORNER[byteIndex]);
-        uint8_t value = (byte >> bitShift) & 0x03;
-
-        if (value != 0) {
-          int drawX = flipH ? (cornerX + ICON_SELECTOR_CORNER_WIDTH - 1 - col) : (cornerX + col);
-          int drawY = flipV ? (cornerY + ICON_SELECTOR_CORNER_HEIGHT - 1 - row) : (cornerY + row);
-
-          uint16_t color = (value == 1) ? currentTheme->iconDark : currentTheme->iconLight;
-          memoryCanvas.drawPixel(drawX, drawY, color);
-        }
-      }
-    }
+  const bitmap16::PaletteView::Theme theme = {
+      currentTheme->background,
+      currentTheme->text,
+      currentTheme->textSecondary,
+      currentTheme == &THEME_DARK,
   };
-
-  // Animated breathing effect
-  float sineWave = sin(memoryCursorAnimPhase * 2.0f * PI);
-  float breathCycle = (sineWave + 1.0f) * 0.5f;
-  int offsetX = (int)(breathCycle * 4.0f + 0.5f);
-  int offsetY = (int)(breathCycle * 4.0f + 0.5f);
-
-  // Clear corners for cursor animation
-  const int cutSize = 2;
-  uint16_t bgColor = currentTheme->background;
-  memoryCanvas.fillRect(x, y, cutSize, cutSize, bgColor);
-  memoryCanvas.fillRect(x + thumbSize - cutSize, y, cutSize, cutSize, bgColor);
-  memoryCanvas.fillRect(x, y + thumbSize - cutSize, cutSize, cutSize, bgColor);
-  memoryCanvas.fillRect(x + thumbSize - cutSize, y + thumbSize - cutSize, cutSize, cutSize, bgColor);
-
-  // Draw animated corners (closer to thumbnail - reduced from 14 to 6 pixels away)
-  const int cornerOffset = 6;  // Distance from thumbnail edge
-  drawCorner(x - cornerOffset + offsetX, y - cornerOffset + offsetY, false, false);
-  drawCorner(x + thumbSize + cornerOffset - 16 - offsetX, y - cornerOffset + offsetY, true, false);
-  drawCorner(x - cornerOffset + offsetX, y + thumbSize + cornerOffset - 16 - offsetY, false, true);
-  drawCorner(x + thumbSize + cornerOffset - 16 - offsetX, y + thumbSize + cornerOffset - 16 - offsetY, true, true);
+  const bool showStatus =
+      statusMessage[0] != '\0' &&
+      millis() - statusMessageTime < STATUS_DISPLAY_DURATION;
+  bitmap16::PaletteView::render(
+      Display::canvas(),
+      viewState.palette.navigation,
+      currentPaletteCatalog(),
+      activePaletteCatalogIndex(),
+      theme,
+      CARTRIDGE_GRAPHIC,
+      showStatus ? statusMessage : nullptr);
+  Display::endFrame();
 }
 
-
-
-// ============================================================================
-// DRAW MEMORY VIEW 
-// ============================================================================
-void drawMemoryView(bool fullRedraw) {
-  drawMemoryViewGrid(fullRedraw);
+void drawMemoryView(bool) {
+  if (!viewState.memory.canvasAvailable) {
+    M5Cardputer.Display.fillScreen(currentTheme->background);
+    M5Cardputer.Display.setTextColor(TFT_RED);
+    M5Cardputer.Display.setCursor(10, 55);
+    M5Cardputer.Display.println("MEMORY BUFFER FAILED");
+    return;
+  }
+  const bitmap16::MemoryView::Theme theme = {
+      currentTheme->background,
+      currentTheme->cellDark,
+      currentTheme->text,
+      currentTheme->iconDark,
+      currentTheme->iconLight,
+      TFT_YELLOW,
+  };
+  const bitmap16::MemoryView::Assets assets = {
+      ICON_SELECTOR_CORNER,
+      ICON_SELECTOR_CORNER_WIDTH,
+      ICON_SELECTOR_CORNER_HEIGHT,
+  };
+  const bool showStatus =
+      statusMessage[0] != '\0' &&
+      millis() - statusMessageTime < STATUS_DISPLAY_DURATION;
+  bitmap16::MemoryView::render(
+      Display::canvas(),
+      viewState.memory.navigation,
+      currentMemoryCatalog(),
+      theme,
+      showStatus ? statusMessage : nullptr,
+      &assets);
+  Display::endFrame();
 }
 
 /**
  * Draw Help Screen - displays all keyboard controls
  */
 void drawHelpView() {
-  if (!helpCanvasAvailable) return;
+  if (!viewState.help.canvasAvailable) return;
 
-  helpCanvas.fillSprite(currentTheme->background);
-  helpCanvas.setTextSize(1);
+  const uint32_t renderStart = micros();
+  bitmap16::HelpView::Theme theme;
+  theme.background = currentTheme->background;
+  theme.text = currentTheme->text;
+  theme.textSecondary = currentTheme->textSecondary;
+  bitmap16::HelpView::render(
+      Display::canvas(),
+      viewState.help.navigation,
+      theme,
+      ENABLE_LED_MATRIX != 0);
 
-  // Title
-  helpCanvas.setTextColor(currentTheme->text);
-  helpCanvas.setCursor(4, 4);
-  helpCanvas.print("HELP");
+  CanvasProofMetrics& metrics = viewState.help.metrics;
+  metrics.lastRenderMicros = micros() - renderStart;
+  metrics.maxRenderMicros =
+      max(metrics.maxRenderMicros, metrics.lastRenderMicros);
 
-  struct HelpItem {
-    const char* label;
-    const char* key;
-    int group;
-  };
+  const uint32_t blitStart = micros();
+  Display::endFrame();
+  metrics.lastBlitMicros = micros() - blitStart;
+  metrics.maxBlitMicros = max(metrics.maxBlitMicros, metrics.lastBlitMicros);
+  metrics.frameCount++;
+  metrics.minimumFreeHeap =
+      min(metrics.minimumFreeHeap, static_cast<uint32_t>(ESP.getFreeHeap()));
 
-  const HelpItem helpItems[] = {
-    {"Cursor", "Arrows",  0},
-    {"Draw",        "Ok",      0},
-    {"Erase",       "Del",     0},
-    {"Fill",        "F",       0},
-    {"Move",        "M arrows",0},
-    {"Color 1-8",   "1-8",     0},
-    {"Color 9-16",  "Fn 1-8",  0},
-    {"Palette",     "P",       0},
-    {"Clear",       "G0",      0},
-    {"Preview",     "V",       0},
-    {"Grid size",   "G",       0},
-    {"Grid ruler",  "R",       0},
-    {"Open",        "O",       1},
-    {"Undo",        "Z",       1},
-    {"Save",        "S",       1},
-    {"Save as",     "Fn S",    1},
-    {"Settings",    "T",       1},
-    {"Export",      "X",       1},
-    {"Brightness",  "B +/-",   1},
-    {"Charge",      "Fn B",    1},
-#if ENABLE_LED_MATRIX
-    {"RGB on/off",  "L Ok",    2},
-    {"RGB Bright",  "L +/-",   2},
+#if ENABLE_CANVAS_PROOF_TELEMETRY
+  Serial.printf(
+      "[canvas-proof] frame=%lu render=%luus blit=%luus "
+      "max_render=%luus max_blit=%luus min_heap=%lu\n",
+      static_cast<unsigned long>(metrics.frameCount),
+      static_cast<unsigned long>(metrics.lastRenderMicros),
+      static_cast<unsigned long>(metrics.lastBlitMicros),
+      static_cast<unsigned long>(metrics.maxRenderMicros),
+      static_cast<unsigned long>(metrics.maxBlitMicros),
+      static_cast<unsigned long>(metrics.minimumFreeHeap));
 #endif
-  };
-
-  const int totalItems = sizeof(helpItems) / sizeof(helpItems[0]);
-  const int startY = 18;
-  const int lineHeight = 14;
-  const int selectedLineHeight = 24;
-  const int groupGap = 8;
-  const int labelX = 12;
-  const int keyX = 156;
-
-  // Auto-scroll to keep cursor visible
-  if (helpViewCursor < helpViewScrollOffset) {
-    helpViewScrollOffset = helpViewCursor;
-  }
-  while (helpViewScrollOffset < helpViewCursor) {
-    int y = startY;
-    for (int i = helpViewScrollOffset; i <= helpViewCursor && i < totalItems; i++) {
-      if (i > helpViewScrollOffset && helpItems[i].group != helpItems[i-1].group) y += groupGap;
-      y += (i == helpViewCursor) ? selectedLineHeight : lineHeight;
-    }
-    if (y <= 135) break;
-    helpViewScrollOffset++;
-  }
-
-  // Draw visible rows
-  int y = startY;
-  for (int i = helpViewScrollOffset; i < totalItems; i++) {
-    if (i > helpViewScrollOffset && helpItems[i].group != helpItems[i-1].group) y += groupGap;
-    if (y >= 135) break;
-
-    bool isSelected = (i == helpViewCursor);
-    int rowH = isSelected ? selectedLineHeight : lineHeight;
-    int textY = isSelected ? y + 4 : y;
-
-    uint16_t color = isSelected ? currentTheme->text : currentTheme->textSecondary;
-
-    helpCanvas.setTextSize(isSelected ? 2 : 1);
-    helpCanvas.setTextColor(color);
-    helpCanvas.setCursor(labelX, textY);
-    helpCanvas.print(helpItems[i].label);
-
-    helpCanvas.setTextSize(isSelected ? 2 : 1);
-    helpCanvas.setTextColor(color);
-    helpCanvas.setCursor(keyX, textY);
-    helpCanvas.print(helpItems[i].key);
-
-    y += rowH;
-  }
-
-  helpCanvas.pushSprite(0, 0);
-}
-
-/**
- * Draw the grid with checkerboard pattern
- *
- * This function draws a 2×2 checkerboard pattern within each cell
- * to create a finer transparency grid, with cut corners.
- */
-void drawGrid() {
-  // Draw shadow behind the grid (with bottom-right cut corner)
-  drawShadow(GRID_X, GRID_Y, 128, 128, true);
-
-  // Draw each cell
-  for (int y = 0; y < currentGridSize; y++) {
-    for (int x = 0; x < currentGridSize; x++) {
-      drawCell(x, y);
-    }
-  }
-
-  // Cut the corners by drawing background color over them
-  // Canvas is 128×128, positioned at GRID_X, GRID_Y
-  // BR corner shows shadow color (reveals the shadow underneath)
-  M5Cardputer.Display.fillRect(GRID_X, GRID_Y, 2, 2, currentTheme->background);                          // Top-left
-  M5Cardputer.Display.fillRect(GRID_X + 128 - 2, GRID_Y, 2, 2, currentTheme->background);                // Top-right
-  M5Cardputer.Display.fillRect(GRID_X, GRID_Y + 128 - 2, 2, 2, currentTheme->background);                // Bottom-left
-  M5Cardputer.Display.fillRect(GRID_X + 128 - 2, GRID_Y + 128 - 2, 2, 2, currentTheme->shadow);                // Bottom-right (shadow color!)
 }
 
 // ============================================================================
@@ -4237,109 +2703,85 @@ void initStockPalettes() {
 // Parse Lospec .hex file from SD card
 // Returns true if valid palette loaded
 bool loadPaletteFromHex(const char* filepath, uint16_t* colors, uint8_t* size) {
-  File file = SD.open(filepath);
-  if (!file) return false;
-
-  uint8_t colorCount = 0;
-
-  while (file.available() && colorCount < 16) {
-    String line = file.readStringUntil('\n');
-    line.trim();
-
-    // Skip empty lines and comments
-    if (line.length() == 0 || line.startsWith("//")) continue;
-
-    // Remove # prefix if present
-    if (line.startsWith("#")) line = line.substring(1);
-
-    // Must be 6-char hex code
-    if (line.length() != 6) continue;
-
-    // Parse RGB hex
-    long rgb = strtol(line.c_str(), NULL, 16);
-    uint8_t r = (rgb >> 16) & 0xFF;
-    uint8_t g = (rgb >> 8) & 0xFF;
-    uint8_t b = rgb & 0xFF;
-
-    // Convert to RGB565
-    colors[colorCount++] = RGB565(r, g, b);
-  }
-
-  file.close();
-
-  // Validate size (must be exactly 4, 8, or 16)
-  if (colorCount != 4 && colorCount != 8 && colorCount != 16) {
+  constexpr size_t kMaxPaletteFileSize = 4096;
+  const size_t fileSize = Filesystem::fileSize(filepath);
+  if (fileSize == 0 || fileSize > kMaxPaletteFileSize) {
     return false;
   }
 
-  // Wrap remaining slots cyclically (for 4/8 color palettes)
-  // For 8-color palette: indices 9-16 map to colors 1-8
-  // For 4-color palette: indices 5-16 map to colors 1-4 repeated
-  for (uint8_t i = colorCount; i < 16; i++) {
-    colors[i] = colors[i % colorCount];
+  uint8_t* contents = static_cast<uint8_t*>(malloc(fileSize));
+  if (contents == nullptr) {
+    return false;
   }
 
-  *size = colorCount;
+  size_t bytesRead = 0;
+  bitmap16::Palette::Parsed parsed;
+  const bool loaded =
+      Filesystem::readFile(filepath, contents, fileSize, bytesRead) &&
+      bitmap16::Palette::parseLospecHex(
+          reinterpret_cast<const char*>(contents), bytesRead, parsed);
+  free(contents);
+  if (!loaded) {
+    return false;
+  }
+
+  memcpy(colors, parsed.colors, sizeof(parsed.colors));
+  *size = parsed.size;
   return true;
+}
+
+bool loadUserPaletteEntry(const Filesystem::FileInfo& file, void*) {
+  if (file.isDirectory || totalPaletteCount >= 32) {
+    return totalPaletteCount < 32;
+  }
+
+  String filename(file.name);
+  const int separator = filename.lastIndexOf('/');
+  if (separator >= 0) {
+    filename = filename.substring(separator + 1);
+  }
+  if (!filename.endsWith(".hex")) {
+    return true;
+  }
+
+  uint16_t* colors = static_cast<uint16_t*>(malloc(16 * sizeof(uint16_t)));
+  char* name = static_cast<char*>(malloc(32));
+  if (colors == nullptr || name == nullptr) {
+    free(colors);
+    free(name);
+    return false;
+  }
+
+  uint8_t size = 0;
+  String filepath = String("/bitmap16dx/palettes/") + filename;
+  if (!loadPaletteFromHex(filepath.c_str(), colors, &size)) {
+    free(colors);
+    free(name);
+    return true;
+  }
+
+  String paletteName = filename.substring(0, filename.length() - 4);
+  paletteName.toUpperCase();
+  paletteName.replace("-", " ");
+  paletteName.replace("_", " ");
+  strncpy(name, paletteName.c_str(), 31);
+  name[31] = '\0';
+
+  allPalettes[totalPaletteCount] = colors;
+  allPaletteNames[totalPaletteCount] = name;
+  allPaletteSizes[totalPaletteCount] = size;
+  paletteIsUserLoaded[totalPaletteCount] = true;
+  totalPaletteCount++;
+  return totalPaletteCount < 32;
 }
 
 // Load user palettes from SD card /bitmap16dx/palettes/ folder
 void loadUserPalettes() {
-  // Check if /bitmap16dx/palettes folder exists
-  File root = SD.open("/bitmap16dx/palettes");
-  if (!root || !root.isDirectory()) {
-    // Try to create the folder
-    if (SD.mkdir("/bitmap16dx/palettes")) {
-      // Try opening again
-      root = SD.open("/bitmap16dx/palettes");
-      if (!root || !root.isDirectory()) {
-        return;
-      }
-    } else {
-      return;
-    }
+  if (!Filesystem::createDirectory("/bitmap16dx/palettes")) {
+    return;
   }
-
-  File file = root.openNextFile();
-  while (file && totalPaletteCount < 32) {
-    String filename = String(file.name());
-
-    // Only process .hex files
-    if (!file.isDirectory() && filename.endsWith(".hex")) {
-      // Allocate memory for this palette
-      uint16_t* colors = (uint16_t*)malloc(16 * sizeof(uint16_t));
-      char* name = (char*)malloc(32);
-      uint8_t size;
-
-      // Try to load palette
-      String filepath = String("/bitmap16dx/palettes/") + filename;
-      if (loadPaletteFromHex(filepath.c_str(), colors, &size)) {
-        // Extract name from filename (remove .hex, convert to uppercase)
-        String paletteName = filename.substring(0, filename.length() - 4);
-        paletteName.toUpperCase();
-        paletteName.replace("-", " ");
-        paletteName.replace("_", " ");
-        strncpy(name, paletteName.c_str(), 31);
-        name[31] = '\0';
-
-        // Add to catalog
-        allPalettes[totalPaletteCount] = colors;
-        allPaletteNames[totalPaletteCount] = name;
-        allPaletteSizes[totalPaletteCount] = size;
-        paletteIsUserLoaded[totalPaletteCount] = true;
-
-        totalPaletteCount++;
-      } else {
-        // Invalid palette - free memory and skip silently
-        free(colors);
-        free(name);
-      }
-    }
-
-    file = root.openNextFile();
-  }
-
-  root.close();
+  Filesystem::listDirectory(
+      "/bitmap16dx/palettes", loadUserPaletteEntry, nullptr);
 }
 
 // Update the filtered palette list based on current filter settings
@@ -4371,80 +2813,27 @@ void updatePaletteFilter() {
 // LED MATRIX FUNCTIONS (8×8 WS2812 RGB LEDs)
 // ============================================================================
 
-/**
- * Convert 2D LED grid coordinates to linear LED index.
- * Supports both 1 unit (8×8) and 4 units (16×16) configurations.
- *
- * For 4 units, they're arranged in a 2×2 grid:
- *   [Unit 0] [Unit 1]    Each unit is 8×8 LEDs (64 LEDs each)
- *   [Unit 3] [Unit 2]    Total: 256 LEDs in 16×16 grid
- *
- * Physical layout: 0=top-left, 1=top-right, 2=bottom-right, 3=bottom-left
- * Units 0 and 3 are rotated 90° clockwise due to physical connector alignment
- */
-uint8_t getLEDIndex(uint8_t x, uint8_t y) {
-    uint8_t maxIdx = (rgbMatrixUnits == 1) ? 7 : 15;
-
-    // Apply global rotation based on setting
-    uint8_t adjX = x, adjY = y;
-    switch (matrixRotation) {
-        case 0:  // 0° - no rotation
-            adjX = x; adjY = y;
-            break;
-        case 1:  // 90° CW
-            adjX = maxIdx - y; adjY = x;
-            break;
-        case 2:  // 180°
-            adjX = maxIdx - x; adjY = maxIdx - y;
-            break;
-        case 3:  // 270° CW
-            adjX = y; adjY = maxIdx - x;
-            break;
-    }
-
-    if (rgbMatrixUnits == 1) {
-        return adjY * 8 + adjX;
-    } else {
-        // Four 8×8 units in 16×16 grid
-        uint8_t unitX = adjX / 8;  // 0 (left) or 1 (right)
-        uint8_t unitY = adjY / 8;  // 0 (top) or 1 (bottom)
-        uint8_t localX = adjX % 8;
-        uint8_t localY = adjY % 8;
-
-        // Unit number based on physical layout:
-        // Top row: 0 (left), 1 (right)
-        // Bottom row: 3 (left), 2 (right)
-        uint8_t unit;
-        if (unitY == 0) {
-            unit = unitX;
-        } else {
-            unit = (unitX == 0) ? 3 : 2;
-        }
-
-        // Apply rotation corrections for serpentine wiring within units
-        uint8_t rotatedX = localX;
-        uint8_t rotatedY = localY;
-
-        if (unit == 0 || unit == 3) {
-            rotatedX = 7 - localX;
-            rotatedY = 7 - localY;
-        }
-
-        return (unit * 64) + (rotatedY * 8) + rotatedX;
-    }
+void clearLEDMatrix() {
+  LEDMatrix::clear();
+  LEDMatrix::show();
 }
 
-/**
- * Convert RGB565 color to RGB888 for WS2812 LEDs.
- * RGB565: 5 bits red, 6 bits green, 5 bits blue (16-bit)
- * RGB888: 8 bits per channel (24-bit)
- * This expands the color depth from 65K to 16.7M colors.
- */
-CRGB rgb565ToRGB888(uint16_t rgb565) {
-    uint8_t r = ((rgb565 >> 11) & 0x1F) * 255 / 31;  // 5-bit → 8-bit
-    uint8_t g = ((rgb565 >> 5) & 0x3F) * 255 / 63;   // 6-bit → 8-bit
-    uint8_t b = (rgb565 & 0x1F) * 255 / 31;          // 5-bit → 8-bit
-    return CRGB(r, g, b);
+void setLEDCell(
+    uint8_t sourceGridSize,
+    uint8_t x,
+    uint8_t y,
+    const bitmap16::LedMapping::Rgb888& color) {
+  if (sourceGridSize == 8 && rgbMatrixUnits == 4) {
+    for (uint8_t dy = 0; dy < 2; ++dy) {
+      for (uint8_t dx = 0; dx < 2; ++dx) {
+        LEDMatrix::setPixelRgb888(
+            x * 2 + dx, y * 2 + dy, color.red, color.green, color.blue);
+      }
+    }
+    return;
+  }
+  LEDMatrix::setPixelRgb888(
+      x, y, color.red, color.green, color.blue);
 }
 
 /**
@@ -4461,78 +2850,36 @@ CRGB rgb565ToRGB888(uint16_t rgb565) {
  * @param showCursor If true, highlights cursor position (default). If false, shows clean canvas.
  */
 void updateLEDMatrix(bool showCursor) {
-    if (!ledMatrixEnabled) {
-        // LED matrix is disabled - turn off all LEDs
-        FastLED.clear();
-        FastLED.show();
-        return;
-    }
+  if (!LEDMatrix::isEnabled()) {
+    return;
+  }
+  if (editorState.gridSize == 16 && rgbMatrixUnits == 1) {
+    clearLEDMatrix();
+    return;
+  }
 
-    // Check if current grid size fits on available LED matrix
-    if (currentGridSize == 16 && rgbMatrixUnits == 1) {
-        // Can't fit 16×16 canvas on 8×8 LED matrix (1 unit)
-        FastLED.clear();
-        FastLED.show();
-        return;
-    }
-
-    // Mirror each canvas cell to the LED matrix
-    // Three display modes:
-    //   1. 8×8 canvas + 1 unit → 1:1 (8×8 LEDs)
-    //   2. 8×8 canvas + 4 units → scaled 2× (16×16 LEDs, each pixel = 2×2 block)
-    //   3. 16×16 canvas + 4 units → 1:1 (16×16 LEDs)
-
-    uint8_t gridSize = currentGridSize;  // 8 or 16
-
-    for (uint8_t cy = 0; cy < gridSize; cy++) {
-        for (uint8_t cx = 0; cx < gridSize; cx++) {
-            uint8_t pixelValue = canvas[cy][cx];
-            bool isCursor = showCursor && (cx == cursorX && cy == cursorY);
-
-            // Determine color for this canvas pixel
-            CRGB color;
-            if (pixelValue == 0) {
-                // Empty cell: show dim white for cursor, black otherwise
-                color = isCursor ? CRGB(40, 40, 40) : CRGB::Black;
-            } else {
-                // Filled cell: use palette color (index 1-16)
-                uint16_t rgb565 = activeSketch.paletteColors[pixelValue - 1];
-                color = rgb565ToRGB888(rgb565);
-
-                // Brighten cursor position by adding white
-                if (isCursor) {
-                    color.r = min(255, color.r + 80);
-                    color.g = min(255, color.g + 80);
-                    color.b = min(255, color.b + 80);
-                }
-            }
-
-            // Map canvas pixel to LED(s)
-            if (gridSize == 16 && rgbMatrixUnits == 4) {
-                // Mode 3: 16×16 canvas → 16×16 LEDs (1:1 mapping)
-                uint8_t ledIndex = getLEDIndex(cx, cy);
-                leds[ledIndex] = color;
-            } else if (gridSize == 8 && rgbMatrixUnits == 1) {
-                // Mode 1: 8×8 canvas → 8×8 LEDs (1:1 mapping)
-                uint8_t ledIndex = getLEDIndex(cx, cy);
-                leds[ledIndex] = color;
-            } else if (gridSize == 8 && rgbMatrixUnits == 4) {
-                // Mode 2: 8×8 canvas → 16×16 LEDs (scale 2×)
-                // Each canvas pixel becomes a 2×2 block of LEDs
-                for (uint8_t dy = 0; dy < 2; dy++) {
-                    for (uint8_t dx = 0; dx < 2; dx++) {
-                        uint8_t ledX = cx * 2 + dx;
-                        uint8_t ledY = cy * 2 + dy;
-                        uint8_t ledIndex = getLEDIndex(ledX, ledY);
-                        leds[ledIndex] = color;
-                    }
-                }
-            }
+  for (uint8_t y = 0; y < editorState.gridSize; ++y) {
+    for (uint8_t x = 0; x < editorState.gridSize; ++x) {
+      const uint8_t pixelValue = editorState.canvas[y][x];
+      const bool isCursor = showCursor && x == editorState.cursorX && y == editorState.cursorY;
+      bitmap16::LedMapping::Rgb888 color = {};
+      if (pixelValue == 0) {
+        if (isCursor) {
+          color = {40, 40, 40};
         }
+      } else {
+        color = bitmap16::LedMapping::rgb565ToRgb888(
+            documentState.sketch.paletteColors[pixelValue - 1]);
+        if (isCursor) {
+          color.red = min(255, color.red + 80);
+          color.green = min(255, color.green + 80);
+          color.blue = min(255, color.blue + 80);
+        }
+      }
+      setLEDCell(editorState.gridSize, x, y, color);
     }
-
-    // Update the physical LEDs
-    FastLED.show();
+  }
+  LEDMatrix::show();
 }
 
 /**
@@ -4549,70 +2896,26 @@ void updateLEDMatrix(bool showCursor) {
  * Used for both canvas preview and gallery preview modes.
  */
 void updateLEDMatrixFromSketch(Sketch& sketch) {
-    if (!ledMatrixEnabled) {
-        // LED matrix is disabled - turn off all LEDs
-        FastLED.clear();
-        FastLED.show();
-        return;
+  if (!LEDMatrix::isEnabled()) {
+    return;
+  }
+  if (sketch.gridSize == 16 && rgbMatrixUnits == 1) {
+    clearLEDMatrix();
+    return;
+  }
+
+  for (uint8_t y = 0; y < sketch.gridSize; ++y) {
+    for (uint8_t x = 0; x < sketch.gridSize; ++x) {
+      bitmap16::LedMapping::Rgb888 color = {};
+      const uint8_t pixelValue = sketch.pixels[y][x];
+      if (pixelValue > 0) {
+        color = bitmap16::LedMapping::rgb565ToRgb888(
+            sketch.paletteColors[pixelValue - 1]);
+      }
+      setLEDCell(sketch.gridSize, x, y, color);
     }
-
-    // Check if sketch grid size fits on available LED matrix
-    if (sketch.gridSize == 16 && rgbMatrixUnits == 1) {
-        // Can't fit 16×16 sketch on 8×8 LED matrix (1 unit)
-        FastLED.clear();
-        FastLED.show();
-        return;
-    }
-
-    // Mirror each sketch cell to the LED matrix
-    // Three display modes:
-    //   1. 8×8 sketch + 1 unit → 1:1 (8×8 LEDs)
-    //   2. 8×8 sketch + 4 units → scaled 2× (16×16 LEDs, each pixel = 2×2 block)
-    //   3. 16×16 sketch + 4 units → 1:1 (16×16 LEDs)
-
-    uint8_t gridSize = sketch.gridSize;  // 8 or 16
-
-    for (uint8_t sy = 0; sy < gridSize; sy++) {
-        for (uint8_t sx = 0; sx < gridSize; sx++) {
-            uint8_t pixelValue = sketch.pixels[sy][sx];
-
-            // Determine color for this sketch pixel
-            CRGB color;
-            if (pixelValue == 0) {
-                // Empty cell: black (no cursor in preview mode)
-                color = CRGB::Black;
-            } else {
-                // Filled cell: use palette color (index 1-16)
-                uint16_t rgb565 = sketch.paletteColors[pixelValue - 1];
-                color = rgb565ToRGB888(rgb565);
-            }
-
-            // Map sketch pixel to LED(s)
-            if (gridSize == 16 && rgbMatrixUnits == 4) {
-                // Mode 3: 16×16 sketch → 16×16 LEDs (1:1 mapping)
-                uint8_t ledIndex = getLEDIndex(sx, sy);
-                leds[ledIndex] = color;
-            } else if (gridSize == 8 && rgbMatrixUnits == 1) {
-                // Mode 1: 8×8 sketch → 8×8 LEDs (1:1 mapping)
-                uint8_t ledIndex = getLEDIndex(sx, sy);
-                leds[ledIndex] = color;
-            } else if (gridSize == 8 && rgbMatrixUnits == 4) {
-                // Mode 2: 8×8 sketch → 16×16 LEDs (scale 2×)
-                // Each sketch pixel becomes a 2×2 block of LEDs
-                for (uint8_t dy = 0; dy < 2; dy++) {
-                    for (uint8_t dx = 0; dx < 2; dx++) {
-                        uint8_t ledX = sx * 2 + dx;
-                        uint8_t ledY = sy * 2 + dy;
-                        uint8_t ledIndex = getLEDIndex(ledX, ledY);
-                        leds[ledIndex] = color;
-                    }
-                }
-            }
-        }
-    }
-
-    // Update the physical LEDs
-    FastLED.show();
+  }
+  LEDMatrix::show();
 }
 
 /**
@@ -4620,21 +2923,20 @@ void updateLEDMatrixFromSketch(Sketch& sketch) {
  * Shows brief status message on main display.
  */
 void toggleLEDMatrix() {
-    ledMatrixEnabled = !ledMatrixEnabled;
+    const bool enabled = !LEDMatrix::isEnabled();
+    LEDMatrix::setEnabled(enabled);
 
     // Save preference
-    preferences.begin("bitmap16dx", false);
-    preferences.putBool("ledEnabled", ledMatrixEnabled);
-    preferences.end();
+    PreferenceStore::writeBool("ledEnabled", enabled);
 
     // Visual feedback
-    if (ledMatrixEnabled) {
+    if (enabled) {
         // Show a brief "DX" pattern to confirm hardware is working
         // Pattern displays as a simple checkmark/confirmation graphic
-        FastLED.clear();
+        LEDMatrix::clear();
 
         // Set brightness to 10% for startup pattern
-        FastLED.setBrightness((10 * 255) / 100);
+        LEDMatrix::setBrightness(10);
 
         // Define the "DX" pattern LEDs (in non-rotated coordinates)
         // Pattern:  . X X .   X . X .
@@ -4652,24 +2954,20 @@ void toggleLEDMatrix() {
             uint8_t x = index % 8;
             uint8_t y = index / 8;
 
-            // Use getLEDIndex for consistent rotation
-            int rotatedIndex = getLEDIndex(x, y);
-
-            leds[rotatedIndex] = CRGB::White;
+            LEDMatrix::setPixelRgb888(x, y, 255, 255, 255);
         }
-        FastLED.show();
+        LEDMatrix::show();
         delay(1000);  // Hold pattern for 1 second
 
         // Restore user's brightness setting
-        FastLED.setBrightness((ledBrightness * 255) / 100);
+        LEDMatrix::setBrightness(ledBrightness);
 
         // Turn on: immediately update LEDs with current canvas
         LED_CANVAS_UPDATED();
         updateLEDMatrix();
     } else {
         // Turn off: clear all LEDs
-        FastLED.clear();
-        FastLED.show();
+        LEDMatrix::setEnabled(false);
     }
 }
 
@@ -4678,7 +2976,7 @@ void toggleLEDMatrix() {
  * @param delta: +1 to increase, -1 to decrease
  */
 void adjustLEDBrightness(int8_t delta) {
-    if (!ledMatrixEnabled) return;  // No-op if disabled
+    if (!LEDMatrix::isEnabled()) return;  // No-op if disabled
 
     // Adjust brightness in 1% increments
     int16_t newBrightness = ledBrightness + delta;
@@ -4692,14 +2990,11 @@ void adjustLEDBrightness(int8_t delta) {
 
     ledBrightness = (uint8_t)newBrightness;
 
-    // Apply new brightness (FastLED uses 0-255 scale)
-    FastLED.setBrightness((ledBrightness * 255) / 100);
-    FastLED.show();  // Refresh LEDs with new brightness
+    LEDMatrix::setBrightness(ledBrightness);
+    LEDMatrix::show();
 
     // Save preference
-    preferences.begin("bitmap16dx", false);
-    preferences.putUChar("ledBright", ledBrightness);
-    preferences.end();
+    PreferenceStore::writeUInt8("ledBright", ledBrightness);
 }
 #endif // ENABLE_LED_MATRIX
 
@@ -4718,6 +3013,9 @@ void setup() {
   M5Cardputer.begin(cfg);
 
   // Initialize hardware through the new platform adapters.
+#if ENABLE_CANVAS_PROOF_TELEMETRY
+  Serial.begin(115200);
+#endif
   IMU::init();
   Indicator::init();
   Input::init();
@@ -4731,55 +3029,61 @@ void setup() {
     detectedBoardName = "M5Cardputer ADV";
   }
 
-  // Load saved brightness setting from preferences
-  // Default to 80% if never saved before
-  preferences.begin("bitmap16dx", false);
-  displayBrightness = preferences.getUChar("brightness", 80);
+  bitmap16::Settings storedSettings;
+  storedSettings.displayBrightness =
+      PreferenceStore::readUInt8("brightness", 80);
+  storedSettings.theme =
+      PreferenceStore::readBool("darkMode", false)
+          ? bitmap16::ThemeId::Dark
+          : bitmap16::ThemeId::Light;
+  storedSettings.defaultGridSize =
+      PreferenceStore::readUInt8("defaultGrid", 8);
+  storedSettings.matrixUnits =
+      PreferenceStore::readUInt8("puzzleUnits", 1);
+  storedSettings.matrixRotation =
+      PreferenceStore::readUInt8("matrixRot", 2);
+  storedSettings.exportFormat =
+      PreferenceStore::readBool("exportRGB565", false)
+          ? bitmap16::ExportFormat::Rgb565
+          : bitmap16::ExportFormat::Rgb888;
+  storedSettings.shakeUndoEnabled =
+      PreferenceStore::readBool("shakeUndo", false);
+  storedSettings.matrixBrightness =
+      PreferenceStore::readUInt8("ledBright", DEFAULT_LED_BRIGHTNESS);
+  storedSettings = bitmap16::normalizeSettings(storedSettings);
 
-  // Load theme preference (default to light mode)
-  bool darkMode = preferences.getBool("darkMode", false);
-  currentTheme = darkMode ? &THEME_DARK : &THEME_LIGHT;
+  displayBrightness = storedSettings.displayBrightness;
+  currentTheme = storedSettings.theme == bitmap16::ThemeId::Dark
+      ? &THEME_DARK
+      : &THEME_LIGHT;
+  defaultGridSize = storedSettings.defaultGridSize;
+  rgbMatrixUnits = storedSettings.matrixUnits;
+  matrixRotation = storedSettings.matrixRotation;
+  exportRGB565 =
+      storedSettings.exportFormat == bitmap16::ExportFormat::Rgb565;
+  shakeUndoEnabled = storedSettings.shakeUndoEnabled;
 
-  // Load settings preferences
-  defaultGridSize = preferences.getUChar("defaultGrid", 8);      // Default: 8×8
-  rgbMatrixUnits = preferences.getUChar("puzzleUnits", 1);       // Default: 1 unit (64 LEDs)
-  matrixRotation = preferences.getUChar("matrixRot", 2);         // Default: 180° (legacy orientation)
-  exportRGB565 = preferences.getBool("exportRGB565", false);     // Default: RGB888
-  shakeUndoEnabled = preferences.getBool("shakeUndo", false);    // Default: disabled
-
-  preferences.end();
-
-  // Set initial display brightness
-  // displayBrightness is stored as percentage (10-100%), convert to hardware range (0-255)
-  uint8_t hardwareBrightness = (displayBrightness * 255) / 100;
-  setDisplayBrightness(hardwareBrightness);
+  Display::setBrightness(displayBrightness);
 
 #if ENABLE_LED_MATRIX
   // Initialize LED matrix (8×8 WS2812E RGB LEDs)
-  preferences.begin("bitmap16dx", true);  // Read-only
-  ledMatrixEnabled = preferences.getBool("ledEnabled", false);  // Default: OFF
-  ledBrightness = preferences.getUChar("ledBright", DEFAULT_LED_BRIGHTNESS);
-  preferences.end();
+  const bool ledMatrixEnabled =
+      PreferenceStore::readBool("ledEnabled", false);
+  ledBrightness = storedSettings.matrixBrightness;
 
-  // Configure FastLED for WS2812 LEDs
-  // WS2812E uses GRB color order
-  // Always initialize with maximum LED count (256)
-  // Active LEDs are controlled by rgbMatrixUnits setting
-  FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, 256);
-  FastLED.setBrightness((ledBrightness * 255) / 100);
-  FastLED.clear();
-  FastLED.show();
+  LEDMatrix::init();
+  LEDMatrix::setConfiguration(rgbMatrixUnits, matrixRotation);
+  LEDMatrix::setBrightness(ledBrightness);
+  LEDMatrix::setEnabled(ledMatrixEnabled);
 #endif // ENABLE_LED_MATRIX
 
 #if ENABLE_BLUETOOTH
   // Initialize Bluetooth if it was enabled
-  preferences.begin("bitmap16dx", true);  // Read-only
-  btEnabled = preferences.getBool("btEnabled", false);  // Default: OFF
-  btHasBondedDevice = preferences.getBool("btHasBonded", false);
+  btEnabled = PreferenceStore::readBool("btEnabled", false);
+  btHasBondedDevice = PreferenceStore::readBool("btHasBonded", false);
   if (btHasBondedDevice) {
-    preferences.getBytes("btBonded", btBondedAddr, 6);
+    PreferenceStore::readBytes("btBonded", btBondedAddr, 6);
   }
-  preferences.end();
 
   // Note: BLE stack is only initialized when scanning to save memory
   // Auto-reconnect would require async scanning which blocks
@@ -4797,10 +3101,10 @@ void setup() {
   // Show boot screen with logo
   showBootScreen();
 
-  // Note: Canvas sprites (palette, settings, memory) are created on-demand
-  // when entering each view to conserve memory (~64KB each)
-  paletteCanvasAvailable = false;
-  settingsCanvasAvailable = false;
+  // Keep one shared framebuffer alive across views. Individual views reuse it.
+  Display::init();
+  viewState.palette.canvasAvailable = false;
+  viewState.settings.canvasAvailable = false;
 
   // Initialize active sketch as blank
   initializeActiveSketch();
@@ -4808,31 +3112,8 @@ void setup() {
   // Create new blank sketch (will use defaultGridSize from settings)
   createNewSketch();
 
-  // Clear the screen to background color
-  M5Cardputer.Display.fillScreen(currentTheme->background);
-
-  // Pre-clear the status message area (left of grid) so future fillRects look consistent
-  // Grid starts at x=56, so clear from x=3 to x=55 (width=53)
-  M5Cardputer.Display.fillRect(3, 124, 53, 11, currentTheme->background);
-
   // Boot directly to Draw View (not Memory View)
-  // Draw the grid first (fills the area)
-  drawGrid();
-
-  // Draw the palette column
-  drawPalette();
-
-  // Draw the initial cursor
-  drawCursor();
-
-  // Draw icons in upper left corner
-  drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-  drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-  drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-  // drawIcon(3, 84, ICON_INFO, ICON_INFO_WIDTH, ICON_INFO_HEIGHT, ICON_INFO_IS_INDEXED);
-
-  // Draw initial battery indicator
-  drawBatteryIndicator();
+  drawSharedCanvasView();
 
   // Phase 3 lifecycle: the App now owns frame dispatch while the existing
   // handlers remain authoritative during the behavior-preserving migration.
@@ -4866,127 +3147,32 @@ void handleChargingMode(const bitmap16::InputFrame& input) {
 
   // Throttle to ~30fps
   unsigned long now = millis();
-  if (now - lastChargeFrameTime < CHARGE_FRAME_MS) {
+  if (now - viewState.charging.lastFrameTime < CHARGE_FRAME_MS) {
     return;
   }
-  lastChargeFrameTime = now;
+  viewState.charging.lastFrameTime = now;
 
   // Update battery level periodically
-  if (now - lastChargeBatteryCheck >= BATTERY_CHECK_INTERVAL) {
-    chargeBatteryPercent = Power::getBatteryPercent();
-    lastChargeBatteryCheck = now;
-    // Update battery icon pointer
-    if (chargeBatteryPercent < 10) chargeIcons[3].icon = ICON_BATTERY_0;
-    else if (chargeBatteryPercent < 50) chargeIcons[3].icon = ICON_BATTERY_10;
-    else if (chargeBatteryPercent < 90) chargeIcons[3].icon = ICON_BATTERY_50;
-    else chargeIcons[3].icon = ICON_BATTERY_90;
+  if (now - viewState.charging.lastBatteryCheck >= BATTERY_CHECK_INTERVAL) {
+    viewState.charging.batteryPercent = Power::getBatteryPercent();
+    viewState.charging.lastBatteryCheck = now;
+    bitmap16::ChargingView::setBattery(
+        viewState.charging.animation,
+        viewState.charging.batteryPercent,
+        chargingBatteryIcon(viewState.charging.batteryPercent));
   }
 
-  const int iconSize = 24;
-  const int sketchSize = 48;
-  int activeCount = chargeSketchLoaded ? CHARGE_ICON_COUNT : CHARGE_ICON_COUNT - 1;
-
-  // Update positions
-  for (int i = 0; i < activeCount; i++) {
-    chargeIcons[i].x += chargeIcons[i].dx;
-    chargeIcons[i].y += chargeIcons[i].dy;
-
-    // Wall collision
-    int boundsW = (i == 4) ? sketchSize : (i == 3) ? 54 : iconSize;
-    int boundsH = (i == 4) ? sketchSize : iconSize;
-    if (chargeIcons[i].x <= 0) { chargeIcons[i].x = 0; chargeIcons[i].dx = -chargeIcons[i].dx; }
-    if (chargeIcons[i].x >= 240 - boundsW) { chargeIcons[i].x = 240 - boundsW; chargeIcons[i].dx = -chargeIcons[i].dx; }
-    if (chargeIcons[i].y <= 0) { chargeIcons[i].y = 0; chargeIcons[i].dy = -chargeIcons[i].dy; }
-    if (chargeIcons[i].y >= 135 - boundsH) { chargeIcons[i].y = 135 - boundsH; chargeIcons[i].dy = -chargeIcons[i].dy; }
-  }
-
-  // Icon-icon collision detection
-  const int collisionDist = 16;
-  for (int a = 0; a < activeCount; a++) {
-    for (int b = a + 1; b < activeCount; b++) {
-      int distThresh = (a == 4 || b == 4) ? 30 : collisionDist;
-      if (abs(chargeIcons[a].x - chargeIcons[b].x) < distThresh &&
-          abs(chargeIcons[a].y - chargeIcons[b].y) < distThresh) {
-        float tmpDx = chargeIcons[a].dx;
-        float tmpDy = chargeIcons[a].dy;
-        chargeIcons[a].dx = chargeIcons[b].dx;
-        chargeIcons[a].dy = chargeIcons[b].dy;
-        chargeIcons[b].dx = tmpDx;
-        chargeIcons[b].dy = tmpDy;
-        chargeIcons[a].x += chargeIcons[a].dx * 2;
-        chargeIcons[a].y += chargeIcons[a].dy * 2;
-        chargeIcons[b].x += chargeIcons[b].dx * 2;
-        chargeIcons[b].y += chargeIcons[b].dy * 2;
-      }
-    }
-  }
-
-  // Render frame to canvas (tear-free)
-  if (chargeCanvasAvailable) {
-    chargeCanvas.fillSprite(TFT_BLACK);
-
-    // Draw icons to canvas
-    for (int i = 0; i < activeCount; i++) {
-      if (i == 4 && chargeSketchLoaded) {
-        // Blit sketch sprite into canvas
-        chargeSketchSprite.pushSprite(&chargeCanvas, (int)chargeIcons[i].x, (int)chargeIcons[i].y, TFT_BLACK);
-      } else {
-        // Draw 2-bit indexed icon to canvas
-        const unsigned char* bitmap = chargeIcons[i].icon;
-        int ix = (int)chargeIcons[i].x;
-        int iy = (int)chargeIcons[i].y;
-        for (int row = 0; row < iconSize; row++) {
-          for (int col = 0; col < iconSize; col++) {
-            int pixelIndex = row * iconSize + col;
-            int byteIndex = pixelIndex / 4;
-            int bitShift = (3 - (pixelIndex % 4)) * 2;
-            uint8_t byte = pgm_read_byte(&bitmap[byteIndex]);
-            uint8_t value = (byte >> bitShift) & 0x03;
-            if (value == 1) {
-              chargeCanvas.drawPixel(ix + col, iy + row, THEME_DARK.iconDark);
-            } else if (value == 2) {
-              chargeCanvas.drawPixel(ix + col, iy + row, THEME_DARK.iconLight);
-            }
-          }
-        }
-      }
-    }
-
-    // Draw battery percentage text
-    chargeCanvas.setTextColor(THEME_DARK.text);
-    chargeCanvas.setTextSize(1);
-    chargeCanvas.setCursor((int)chargeIcons[3].x + 28, (int)chargeIcons[3].y + 8);
-    chargeCanvas.printf("%d%%", chargeBatteryPercent);
-
-    // Push entire frame at once
-    chargeCanvas.pushSprite(0, 0);
-  } else {
-    // Fallback: draw directly (with flicker)
-    M5Cardputer.Display.fillScreen(TFT_BLACK);
-    for (int i = 0; i < activeCount; i++) {
-      if (i == 4 && chargeSketchLoaded) {
-        chargeSketchSprite.pushSprite((int)chargeIcons[i].x, (int)chargeIcons[i].y, TFT_BLACK);
-      } else {
-        drawIcon((int)chargeIcons[i].x, (int)chargeIcons[i].y, chargeIcons[i].icon, 24, 24, true);
-      }
-    }
-    M5Cardputer.Display.setTextColor(THEME_DARK.text);
-    M5Cardputer.Display.setTextSize(1);
-    M5Cardputer.Display.setCursor((int)chargeIcons[3].x + 28, (int)chargeIcons[3].y + 8);
-    M5Cardputer.Display.printf("%d%%", chargeBatteryPercent);
-  }
+  bitmap16::ChargingView::update(
+      viewState.charging.animation,
+      M5Cardputer.Display.width(),
+      M5Cardputer.Display.height());
+  drawChargingFrame();
 }
 
 /**
  * Handle Help View input and rendering
  */
 void handleHelpView(const bitmap16::InputFrame& input) {
-#if ENABLE_LED_MATRIX
-  const int totalHelpItems = 22;
-#else
-  const int totalHelpItems = 20;
-#endif
-
   if (input.event == bitmap16::InputEvent::Escape ||
       (input.event == bitmap16::InputEvent::Character &&
        (input.character == 'h' || input.character == 'H'))) {
@@ -5003,12 +3189,16 @@ void handleHelpView(const bitmap16::InputFrame& input) {
   }
 #endif
 
-  if (input.event == bitmap16::InputEvent::Up && helpViewCursor > 0) {
-    --helpViewCursor;
-    drawHelpView();
-  } else if (input.event == bitmap16::InputEvent::Down &&
-             helpViewCursor < totalHelpItems - 1) {
-    ++helpViewCursor;
+  int helpMovement = 0;
+  if (input.event == bitmap16::InputEvent::Up) {
+    helpMovement = -1;
+  } else if (input.event == bitmap16::InputEvent::Down) {
+    helpMovement = 1;
+  }
+  if (bitmap16::HelpView::moveCursor(
+          viewState.help.navigation,
+          helpMovement,
+          ENABLE_LED_MATRIX != 0)) {
     drawHelpView();
   }
 
@@ -5022,14 +3212,16 @@ void handleHelpView(const bitmap16::InputFrame& input) {
   }
   btPrevEscHelp = btEscape;
 
-  if (btUp && !btPrevUpHelp && helpViewCursor > 0) {
-    helpViewCursor--;
+  if (btUp && !btPrevUpHelp &&
+      bitmap16::HelpView::moveCursor(
+          viewState.help.navigation, -1, ENABLE_LED_MATRIX != 0)) {
     drawHelpView();
   }
   btPrevUpHelp = btUp;
 
-  if (btDown && !btPrevDownHelp && helpViewCursor < totalHelpItems - 1) {
-    helpViewCursor++;
+  if (btDown && !btPrevDownHelp &&
+      bitmap16::HelpView::moveCursor(
+          viewState.help.navigation, 1, ENABLE_LED_MATRIX != 0)) {
     drawHelpView();
   }
   btPrevDownHelp = btDown;
@@ -5054,49 +3246,29 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
   static bool memoryViewNeedsRedraw = true;
   static int lastMemoryViewCursor = -1;
 
-  // Check if scroll animation is in progress
-  bool isScrolling = fabs(memoryViewScrollPos - (float)memoryViewScrollOffset) > 0.5f;
-
-  // Check if cursor breathing animation should redraw
-  // Always animate breathing for visual feedback
-  bool needsCursorAnimationRedraw = true;
-
-  // Redraw if cursor moved, first time, scrolling, or cursor animation active
-  if (memoryViewNeedsRedraw || lastMemoryViewCursor != memoryViewCursor || isScrolling || needsCursorAnimationRedraw) {
-    // Throttle animation redraws to maintain smooth framerate (always throttle, not just when scrolling)
+  {
     unsigned long now = millis();
-    if (now - lastMemoryAnimTime < MEMORY_ANIM_FRAME_MS) {
-      // Skip this frame, too soon
+    if (now - viewState.memory.lastAnimationTime < MEMORY_ANIM_FRAME_MS) {
     } else {
-      // Update cursor animation phase using time-based animation (eliminates frame timing issues)
-      // Calculate phase directly from time for perfectly smooth animation
-      unsigned long deltaTime = now - lastMemoryAnimTime;
-
-      // Clamp deltaTime to prevent huge jumps (max 100ms = ~10 dropped frames)
+      unsigned long deltaTime = now - viewState.memory.lastAnimationTime;
       if (deltaTime > 100) deltaTime = 100;
-
-      float timeIncrement = (float)deltaTime / 1000.0f * MEMORY_CURSOR_ANIM_SPEED * 60.0f;  // Scale to ~60fps equivalent
-      memoryCursorAnimPhase += timeIncrement;
-      while (memoryCursorAnimPhase > 1.0f) {
-        memoryCursorAnimPhase -= 1.0f;  // Loop back to 0 (use while in case of large increment)
-      }
-
-      if (memoryViewNeedsRedraw) {
-        // Full redraw (includes title and thumbnails)
-        drawMemoryView(true);
-        memoryViewNeedsRedraw = false;
-      } else {
-        // Cursor moved or animating - always redraw during animation
-        drawMemoryView(false);
-      }
-      lastMemoryViewCursor = memoryViewCursor;
-      lastMemoryAnimTime = now;
+      bitmap16::MemoryView::advance(
+          viewState.memory.navigation,
+          sketchList.size(),
+          M5Cardputer.Display.width(),
+          M5Cardputer.Display.height(),
+          static_cast<float>(deltaTime) / 1000.0f,
+          MEMORY_SCROLL_SPEED);
+      drawMemoryView(memoryViewNeedsRedraw);
+      memoryViewNeedsRedraw = false;
+      lastMemoryViewCursor = viewState.memory.navigation.cursor;
+      viewState.memory.lastAnimationTime = now;
     }
   }
 
   // Check for G0 button - delete selected sketch (if not on "+")
-  if (input.actionPressed && memoryViewCursor > 0) {
-    int sketchIndex = memoryViewCursor - 1;
+  if (input.actionPressed && viewState.memory.navigation.cursor > 0) {
+    int sketchIndex = viewState.memory.navigation.cursor - 1;
     if (sketchIndex < sketchList.size()) {
       // Save sketch to undo buffer before deleting (so we can restore with Z)
       Sketch& sketchData = sketchList[sketchIndex].sketchData;
@@ -5104,27 +3276,27 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
       // Copy pixel data to undo buffer
       for (int y = 0; y < 16; y++) {
         for (int x = 0; x < 16; x++) {
-          undoCanvas[y][x] = sketchData.pixels[y][x];
+          editorState.undoCanvas[y][x] = sketchData.pixels[y][x];
         }
       }
 
       // Copy palette and grid info to undo buffer
       for (int i = 0; i < 16; i++) {
-        undoPaletteColors[i] = sketchData.paletteColors[i];
+        editorState.undoPaletteColors[i] = sketchData.paletteColors[i];
       }
-      undoPaletteSize = sketchData.paletteSize;
-      undoGridSize = sketchData.gridSize;
-      undoAvailable = true;
+      editorState.undoPaletteSize = sketchData.paletteSize;
+      editorState.undoGridSize = sketchData.gridSize;
+      editorState.undoAvailable = true;
 
       // Now delete the file
       String filename = "/bitmap16dx/sketches/" + sketchList[sketchIndex].filename;
-      SD.remove(filename.c_str());
+      Filesystem::remove(filename.c_str());
       loadSketchListFromSD();  // Refresh list (clears cached data)
 
       // Move cursor if we deleted the last item
       int totalItems = 1 + sketchList.size();
-      if (memoryViewCursor >= totalItems) {
-        memoryViewCursor = totalItems - 1;
+      if (viewState.memory.navigation.cursor >= totalItems) {
+        viewState.memory.navigation.cursor = totalItems - 1;
       }
     }
     memoryViewNeedsRedraw = true;
@@ -5132,12 +3304,12 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
   }
 
   if (input.enterPressed) {
-    if (memoryViewCursor == 0) {
+    if (viewState.memory.navigation.cursor == 0) {
       // Create new blank sketch
       createNewSketch();
     } else {
       // Open selected sketch
-      int sketchIndex = memoryViewCursor - 1;
+      int sketchIndex = viewState.memory.navigation.cursor - 1;
       if (sketchIndex < sketchList.size()) {
         openSketch(sketchList[sketchIndex].filename);
       }
@@ -5155,45 +3327,45 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
             : '\0';
     // Z key - Undo (restore last cleared sketch from memory view)
     if (command == 'z' || command == 'Z') {
-        if (undoAvailable) {
+        if (editorState.undoAvailable) {
           // Restore the undo buffer to active sketch
           // (This restores canvas-level undo, not sketch deletion)
 
           // If we have saved grid size info, restore it
-          if (undoGridSize > 0) {
-            currentGridSize = undoGridSize;
-            currentCellSize = (currentGridSize == 8) ? 16 : 8;
+          if (editorState.undoGridSize > 0) {
+            editorState.gridSize = editorState.undoGridSize;
+            editorState.cellSize = (editorState.gridSize == 8) ? 16 : 8;
 
             // Keep cursor in bounds
-            if (cursorX >= currentGridSize) cursorX = currentGridSize - 1;
-            if (cursorY >= currentGridSize) cursorY = currentGridSize - 1;
+            if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
+            if (editorState.cursorY >= editorState.gridSize) editorState.cursorY = editorState.gridSize - 1;
           }
 
           // Restore pixel data to canvas
           for (int y = 0; y < 16; y++) {
             for (int x = 0; x < 16; x++) {
-              canvas[y][x] = undoCanvas[y][x];
+              editorState.canvas[y][x] = editorState.undoCanvas[y][x];
             }
           }
 
           // Restore palette information to active sketch
-          activeSketch.paletteSize = undoPaletteSize;
-          activeSketch.gridSize = undoGridSize;
+          documentState.sketch.paletteSize = editorState.undoPaletteSize;
+          documentState.sketch.gridSize = editorState.undoGridSize;
           for (int i = 0; i < 16; i++) {
-            activeSketch.paletteColors[i] = undoPaletteColors[i];
+            documentState.sketch.paletteColors[i] = editorState.undoPaletteColors[i];
           }
 
-          activeSketch.isEmpty = false;
-          undoAvailable = false;
+          documentState.sketch.isEmpty = false;
+          editorState.undoAvailable = false;
 
           // Save restored sketch to SD card (now uses active sketch system)
           // Copy canvas to active sketch before saving
           for (int y = 0; y < 16; y++) {
             for (int x = 0; x < 16; x++) {
-              activeSketch.pixels[y][x] = canvas[y][x];
+              documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
             }
           }
-          activeSketch.gridSize = currentGridSize;
+          documentState.sketch.gridSize = editorState.gridSize;
           saveActiveSketchToSD();
 
           // Reload sketch list to show the restored sketch
@@ -5236,42 +3408,18 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
         memoryViewNeedsRedraw = true;  // Redraw after screenshot status message
       }
 #endif
-      // Arrow keys - navigate grid (2D navigation with 4 columns)
-    const int COLS = 4;  // Match the column count in drawMemoryViewGrid
-    int totalItems = 1 + sketchList.size();  // 1 for "+", rest are sketches
-
-    if (input.event == bitmap16::InputEvent::Up &&
-        memoryViewCursor >= COLS) {
-      memoryViewCursor -= COLS;
-    }
-    else if (input.event == bitmap16::InputEvent::Down) {
-        int currentCol = memoryViewCursor % COLS;  // Which column are we in?
-        int nextRow = memoryViewCursor + COLS;
-
-        // If moving down would go past the last item
-        if (nextRow >= totalItems) {
-          // Calculate the first item in the last row
-          int lastRowStart = ((totalItems - 1) / COLS) * COLS;
-          // Try to maintain the same column, or clamp to the last item
-          int targetPos = lastRowStart + currentCol;
-          if (targetPos >= totalItems) {
-            targetPos = totalItems - 1;  // Clamp to last item
-          }
-          memoryViewCursor = targetPos;
-        } else {
-          // Normal move down
-          memoryViewCursor = nextRow;
-        }
-      }
-    else if (input.event == bitmap16::InputEvent::Left &&
-             memoryViewCursor % COLS != 0) {
-      memoryViewCursor--;
-    }
-    else if (input.event == bitmap16::InputEvent::Right &&
-             memoryViewCursor % COLS != (COLS - 1) &&
-             memoryViewCursor < totalItems - 1) {
-      memoryViewCursor++;
-    }
+    int deltaX = 0;
+    int deltaY = 0;
+    if (input.event == bitmap16::InputEvent::Up) deltaY = -1;
+    if (input.event == bitmap16::InputEvent::Down) deltaY = 1;
+    if (input.event == bitmap16::InputEvent::Left) deltaX = -1;
+    if (input.event == bitmap16::InputEvent::Right) deltaX = 1;
+    bitmap16::MemoryView::moveCursor(
+        viewState.memory.navigation,
+        deltaX,
+        deltaY,
+        sketchList.size(),
+        M5Cardputer.Display.width());
   }
 
 #if ENABLE_BLUETOOTH
@@ -5280,35 +3428,43 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
   static bool btPrevLeftMem = false, btPrevRightMem = false;
   static bool btPrevEnterMem = false, btPrevEscMem = false;
 
-  const int COLS = 4;
-  int totalItems = 1 + sketchList.size();
-
-  if (btArrowUp && !btPrevUpMem && memoryViewCursor >= COLS) {
-    memoryViewCursor -= COLS;
+  if (btArrowUp && !btPrevUpMem) {
+    bitmap16::MemoryView::moveCursor(
+        viewState.memory.navigation,
+        0,
+        -1,
+        sketchList.size(),
+        M5Cardputer.Display.width());
   }
   if (btArrowDown && !btPrevDownMem) {
-    int currentCol = memoryViewCursor % COLS;
-    int nextRow = memoryViewCursor + COLS;
-    if (nextRow >= totalItems) {
-      int lastRowStart = ((totalItems - 1) / COLS) * COLS;
-      int targetPos = lastRowStart + currentCol;
-      if (targetPos >= totalItems) targetPos = totalItems - 1;
-      memoryViewCursor = targetPos;
-    } else {
-      memoryViewCursor = nextRow;
-    }
+    bitmap16::MemoryView::moveCursor(
+        viewState.memory.navigation,
+        0,
+        1,
+        sketchList.size(),
+        M5Cardputer.Display.width());
   }
-  if (btArrowLeft && !btPrevLeftMem && memoryViewCursor % COLS != 0) {
-    memoryViewCursor--;
+  if (btArrowLeft && !btPrevLeftMem) {
+    bitmap16::MemoryView::moveCursor(
+        viewState.memory.navigation,
+        -1,
+        0,
+        sketchList.size(),
+        M5Cardputer.Display.width());
   }
-  if (btArrowRight && !btPrevRightMem && memoryViewCursor % COLS != (COLS - 1) && memoryViewCursor < totalItems - 1) {
-    memoryViewCursor++;
+  if (btArrowRight && !btPrevRightMem) {
+    bitmap16::MemoryView::moveCursor(
+        viewState.memory.navigation,
+        1,
+        0,
+        sketchList.size(),
+        M5Cardputer.Display.width());
   }
   if (btEnter && !btPrevEnterMem) {
-    if (memoryViewCursor == 0) {
+    if (viewState.memory.navigation.cursor == 0) {
       createNewSketch();
     } else {
-      int sketchIndex = memoryViewCursor - 1;
+      int sketchIndex = viewState.memory.navigation.cursor - 1;
       if (sketchIndex < sketchList.size()) {
         openSketch(sketchList[sketchIndex].filename);
       }
@@ -5334,16 +3490,16 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
  */
 void handlePreviewView(const bitmap16::InputFrame& input) {
   // Auto-advance logic (ONLY in gallery mode)
-  if (galleryMode && galleryAutoAdvance) {
+  if (viewState.preview.galleryMode && viewState.preview.autoAdvance) {
     unsigned long now = millis();
-    if (now - galleryLastAdvanceTime >= GALLERY_ADVANCE_INTERVAL) {
+    if (now - viewState.preview.lastAdvanceTime >= GALLERY_ADVANCE_INTERVAL) {
       // Advance to next sketch
-      galleryCurrentIndex++;
-      if (galleryCurrentIndex >= sketchList.size()) {
-        galleryCurrentIndex = 0;  // Wrap to start
+      viewState.preview.galleryIndex++;
+      if (viewState.preview.galleryIndex >= sketchList.size()) {
+        viewState.preview.galleryIndex = 0;  // Wrap to start
       }
-      galleryLastAdvanceTime = now;
-      loadGallerySketch(galleryCurrentIndex);  // Redraw with new sketch
+      viewState.preview.lastAdvanceTime = now;
+      loadGallerySketch(viewState.preview.galleryIndex);  // Redraw with new sketch
     }
   }
 
@@ -5356,24 +3512,24 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
     return;
   }
 
-  if (galleryMode && input.event == bitmap16::InputEvent::Left) {
-    --galleryCurrentIndex;
-    if (galleryCurrentIndex < 0) {
-      galleryCurrentIndex = sketchList.size() - 1;
+  if (viewState.preview.galleryMode && input.event == bitmap16::InputEvent::Left) {
+    --viewState.preview.galleryIndex;
+    if (viewState.preview.galleryIndex < 0) {
+      viewState.preview.galleryIndex = sketchList.size() - 1;
     }
-    galleryAutoAdvance = false;
-    loadGallerySketch(galleryCurrentIndex);
-  } else if (galleryMode && input.event == bitmap16::InputEvent::Right) {
-    ++galleryCurrentIndex;
-    if (galleryCurrentIndex >= sketchList.size()) {
-      galleryCurrentIndex = 0;
+    viewState.preview.autoAdvance = false;
+    loadGallerySketch(viewState.preview.galleryIndex);
+  } else if (viewState.preview.galleryMode && input.event == bitmap16::InputEvent::Right) {
+    ++viewState.preview.galleryIndex;
+    if (viewState.preview.galleryIndex >= sketchList.size()) {
+      viewState.preview.galleryIndex = 0;
     }
-    galleryAutoAdvance = false;
-    loadGallerySketch(galleryCurrentIndex);
-  } else if (galleryMode && input.event == bitmap16::InputEvent::Space) {
-    galleryAutoAdvance = !galleryAutoAdvance;
-    if (galleryAutoAdvance) {
-      galleryLastAdvanceTime = millis();
+    viewState.preview.autoAdvance = false;
+    loadGallerySketch(viewState.preview.galleryIndex);
+  } else if (viewState.preview.galleryMode && input.event == bitmap16::InputEvent::Space) {
+    viewState.preview.autoAdvance = !viewState.preview.autoAdvance;
+    if (viewState.preview.autoAdvance) {
+      viewState.preview.lastAdvanceTime = millis();
     }
   } else {
     int requestedBackground = -1;
@@ -5395,11 +3551,12 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
     }
 
     if (requestedBackground >= 0) {
-      previewViewBackground = requestedBackground;
-      if (galleryMode) {
-        loadGallerySketch(galleryCurrentIndex);
+      bitmap16::PreviewView::selectBackground(
+          viewState.preview.display, requestedBackground);
+      if (viewState.preview.galleryMode) {
+        loadGallerySketch(viewState.preview.galleryIndex);
       } else {
-        enterPreviewView();
+        drawCanvasPreview();
       }
     } else if (input.bHeld &&
                (input.event == bitmap16::InputEvent::Plus ||
@@ -5416,13 +3573,9 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
             max(MIN_BRIGHTNESS, displayBrightness - BRIGHTNESS_STEP);
       }
 
-      const uint8_t hardwareBrightness =
-          (displayBrightness * 255) / 100;
-      setDisplayBrightness(hardwareBrightness);
+      Display::setBrightness(displayBrightness);
 
-      preferences.begin("bitmap16dx", false);
-      preferences.putUChar("brightness", displayBrightness);
-      preferences.end();
+      PreferenceStore::writeUInt8("brightness", displayBrightness);
 
       char brightnessMsg[20];
       snprintf(
@@ -5432,20 +3585,20 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
           displayBrightness);
       setStatusMessage(brightnessMsg);
 
-      if (galleryMode) {
-        loadGallerySketch(galleryCurrentIndex);
+      if (viewState.preview.galleryMode) {
+        loadGallerySketch(viewState.preview.galleryIndex);
       } else {
-        enterPreviewView();
+        drawCanvasPreview();
       }
     }
 #if ENABLE_SCREENSHOTS
     else if (characterEvent &&
              (input.character == 'y' || input.character == 'Y')) {
       takeScreenshot();
-      if (galleryMode) {
-        loadGallerySketch(galleryCurrentIndex);
+      if (viewState.preview.galleryMode) {
+        loadGallerySketch(viewState.preview.galleryIndex);
       } else {
-        enterPreviewView();
+        drawCanvasPreview();
       }
     }
 #endif
@@ -5459,18 +3612,18 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
   if (btEscape && !btPrevEscPrev) {
     exitPreviewView();
   }
-  if (galleryMode) {
+  if (viewState.preview.galleryMode) {
     if (btArrowLeft && !btPrevLeftPrev) {
-      galleryCurrentIndex--;
-      if (galleryCurrentIndex < 0) galleryCurrentIndex = sketchList.size() - 1;
-      galleryAutoAdvance = false;
-      loadGallerySketch(galleryCurrentIndex);
+      viewState.preview.galleryIndex--;
+      if (viewState.preview.galleryIndex < 0) viewState.preview.galleryIndex = sketchList.size() - 1;
+      viewState.preview.autoAdvance = false;
+      loadGallerySketch(viewState.preview.galleryIndex);
     }
     if (btArrowRight && !btPrevRightPrev) {
-      galleryCurrentIndex++;
-      if (galleryCurrentIndex >= sketchList.size()) galleryCurrentIndex = 0;
-      galleryAutoAdvance = false;
-      loadGallerySketch(galleryCurrentIndex);
+      viewState.preview.galleryIndex++;
+      if (viewState.preview.galleryIndex >= sketchList.size()) viewState.preview.galleryIndex = 0;
+      viewState.preview.autoAdvance = false;
+      loadGallerySketch(viewState.preview.galleryIndex);
     }
   }
 
@@ -5485,50 +3638,36 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
  * Handle Palette View input and rendering
  */
 void handlePaletteView(const bitmap16::InputFrame& input) {
-  // Handle palette view controls
   static bool paletteViewNeedsRedraw = true;
   static int lastPaletteViewCursor = -1;
 
-  // Handle insertion animation
-  if (paletteInsertionAnimating) {
-    // Update animation progress
-    paletteInsertionProgress += PALETTE_INSERT_SPEED;
-
-    if (paletteInsertionProgress >= 1.0f) {
-      // Animation complete - clamp to 1.0
-      paletteInsertionProgress = 1.0f;
-
-      // Redraw final frame
-      drawPaletteView(false);
-
-      // Hold the final frame longer so user can see the insertion
-      delay(500);
-
-      // Now exit
-      paletteInsertionAnimating = false;
-      exitPaletteView();
-      paletteViewNeedsRedraw = true;
-      lastPaletteViewCursor = -1;
-      return;
-    }
-
-    // Redraw with animation (use canvas, don't clear title)
+  const bitmap16::PaletteView::AnimationResult animation =
+      bitmap16::PaletteView::advance(
+          viewState.palette.navigation,
+          PALETTE_SCROLL_SPEED,
+          PALETTE_INSERT_SPEED);
+  if (animation == bitmap16::PaletteView::AnimationResult::SelectionComplete) {
     drawPaletteView(false);
+    delay(500);
+    viewState.palette.navigation.insertionAnimating = false;
+    exitPaletteView();
+    paletteViewNeedsRedraw = true;
+    lastPaletteViewCursor = -1;
+    return;
   }
-  // Redraw when cursor changes, first time, OR when animation is in progress
-  else if (paletteViewNeedsRedraw || lastPaletteViewCursor != paletteViewCursor) {
+  if (animation == bitmap16::PaletteView::AnimationResult::Animating) {
+    const unsigned long now = millis();
+    if (now - viewState.palette.lastAnimationTime >=
+        PALETTE_ANIM_FRAME_MS) {
+      drawPaletteView(false);
+      viewState.palette.lastAnimationTime = now;
+    }
+  } else if (
+      paletteViewNeedsRedraw ||
+      lastPaletteViewCursor != viewState.palette.navigation.cursor) {
     drawPaletteView(true);
     paletteViewNeedsRedraw = false;
-    lastPaletteViewCursor = paletteViewCursor;
-  }
-  // Also redraw if scroll animation is still happening (smooth scrolling)
-  // Throttle to ~30fps to prevent slowdown
-  else if (fabs(paletteViewScrollPos - (float)paletteViewCursor) > 0.01f) {
-    unsigned long now = millis();
-    if (now - lastPaletteAnimTime >= PALETTE_ANIM_FRAME_MS) {
-      drawPaletteView(false);  // Don't clear title, just update content
-      lastPaletteAnimTime = now;
-    }
+    lastPaletteViewCursor = viewState.palette.navigation.cursor;
   }
 
   const bool characterEvent =
@@ -5542,25 +3681,21 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
     return;
   }
 
-  if (input.enterPressed && filteredPaletteCount > 0) {
-    paletteInsertionFrozenScrollPos = paletteViewScrollPos;
-    paletteInsertionAnimating = true;
-    paletteInsertionProgress = 0.0f;
-
-    const uint8_t selectedPaletteIdx =
-        filteredPaletteIndices[paletteViewCursor];
-    activeSketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
+  const bitmap16::PaletteView::Catalog catalog = currentPaletteCatalog();
+  if (input.enterPressed &&
+      bitmap16::PaletteView::beginSelection(
+          viewState.palette.navigation)) {
+    const int selectedPaletteIdx =
+        bitmap16::PaletteView::selectedCatalogIndex(
+            viewState.palette.navigation);
+    documentState.sketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
     for (int i = 0; i < 16; ++i) {
-      activeSketch.paletteColors[i] =
+      documentState.sketch.paletteColors[i] =
           pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
     }
     LED_CANVAS_UPDATED();
   } else if (input.event == bitmap16::InputEvent::Number0) {
-    paletteFilterSize = 0;
-    paletteFilterUser = false;
-    updatePaletteFilter();
-    paletteViewCursor = 0;
-    paletteViewScrollPos = 0;
+    bitmap16::PaletteView::reset(viewState.palette.navigation, catalog);
     paletteViewNeedsRedraw = true;
   } else if (input.event == bitmap16::InputEvent::Number4 ||
              input.event == bitmap16::InputEvent::Number8 ||
@@ -5572,29 +3707,18 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
       requestedSize = 8;
     }
 
-    paletteFilterSize =
-        paletteFilterSize == requestedSize ? 0 : requestedSize;
-    updatePaletteFilter();
-    if (paletteViewCursor >= filteredPaletteCount) {
-      paletteViewCursor = 0;
-      paletteViewScrollPos = 0;
-    }
+    bitmap16::PaletteView::toggleSizeFilter(
+        viewState.palette.navigation, catalog, requestedSize);
     paletteViewNeedsRedraw = true;
   } else if (characterEvent &&
              (input.character == 'u' || input.character == 'U')) {
-    paletteFilterUser = !paletteFilterUser;
-    updatePaletteFilter();
-    if (paletteViewCursor >= filteredPaletteCount) {
-      paletteViewCursor = 0;
-      paletteViewScrollPos = 0;
-    }
+    bitmap16::PaletteView::toggleUserFilter(
+        viewState.palette.navigation, catalog);
     paletteViewNeedsRedraw = true;
-  } else if (input.event == bitmap16::InputEvent::Left &&
-             paletteViewCursor > 0) {
-    --paletteViewCursor;
-  } else if (input.event == bitmap16::InputEvent::Right &&
-             paletteViewCursor < filteredPaletteCount - 1) {
-    ++paletteViewCursor;
+  } else if (input.event == bitmap16::InputEvent::Left) {
+    bitmap16::PaletteView::moveCursor(viewState.palette.navigation, -1);
+  } else if (input.event == bitmap16::InputEvent::Right) {
+    bitmap16::PaletteView::moveCursor(viewState.palette.navigation, 1);
   }
 #if ENABLE_SCREENSHOTS
   else if (characterEvent &&
@@ -5609,21 +3733,23 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
   static bool btPrevLeftPal = false, btPrevRightPal = false;
   static bool btPrevEnterPal = false, btPrevEscPal = false;
 
-  if (btArrowLeft && !btPrevLeftPal && paletteViewCursor > 0) {
-    paletteViewCursor--;
+  if (btArrowLeft && !btPrevLeftPal) {
+    bitmap16::PaletteView::moveCursor(
+        viewState.palette.navigation, -1);
   }
-  if (btArrowRight && !btPrevRightPal && paletteViewCursor < filteredPaletteCount - 1) {
-    paletteViewCursor++;
+  if (btArrowRight && !btPrevRightPal) {
+    bitmap16::PaletteView::moveCursor(
+        viewState.palette.navigation, 1);
   }
-  if (btEnter && !btPrevEnterPal) {
-    // Start insertion animation
-    paletteInsertionFrozenScrollPos = paletteViewScrollPos;
-    paletteInsertionAnimating = true;
-    paletteInsertionProgress = 0.0f;
-    uint8_t selectedPaletteIdx = filteredPaletteIndices[paletteViewCursor];
-    activeSketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
+  if (btEnter && !btPrevEnterPal &&
+      bitmap16::PaletteView::beginSelection(
+          viewState.palette.navigation)) {
+    const int selectedPaletteIdx =
+        bitmap16::PaletteView::selectedCatalogIndex(
+            viewState.palette.navigation);
+    documentState.sketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
     for (int i = 0; i < 16; i++) {
-      activeSketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
+      documentState.sketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
     }
     LED_CANVAS_UPDATED();
   }
@@ -6188,21 +4314,10 @@ void runLegacyFrame() {
   // ============================================================================
   // Check for shake gesture ONLY in canvas view
   if (app.currentView() == bitmap16::ViewId::Canvas) {
-    if (shakeUndoEnabled && detectShakeGesture() && undoAvailable) {
+    if (shakeUndoEnabled && detectShakeGesture() && editorState.undoAvailable) {
       // Shake detected and undo is available!
       restoreUndo();  // Perform the undo operation
-
-      // Force full canvas redraw since undo may have changed many cells
-      // This ensures the display matches the restored state
-      drawGrid();
-      for (int y = 0; y < currentGridSize; y++) {
-        for (int x = 0; x < currentGridSize; x++) {
-          if (canvas[y][x] != 0) {
-            drawCell(x, y);
-          }
-        }
-      }
-      drawCursor();
+      drawSharedCanvasView();
     }
   }
 
@@ -6245,9 +4360,6 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   bool floodFilled = false;
   bool canvasMoved = false;
   static bool moveUndoSaved = false;
-  int oldX = cursorX;
-  int oldY = cursorY;
-
   // Check if enter or delete is currently being held (for drawing while moving)
   bool enterHeld = input.enterHeld;
   bool deleteHeld = input.deleteHeld;
@@ -6260,8 +4372,8 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
 
   // Check if M key is held (for canvas move)
   bool mHeld = input.mHeld;
-  bool moveModeChanged = (mHeld != moveModeActive);
-  moveModeActive = mHeld;
+  bool moveModeChanged = (mHeld != editorState.moveModeActive);
+  editorState.moveModeActive = mHeld;
   if (!mHeld) moveUndoSaved = false;
 
 #if ENABLE_BLUETOOTH
@@ -6281,25 +4393,25 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     lastKey = ';';  // Use same codes as built-in keyboard
     lastKeyTime = millis();
     keyRepeating = false;
-    if (cursorY > 0) { cursorY--; moved = true; }
+    if (editorState.cursorY > 0) { editorState.cursorY--; moved = true; }
   }
   if (btArrowDown && !btPrevDown) {
     lastKey = '.';
     lastKeyTime = millis();
     keyRepeating = false;
-    if (cursorY < currentGridSize - 1) { cursorY++; moved = true; }
+    if (editorState.cursorY < editorState.gridSize - 1) { editorState.cursorY++; moved = true; }
   }
   if (btArrowLeft && !btPrevLeft) {
     lastKey = ',';
     lastKeyTime = millis();
     keyRepeating = false;
-    if (cursorX > 0) { cursorX--; moved = true; }
+    if (editorState.cursorX > 0) { editorState.cursorX--; moved = true; }
   }
   if (btArrowRight && !btPrevRight) {
     lastKey = '/';
     lastKeyTime = millis();
     keyRepeating = false;
-    if (cursorX < currentGridSize - 1) { cursorX++; moved = true; }
+    if (editorState.cursorX < editorState.gridSize - 1) { editorState.cursorX++; moved = true; }
   }
 
   btPrevUp = btArrowUp; btPrevDown = btArrowDown;
@@ -6309,13 +4421,13 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   // Space on BT keyboard also draws (BT-only feature)
   if ((btEnter || btSpace) && !input.enterHeld) {
     saveUndo();
-    canvas[cursorY][cursorX] = selectedColor;
+    editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
     pixelPlaced = true;
     LED_CANVAS_UPDATED();
   }
   if (btBackspace && !input.deleteHeld) {
     saveUndo();
-    canvas[cursorY][cursorX] = 0;
+    editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
     pixelPlaced = true;
     LED_CANVAS_UPDATED();
   }
@@ -6327,21 +4439,21 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     if (btChar >= '1' && btChar <= '8') {
       uint8_t baseColor = btChar - '0';
       uint8_t newColor = fnHeld ? (baseColor + 8) : baseColor;
-      if (newColor <= activeSketch.paletteSize && selectedColor != newColor) {
-        selectedColor = newColor;
+      if (newColor <= documentState.sketch.paletteSize && editorState.selectedColor != newColor) {
+        editorState.selectedColor = newColor;
         colorChanged = true;
         char colorMsg[20];
-        snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
+        snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, editorState.selectedColor);
         setStatusMessage(colorMsg);
       }
     }
     // C key - Cycle color
     else if (btChar == 'c' || btChar == 'C') {
-      selectedColor++;
-      if (selectedColor > activeSketch.paletteSize) selectedColor = 1;
+      editorState.selectedColor++;
+      if (editorState.selectedColor > documentState.sketch.paletteSize) editorState.selectedColor = 1;
       colorChanged = true;
       char colorMsg[20];
-      snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, selectedColor);
+      snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, editorState.selectedColor);
       setStatusMessage(colorMsg);
     }
     // Z key - Undo
@@ -6356,9 +4468,9 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     }
     // R key - Toggle rulers
     else if (btChar == 'r' || btChar == 'R') {
-      rulersVisible = !rulersVisible;
+      editorState.rulersVisible = !editorState.rulersVisible;
       rulersToggled = true;
-      setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
+      setStatusMessage(editorState.rulersVisible ? "Rulers: On" : "Rulers: Off");
     }
     // O key - Memory view
     else if (btChar == 'o' || btChar == 'O') {
@@ -6372,7 +4484,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       delay(200);
       return;
     }
-    // I key - Help view
+    // H key - Help view
     else if (btChar == 'h' || btChar == 'H') {
       enterHelpView();
       delay(200);
@@ -6383,10 +4495,10 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       // Copy canvas to active sketch before saving
       for (int y = 0; y < 16; y++) {
         for (int x = 0; x < 16; x++) {
-          activeSketch.pixels[y][x] = canvas[y][x];
+          documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
         }
       }
-      activeSketch.gridSize = currentGridSize;
+      documentState.sketch.gridSize = editorState.gridSize;
       if (fnHeld) {
         saveActiveSketchAsNew();
       } else {
@@ -6408,7 +4520,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     // F key - Flood fill
     else if (btChar == 'f' || btChar == 'F') {
       saveUndo();
-      floodFill(cursorX, cursorY, selectedColor);
+      floodFill(editorState.cursorX, editorState.cursorY, editorState.selectedColor);
       floodFilled = true;
       LED_CANVAS_UPDATED();
       setStatusMessage(StatusMsg::FILL);
@@ -6429,12 +4541,12 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
 
   if (input.enterPressed) {
     saveUndo();
-    canvas[cursorY][cursorX] = selectedColor;
+    editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
     pixelPlaced = true;
     LED_CANVAS_UPDATED();
   } else if (input.deletePressed) {
     saveUndo();
-    canvas[cursorY][cursorX] = 0;
+    editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
     pixelPlaced = true;
     LED_CANVAS_UPDATED();
   }
@@ -6455,15 +4567,15 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   if (requestedColor != 0) {
     const uint8_t newColor =
         fnHeld ? requestedColor + 8 : requestedColor;
-    if (newColor <= activeSketch.paletteSize && selectedColor != newColor) {
-      selectedColor = newColor;
+    if (newColor <= documentState.sketch.paletteSize && editorState.selectedColor != newColor) {
+      editorState.selectedColor = newColor;
       colorChanged = true;
       char colorMsg[20];
       snprintf(
           colorMsg,
           sizeof(colorMsg),
           StatusMsg::COLOR_FMT,
-          selectedColor);
+          editorState.selectedColor);
       setStatusMessage(colorMsg);
     }
   }
@@ -6473,9 +4585,9 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   const char command = characterEvent ? input.character : '\0';
 
   if (command == 'c' || command == 'C') {
-    ++selectedColor;
-    if (selectedColor > activeSketch.paletteSize) {
-      selectedColor = 1;
+    ++editorState.selectedColor;
+    if (editorState.selectedColor > documentState.sketch.paletteSize) {
+      editorState.selectedColor = 1;
     }
     colorChanged = true;
     char colorMsg[20];
@@ -6483,7 +4595,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
         colorMsg,
         sizeof(colorMsg),
         StatusMsg::COLOR_FMT,
-        selectedColor);
+        editorState.selectedColor);
     setStatusMessage(colorMsg);
   } else if (command == 'z' || command == 'Z') {
     restoreUndo();
@@ -6492,18 +4604,18 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     toggleGridSize();
     gridToggled = true;
   } else if (command == 'r' || command == 'R') {
-    rulersVisible = !rulersVisible;
+    editorState.rulersVisible = !editorState.rulersVisible;
     rulersToggled = true;
-    setStatusMessage(rulersVisible ? "Rulers: On" : "Rulers: Off");
+    setStatusMessage(editorState.rulersVisible ? "Rulers: On" : "Rulers: Off");
   } else if (command == 'o' || command == 'O') {
     enterMemoryView();
   } else if (command == 's' || command == 'S') {
     for (int y = 0; y < 16; ++y) {
       for (int x = 0; x < 16; ++x) {
-        activeSketch.pixels[y][x] = canvas[y][x];
+        documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
       }
     }
-    activeSketch.gridSize = currentGridSize;
+    documentState.sketch.gridSize = editorState.gridSize;
     if (fnHeld) {
       saveActiveSketchAsNew();
     } else {
@@ -6511,7 +4623,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     }
   } else if (command == 'f' || command == 'F') {
     saveUndo();
-    floodFill(cursorX, cursorY, selectedColor);
+    floodFill(editorState.cursorX, editorState.cursorY, editorState.selectedColor);
     floodFilled = true;
     LED_CANVAS_UPDATED();
     setStatusMessage(StatusMsg::FILL);
@@ -6546,12 +4658,8 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
           max(MIN_BRIGHTNESS, displayBrightness - BRIGHTNESS_STEP);
     }
 
-    const uint8_t hardwareBrightness =
-        (displayBrightness * 255) / 100;
-    setDisplayBrightness(hardwareBrightness);
-    preferences.begin("bitmap16dx", false);
-    preferences.putUChar("brightness", displayBrightness);
-    preferences.end();
+    Display::setBrightness(displayBrightness);
+    PreferenceStore::writeUInt8("brightness", displayBrightness);
 
     char brightnessMsg[20];
     snprintf(
@@ -6570,7 +4678,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
         ledMsg,
         sizeof(ledMsg),
         "LED: %s",
-        ledMatrixEnabled ? "ON" : "OFF");
+        LEDMatrix::isEnabled() ? "ON" : "OFF");
     setStatusMessage(ledMsg);
   } else if (input.lHeld &&
              (input.event == bitmap16::InputEvent::Plus ||
@@ -6611,28 +4719,28 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       LED_CANVAS_UPDATED();
       setStatusMessage(StatusMsg::MOVE);
     } else {
-      if (input.event == bitmap16::InputEvent::Up && cursorY > 0) {
-        --cursorY;
+      if (input.event == bitmap16::InputEvent::Up && editorState.cursorY > 0) {
+        --editorState.cursorY;
         moved = true;
       } else if (input.event == bitmap16::InputEvent::Down &&
-                 cursorY < currentGridSize - 1) {
-        ++cursorY;
+                 editorState.cursorY < editorState.gridSize - 1) {
+        ++editorState.cursorY;
         moved = true;
-      } else if (input.event == bitmap16::InputEvent::Left && cursorX > 0) {
-        --cursorX;
+      } else if (input.event == bitmap16::InputEvent::Left && editorState.cursorX > 0) {
+        --editorState.cursorX;
         moved = true;
       } else if (input.event == bitmap16::InputEvent::Right &&
-                 cursorX < currentGridSize - 1) {
-        ++cursorX;
+                 editorState.cursorX < editorState.gridSize - 1) {
+        ++editorState.cursorX;
         moved = true;
       }
 
       if (moved && enterHeld) {
-        canvas[cursorY][cursorX] = selectedColor;
+        editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
         pixelPlaced = true;
         LED_CANVAS_UPDATED();
       } else if (moved && deleteHeld) {
-        canvas[cursorY][cursorX] = 0;
+        editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
         pixelPlaced = true;
         LED_CANVAS_UPDATED();
       }
@@ -6666,27 +4774,27 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
         canvasMoved = true;
         LED_CANVAS_UPDATED();
       } else {
-        if (currentBtArrow == ';' && cursorY > 0) {
-          --cursorY;
+        if (currentBtArrow == ';' && editorState.cursorY > 0) {
+          --editorState.cursorY;
           moved = true;
         } else if (currentBtArrow == '.' &&
-                   cursorY < currentGridSize - 1) {
-          ++cursorY;
+                   editorState.cursorY < editorState.gridSize - 1) {
+          ++editorState.cursorY;
           moved = true;
-        } else if (currentBtArrow == ',' && cursorX > 0) {
-          --cursorX;
+        } else if (currentBtArrow == ',' && editorState.cursorX > 0) {
+          --editorState.cursorX;
           moved = true;
         } else if (currentBtArrow == '/' &&
-                   cursorX < currentGridSize - 1) {
-          ++cursorX;
+                   editorState.cursorX < editorState.gridSize - 1) {
+          ++editorState.cursorX;
           moved = true;
         }
         if (moved && enterHeld) {
-          canvas[cursorY][cursorX] = selectedColor;
+          editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
           pixelPlaced = true;
           LED_CANVAS_UPDATED();
         } else if (moved && deleteHeld) {
-          canvas[cursorY][cursorX] = 0;
+          editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
           pixelPlaced = true;
           LED_CANVAS_UPDATED();
         }
@@ -6703,106 +4811,19 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     LED_CANVAS_UPDATED();
   }
 
-  // Redraw based on what changed
-  if (canvasCleared || undoPerformed || gridToggled || rulersToggled || floodFilled || themeToggled || canvasMoved) {
-    // Update LED matrix for any canvas change
-    LED_CANVAS_UPDATED();
-
-    // Redraw the entire canvas
-    // (gridToggled needs full redraw because cell size changed)
-    // (rulersToggled needs full redraw to show/hide rulers)
-    // (floodFilled needs full redraw because many cells may have changed)
-    // (themeToggled needs full redraw with new background color)
-
-    // If theme changed, clear entire screen with new background
-    if (themeToggled) {
-      M5Cardputer.Display.fillScreen(currentTheme->background);
-
-      // Redraw all UI elements
-      drawGrid();
-      drawPalette();
-      drawCursor();
-
-      // Redraw icons
-      drawIcon(3, 3, ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT, ICON_DRAW_IS_INDEXED);
-      drawIcon(3, 30, ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT, ICON_ERASE_IS_INDEXED);
-      drawIcon(3, 57, ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT, ICON_FILL_IS_INDEXED);
-
-      // Reset battery indicator for redraw
-      lastBatteryPercent = -1;
-      batteryFirstCheck = true;
-      drawBatteryIndicator();
-    } else {
-      drawGrid();
-      for (int y = 0; y < currentGridSize; y++) {
-        for (int x = 0; x < currentGridSize; x++) {
-          if (canvas[y][x] != 0) {
-            drawCell(x, y);
-          }
-        }
-      }
-
-      drawCursor();
-    }
-  }
-  else if (moved) {
-    // Erase the old cursor by redrawing that cell
-    drawCell(oldX, oldY);
-
-    // Draw the new cursor
-    drawCursor();
-  }
-  else if (pixelPlaced) {
-    // Redraw the current cell and cursor
-    drawCell(cursorX, cursorY);
-    drawCursor();
-  }
-  else if (colorChanged) {
-    // Redraw the entire palette with new selection
-    drawPalette();
-    // Also redraw the cursor to show the new color preview
-    drawCursor();
-  }
-  else if (moveModeChanged) {
-    drawCursor();
-  }
-
-  // Check if status message needs to be cleared (independent of other redraws)
-  if (statusMessageJustCleared) {
-    // Status message starts at x=3, y=124 and can extend ~110px
-    // It overlaps background (x=3-55) AND grid (x=56+)
-
-    // Clear the background area (left of grid)
-    M5Cardputer.Display.fillRect(3, 124, 53, 11, currentTheme->background);
-
-    // Redraw bottom grid rows that text might have overlapped
-    int affectedStartY = 124 - GRID_Y;  // 120
-    int cellSize = 128 / currentGridSize;
-    int startRow = affectedStartY / cellSize;
-
-    for (int y = startRow; y < currentGridSize; y++) {
-      for (int x = 0; x < currentGridSize; x++) {
-        drawCell(x, y);
-      }
-    }
-
-    drawCursor();
-    statusMessageJustCleared = false;
-
-    // Draw current message (if any)
-    if (statusMessage[0] != '\0') {
-      M5Cardputer.Display.setTextColor(currentTheme->text);
-      M5Cardputer.Display.setTextSize(1);
-      M5Cardputer.Display.setCursor(3, 124);
-      M5Cardputer.Display.print(statusMessage);
-    }
-  }
-
-  // Always update status message display (check for expiration and trigger redraws)
+  // Update status expiry before the shared full-frame renderer runs.
   drawStatusMessage();
-
-  // Update battery indicator (only redraws if changed)
   drawBatteryIndicator();
+
+  const bool canvasViewChanged =
+      moved || pixelPlaced || colorChanged || canvasCleared ||
+      undoPerformed || gridToggled || rulersToggled || themeToggled ||
+      floodFilled || canvasMoved || moveModeChanged ||
+      statusMessage[0] != '\0' || statusMessageJustCleared;
+  if (canvasViewChanged) {
+    drawSharedCanvasView();
+    statusMessageJustCleared = false;
+  }
 
   // Periodic heap monitoring (every 60 seconds)
   // Helps catch memory leaks during development and extended use

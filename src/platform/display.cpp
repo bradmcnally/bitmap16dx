@@ -11,6 +11,14 @@ namespace {
 constexpr uint8_t kBacklightPin = 38;
 
 bitmap16::Canvas* framebuffer = nullptr;
+bool backlightConfigured = false;
+
+void ensureBacklightConfigured() {
+  if (!backlightConfigured) {
+    pinMode(kBacklightPin, OUTPUT);
+    backlightConfigured = true;
+  }
+}
 
 }  // namespace
 
@@ -27,7 +35,7 @@ bool Display::init() {
     return false;
   }
 
-  pinMode(kBacklightPin, OUTPUT);
+  ensureBacklightConfigured();
   M5Cardputer.Display.fillScreen(0x0000);
   return true;
 }
@@ -50,16 +58,20 @@ bool Display::endFrame() {
   if (!isReady()) {
     return false;
   }
+  const bool oldSwapBytes = M5Cardputer.Display.getSwapBytes();
+  M5Cardputer.Display.setSwapBytes(true);
   M5Cardputer.Display.pushImage(
       0,
       0,
       framebuffer->width(),
       framebuffer->height(),
       framebuffer->pixels());
+  M5Cardputer.Display.setSwapBytes(oldSwapBytes);
   return true;
 }
 
 void Display::setBrightness(uint8_t percent) {
+  ensureBacklightConfigured();
   if (percent > 100) percent = 100;
   const uint8_t value =
       static_cast<uint8_t>((static_cast<uint16_t>(percent) * 255) / 100);
