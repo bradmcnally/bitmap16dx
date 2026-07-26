@@ -930,7 +930,7 @@ int main(int argc, char** argv) {
         height,
         static_cast<float>(std::min<Uint32>(elapsed, 100u)) / 1000.0f,
 #ifdef BITMAP16_STEAM_DECK
-        0.7f
+        1.0f
 #else
         0.35f
 #endif
@@ -1121,9 +1121,12 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Memory ||
         (currentView == DesktopView::Preview &&
          galleryMode && galleryAutoAdvance);
+    const int animationWait =
+        currentView == DesktopView::Charging
+            ? 33
+            : currentView == DesktopView::Memory ? 1 : 16;
     const int eventAvailable = animatedView
-        ? SDL_WaitEventTimeout(
-              &event, currentView == DesktopView::Charging ? 33 : 16)
+        ? SDL_WaitEventTimeout(&event, animationWait)
         : SDL_WaitEvent(&event);
     if (eventAvailable == 0) {
       if (currentView == DesktopView::Charging) {
