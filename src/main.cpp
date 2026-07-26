@@ -454,7 +454,9 @@ const unsigned long HEAP_CHECK_INTERVAL = 60000;  // Check every 60 seconds
 const int HEAP_WARNING_THRESHOLD = 50000;  // Warn if free heap drops below 50KB
 const int PALETTE_ANIM_FRAME_MS = 16;  // Milliseconds between animation frames (16ms = 60fps)
 
-const float PALETTE_INSERT_SPEED = 0.12f;  // Animation speed (with impact feel)
+// The device loop advances about every 10 ms, so 56 steps gives an
+// approximately 560 ms cartridge insertion.
+const float PALETTE_INSERT_SPEED = 0.018f;
 const int CHARGE_FRAME_MS = 33;  // ~30fps
 
 // Settings preferences (loaded from NVS)

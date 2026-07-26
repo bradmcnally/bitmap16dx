@@ -43,18 +43,16 @@ void drawIndexedIcon(
     return static_cast<uint8_t>(
         (icon.pixels[pixel / 4] >> shift) & 0x03);
   };
-  const uint16_t dark =
-      pressed ? scaleColor(theme.iconDark, 0.8f) : theme.iconDark;
-  const uint16_t light =
-      pressed ? scaleColor(theme.iconLight, 0.8f) : theme.iconLight;
   const int pressedOffsetY = pressed ? 1 : 0;
   for (int row = 0; row < icon.height; ++row) {
     for (int column = 0; column < icon.width; ++column) {
       const uint8_t value = iconValue(column, row);
       if (value == 1) {
-        canvas.drawPixel(x + column, y + pressedOffsetY + row, dark);
+        canvas.drawPixel(
+            x + column, y + pressedOffsetY + row, theme.iconDark);
       } else if (value == 2) {
-        canvas.drawPixel(x + column, y + pressedOffsetY + row, light);
+        canvas.drawPixel(
+            x + column, y + pressedOffsetY + row, theme.iconLight);
       }
     }
   }

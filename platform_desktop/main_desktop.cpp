@@ -674,6 +674,10 @@ int main(int argc, char** argv) {
   bitmap16::PaletteView::State paletteState;
   bitmap16::PaletteView::reset(paletteState, paletteCatalog);
   int activePalette = findActivePalette(editor.sketch(), paletteEntries);
+  if (activePalette >= 0) {
+    bitmap16::PaletteView::selectCatalogIndex(
+        paletteState, activePalette);
+  }
   std::vector<bitmap16::MemoryView::Entry> memoryEntries;
   rebuildMemoryEntries(workspace, memoryEntries);
   bitmap16::MemoryView::Catalog memoryCatalog = {
@@ -696,6 +700,10 @@ int main(int argc, char** argv) {
     paletteCatalog.count = static_cast<int>(paletteEntries.size());
     bitmap16::PaletteView::reset(paletteState, paletteCatalog);
     activePalette = findActivePalette(editor.sketch(), paletteEntries);
+    if (activePalette >= 0) {
+      bitmap16::PaletteView::selectCatalogIndex(
+          paletteState, activePalette);
+    }
   };
 #if !defined(BITMAP16_CARDPUTER_ZERO_DEVICE) && !defined(BITMAP16_STEAM_DECK)
   bitmap16::Desktop::MatrixSimulator desktopMatrix;

@@ -13,7 +13,30 @@ namespace {
 constexpr int kCartridgeWidth = 80;
 constexpr int kCartridgeHeight = 92;
 constexpr int kPaletteGap = 20;
-constexpr int kInsertionDistance = 36;
+constexpr int kInsertionOvershoot = 13;
+
+float cubicBezierCoordinate(float t, float first, float second) {
+  const float inverse = 1.0f - t;
+  return 3.0f * inverse * inverse * t * first +
+      3.0f * inverse * t * t * second +
+      t * t * t;
+}
+
+float insertionEasing(float progress) {
+  const float target = std::max(0.0f, std::min(1.0f, progress));
+  float lower = 0.0f;
+  float upper = 1.0f;
+  float parameter = target;
+  for (int iteration = 0; iteration < 8; ++iteration) {
+    parameter = (lower + upper) * 0.5f;
+    if (cubicBezierCoordinate(parameter, 0.4f, 0.0f) < target) {
+      lower = parameter;
+    } else {
+      upper = parameter;
+    }
+  }
+  return cubicBezierCoordinate(parameter, 0.0f, 1.04f);
+}
 
 uint16_t cartridgeColor(uint16_t color, const Theme& theme) {
   if (!theme.dark) {
@@ -274,9 +297,13 @@ void render(
     const bool selected = filtered == state.cursor;
     int cartridgeY = centerY - kCartridgeHeight / 2;
     if (selected && state.insertionAnimating) {
-      const float progress = state.insertionProgress;
+      const float easedProgress = insertionEasing(state.insertionProgress);
+      const int insertionDistance = std::max(
+          0,
+          canvas.height() - kCartridgeHeight +
+              kInsertionOvershoot - cartridgeY);
       cartridgeY += static_cast<int>(
-          kInsertionDistance * progress * progress * progress * progress);
+          insertionDistance * easedProgress);
     }
 
     const Entry& entry = catalog.entries[catalogIndex];

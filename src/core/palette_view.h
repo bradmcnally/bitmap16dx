@@ -57,7 +57,7 @@ bool beginSelection(State& state);
 AnimationResult advance(
     State& state,
     float scrollSpeed = 0.25f,
-    float insertionSpeed = 0.12f);
+    float insertionSpeed = 0.03f);
 void render(
     Canvas& canvas,
     const State& state,
