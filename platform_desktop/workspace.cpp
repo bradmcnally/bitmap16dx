@@ -218,12 +218,13 @@ bool Workspace::saveSketch(const Editor& editor, bool saveAsNew) {
       activeIndex_ < static_cast<int>(sketchPaths_.size())) {
     path = sketchPaths_[activeIndex_];
   } else {
-    int next = 1;
+    uint64_t next = 1;
+    for (const auto& existing : sketchPaths_) {
+      next = std::max(next, sketchSequence(existing) + 1);
+    }
     do {
-      std::ostringstream name;
-      name << "sketch-" << std::setw(4) << std::setfill('0') << next++
-           << ".dat";
-      path = root_ / "sketches" / name.str();
+      path = root_ / "sketches" /
+          ("sketch_" + std::to_string(next++) + ".dat");
     } while (std::filesystem::exists(path));
   }
   if (!writeSketch(path, editor.sketch())) return false;

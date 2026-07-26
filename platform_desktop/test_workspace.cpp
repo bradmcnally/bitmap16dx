@@ -24,6 +24,11 @@ int main() {
   firstEditor.setCursor(3, 2);
   firstEditor.setSelectedColor(4);
   if (!firstEditor.draw() || !first.saveSketch(firstEditor, true)) return 2;
+  std::filesystem::rename(
+      root / "sketches" / "sketch_1.dat",
+      root / "sketches" / "sketch_100.dat",
+      error);
+  if (error) return 2;
   first.settings().theme = bitmap16::ThemeId::Dark;
   first.settings().defaultGridSize = 16;
   first.settings().matrixEnabled = true;
@@ -47,7 +52,10 @@ int main() {
   if (!restoredEditor.draw() ||
       restoredEditor.sketch().gridSize != 32 ||
       !restored.saveSketch(restoredEditor, true) ||
-      restored.sketches().size() != 2) {
+      restored.sketches().size() != 2 ||
+      restored.sketches()[0].gridSize != 32 ||
+      !std::filesystem::exists(
+          root / "sketches" / "sketch_101.dat")) {
     return 6;
   }
 

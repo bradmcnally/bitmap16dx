@@ -568,16 +568,16 @@ void test_palette_view_renders_carousel_at_both_target_sizes() {
 
 void test_memory_view_navigation_and_scroll_are_resolution_aware() {
   bitmap16::MemoryView::State state;
-  TEST_ASSERT_EQUAL_INT(4, bitmap16::MemoryView::columnCount(240));
+  TEST_ASSERT_EQUAL_INT(5, bitmap16::MemoryView::columnCount(240));
   TEST_ASSERT_EQUAL_INT(5, bitmap16::MemoryView::columnCount(320));
   TEST_ASSERT_TRUE(
       bitmap16::MemoryView::moveCursor(state, 0, 1, 8, 240));
-  TEST_ASSERT_EQUAL_INT(4, state.cursor);
+  TEST_ASSERT_EQUAL_INT(5, state.cursor);
   TEST_ASSERT_TRUE(
       bitmap16::MemoryView::moveCursor(state, 1, 0, 8, 240));
-  TEST_ASSERT_EQUAL_INT(5, state.cursor);
-  state.cursor = 8;
-  bitmap16::MemoryView::advance(state, 8, 240, 135, 0.016f, 1.0f);
+  TEST_ASSERT_EQUAL_INT(6, state.cursor);
+  state.cursor = 15;
+  bitmap16::MemoryView::advance(state, 15, 240, 135, 0.016f, 1.0f);
   TEST_ASSERT_GREATER_THAN_INT(0, state.scrollOffset);
   TEST_ASSERT_GREATER_THAN_FLOAT(0.0f, state.scrollPosition);
   bitmap16::MemoryView::clamp(state, 2);
@@ -587,10 +587,10 @@ void test_memory_view_navigation_and_scroll_are_resolution_aware() {
 void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
   uint8_t pixels[bitmap16::kMaxGridSize][bitmap16::kMaxGridSize] = {};
   uint16_t palette[16] = {};
-  pixels[0][0] = 1;
+  pixels[2][2] = 1;
   palette[0] = 0xf800;
   const bitmap16::MemoryView::Entry entries[1] = {
-      {pixels, 16, palette, 1, true},
+      {pixels, 32, palette, 1, true},
   };
   const bitmap16::MemoryView::Catalog catalog = {entries, 1};
   const bitmap16::MemoryView::Theme theme = {
@@ -611,7 +611,7 @@ void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
 
     const int columns = bitmap16::MemoryView::columnCount(width);
     const int startX =
-        (width - (columns * 48 + (columns - 1) * 8)) / 2;
+        (width - (columns * 32 + (columns - 1) * 8)) / 2;
     TEST_ASSERT_EQUAL_HEX16(
         theme.background, canvas.readPixel(startX, 19));
     TEST_ASSERT_EQUAL_HEX16(
@@ -619,7 +619,9 @@ void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
     TEST_ASSERT_EQUAL_HEX16(
         theme.selectionLight, canvas.readPixel(startX - 4, 15));
     TEST_ASSERT_EQUAL_HEX16(
-        palette[0], canvas.readPixel(startX + 58, 19));
+        theme.background, canvas.readPixel(startX + 41, 20));
+    TEST_ASSERT_EQUAL_HEX16(
+        palette[0], canvas.readPixel(startX + 42, 21));
     TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
     TEST_ASSERT_EQUAL_HEX16(
         theme.background, canvas.readPixel(width - 1, height - 1));

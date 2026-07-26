@@ -541,6 +541,11 @@ int main(int argc, char** argv) {
     SDL_Log("SDL_Init failed: %s", SDL_GetError());
     return 1;
   }
+  // Stick state is polled once per loop to provide controlled hold-repeat.
+  // Per-motion events are redundant and can flood the queue on Steam Deck,
+  // delaying navigation behind stale analog samples.
+  SDL_EventState(SDL_CONTROLLERAXISMOTION, SDL_IGNORE);
+  SDL_EventState(SDL_JOYAXISMOTION, SDL_IGNORE);
 
 #if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || defined(BITMAP16_STEAM_DECK)
   const int windowWidth = width;

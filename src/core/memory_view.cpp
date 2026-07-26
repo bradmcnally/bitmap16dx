@@ -8,7 +8,7 @@ namespace MemoryView {
 
 namespace {
 
-constexpr int kThumbnailSize = 48;
+constexpr int kThumbnailSize = 32;
 constexpr int kGap = 8;
 constexpr int kTitleHeight = 14;
 constexpr int kTopMargin = 5;
@@ -55,23 +55,21 @@ void drawThumbnail(
     const Theme& theme) {
   if (entry.pixels != nullptr && entry.paletteColors != nullptr &&
       isSupportedGridSize(entry.gridSize)) {
-    for (int destinationY = 0;
-         destinationY < kThumbnailSize;
-         ++destinationY) {
-      const int sourceY =
-          destinationY * entry.gridSize / kThumbnailSize;
-      for (int destinationX = 0;
-           destinationX < kThumbnailSize;
-           ++destinationX) {
-        const int sourceX =
-            destinationX * entry.gridSize / kThumbnailSize;
+    const int scale = std::max(1, kThumbnailSize / entry.gridSize);
+    const int artworkSize = entry.gridSize * scale;
+    const int artworkX = x + (kThumbnailSize - artworkSize) / 2;
+    const int artworkY = y + (kThumbnailSize - artworkSize) / 2;
+    for (int sourceY = 0; sourceY < entry.gridSize; ++sourceY) {
+      for (int sourceX = 0; sourceX < entry.gridSize; ++sourceX) {
         const uint8_t index = entry.pixels[sourceY][sourceX];
         if (index == 0 || index > entry.paletteSize) {
           continue;
         }
-        canvas.drawPixel(
-            x + destinationX,
-            y + destinationY,
+        canvas.fillRect(
+            artworkX + sourceX * scale,
+            artworkY + sourceY * scale,
+            scale,
+            scale,
             entry.paletteColors[index - 1]);
       }
     }
