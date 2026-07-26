@@ -347,13 +347,6 @@ void applyPalette(
   for (int index = 0; index < 16; ++index) {
     sketch.paletteColors[index] = entry.colors[index];
   }
-  for (std::size_t y = 0; y < bitmap16::kMaxGridSize; ++y) {
-    for (std::size_t x = 0; x < bitmap16::kMaxGridSize; ++x) {
-      sketch.pixels[y][x] =
-          bitmap16::Palette::collapseIndex(
-              sketch.pixels[y][x], entry.size);
-    }
-  }
 }
 
 int findActivePalette(

@@ -712,6 +712,20 @@ void test_palette_index_collapse_matches_existing_rules() {
   TEST_ASSERT_EQUAL_UINT8(4, bitmap16::Palette::collapseIndex(16, 4));
   TEST_ASSERT_EQUAL_UINT8(1, bitmap16::Palette::collapseIndex(9, 8));
   TEST_ASSERT_EQUAL_UINT8(8, bitmap16::Palette::collapseIndex(16, 8));
+
+  const uint16_t colors[] = {
+      0x0001, 0x0002, 0x0003, 0x0004,
+      0x0005, 0x0006, 0x0007, 0x0008,
+      0x0009, 0x000a, 0x000b, 0x000c,
+      0x000d, 0x000e, 0x000f, 0x0010,
+  };
+  const uint8_t storedIndex = 9;
+  TEST_ASSERT_EQUAL_HEX16(
+      colors[0],
+      bitmap16::Palette::colorForIndex(colors, 4, storedIndex));
+  TEST_ASSERT_EQUAL_HEX16(
+      colors[8],
+      bitmap16::Palette::colorForIndex(colors, 16, storedIndex));
 }
 
 void test_sketch_initialization_repeats_small_palettes() {
