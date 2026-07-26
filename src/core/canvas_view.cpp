@@ -288,30 +288,28 @@ void render(
       layout.gridY + state.cursorY * layout.cellSize;
   if (assets != nullptr) {
     const int toolsY = layout.gridY - 2;
-    if (!state.hideToolIcons) {
-      drawIndexedIcon(
-          canvas,
-          layout.toolsX,
-          toolsY,
-          assets->draw,
-          theme,
-          state.drawPressed);
-      drawIndexedIcon(
-          canvas,
-          layout.toolsX,
-          toolsY + 27,
-          assets->erase,
-          theme,
-          state.erasePressed);
-      drawIndexedIcon(
-          canvas,
-          layout.toolsX,
-          toolsY + 54,
-          assets->fill,
-          theme,
-          state.fillPressed);
-    }
-    if (!state.hideToolIcons && state.batteryPercent >= 0) {
+    drawIndexedIcon(
+        canvas,
+        layout.toolsX,
+        toolsY,
+        assets->draw,
+        theme,
+        state.drawPressed);
+    drawIndexedIcon(
+        canvas,
+        layout.toolsX,
+        toolsY + 27,
+        assets->erase,
+        theme,
+        state.erasePressed);
+    drawIndexedIcon(
+        canvas,
+        layout.toolsX,
+        toolsY + 54,
+        assets->fill,
+        theme,
+        state.fillPressed);
+    if (state.batteryPercent >= 0) {
       int batteryStage = 0;
       if (state.batteryPercent >= 90) batteryStage = 3;
       else if (state.batteryPercent >= 50) batteryStage = 2;

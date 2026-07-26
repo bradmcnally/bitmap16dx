@@ -22,7 +22,6 @@ struct State {
   bool drawPressed = false;
   bool erasePressed = false;
   bool fillPressed = false;
-  bool hideToolIcons = false;
 };
 
 struct Theme {

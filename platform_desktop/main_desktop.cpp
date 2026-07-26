@@ -359,196 +359,11 @@ int findActivePalette(
   return -1;
 }
 
-#ifdef BITMAP16_STEAM_DECK
-struct HighResolutionOverlay {
-  bool canvas = false;
-  bitmap16::CanvasView::Layout layout = {};
-  uint8_t gridSize = 8;
-  bool rulersVisible = false;
-  uint16_t gridColor = 0;
-  uint16_t rulerColor = 0;
-  bitmap16::CanvasView::Theme theme = {};
-  const bitmap16::CanvasView::Assets* assets = nullptr;
-  bool drawPressed = false;
-  bool erasePressed = false;
-  bool fillPressed = false;
-};
-
-void setRendererColor565(
-    SDL_Renderer* renderer, uint16_t color, Uint8 alpha) {
-  SDL_SetRenderDrawColor(
-      renderer,
-      static_cast<Uint8>(((color >> 11) & 0x1f) * 255 / 31),
-      static_cast<Uint8>(((color >> 5) & 0x3f) * 255 / 63),
-      static_cast<Uint8>((color & 0x1f) * 255 / 31),
-      alpha);
-}
-
-void renderPhysicalIcon(
-    SDL_Renderer* renderer,
-    const bitmap16::CanvasView::Icon& icon,
-    const bitmap16::CanvasView::Theme& theme,
-    int x,
-    int y,
-    int integerScale,
-    bool pressed) {
-  if (icon.pixels == nullptr || icon.width <= 0 || icon.height <= 0) return;
-  SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(
-      0, icon.width, icon.height, 32, SDL_PIXELFORMAT_ARGB8888);
-  if (surface == nullptr) return;
-  const auto colorFor = [&](uint16_t color, Uint8 alpha) {
-    return SDL_MapRGBA(
-        surface->format,
-        static_cast<Uint8>(((color >> 11) & 0x1f) * 255 / 31),
-        static_cast<Uint8>(((color >> 5) & 0x3f) * 255 / 63),
-        static_cast<Uint8>((color & 0x1f) * 255 / 31),
-        alpha);
-  };
-  const Uint32 transparent = colorFor(0, 0);
-  const Uint32 dark = colorFor(theme.iconDark, 255);
-  const Uint32 light = colorFor(theme.iconLight, 255);
-  Uint32* pixels = static_cast<Uint32*>(surface->pixels);
-  for (int row = 0; row < icon.height; ++row) {
-    for (int column = 0; column < icon.width; ++column) {
-      const int pixel = row * icon.width + column;
-      const int shift = (3 - pixel % 4) * 2;
-      const uint8_t value =
-          (icon.pixels[pixel / 4] >> shift) & 0x03;
-      pixels[row * surface->pitch / 4 + column] =
-          value == 1 ? dark : value == 2 ? light : transparent;
-    }
-  }
-  SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
-  SDL_FreeSurface(surface);
-  if (texture == nullptr) return;
-  SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-  SDL_SetTextureScaleMode(
-      texture, pressed ? SDL_ScaleModeLinear : SDL_ScaleModeNearest);
-#endif
-  const int fullWidth = icon.width * integerScale;
-  const int fullHeight = icon.height * integerScale;
-  const int width =
-      pressed ? std::max(1, fullWidth * 4 / 5) : fullWidth;
-  const int height =
-      pressed ? std::max(1, fullHeight * 4 / 5) : fullHeight;
-  const SDL_Rect destination = {
-      x + (fullWidth - width) / 2,
-      y + (fullHeight - height) / 2,
-      width,
-      height,
-  };
-  SDL_RenderCopy(renderer, texture, nullptr, &destination);
-  SDL_DestroyTexture(texture);
-}
-
-void renderHighResolutionOverlay(
-    SDL_Renderer* renderer,
-    int logicalWidth,
-    int logicalHeight,
-    const HighResolutionOverlay& overlay) {
-  if (!overlay.canvas) return;
-  int outputWidth = 0;
-  int outputHeight = 0;
-  if (SDL_GetRendererOutputSize(
-          renderer, &outputWidth, &outputHeight) != 0) {
-    return;
-  }
-  const int scale = std::max(
-      1,
-      std::min(
-          outputWidth / logicalWidth,
-          outputHeight / logicalHeight));
-  const int viewportX = (outputWidth - logicalWidth * scale) / 2;
-  const int viewportY = (outputHeight - logicalHeight * scale) / 2;
-  const int gridLeft =
-      viewportX + overlay.layout.gridX * scale;
-  const int gridTop =
-      viewportY + overlay.layout.gridY * scale;
-  const int gridRight =
-      gridLeft + overlay.layout.gridPixels * scale;
-  const int gridBottom =
-      gridTop + overlay.layout.gridPixels * scale;
-
-  SDL_RenderSetLogicalSize(renderer, 0, 0);
-  SDL_RenderSetViewport(renderer, nullptr);
-  SDL_RenderSetScale(renderer, 1.0f, 1.0f);
-  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
-  if (overlay.assets != nullptr) {
-    const int toolsX =
-        viewportX + overlay.layout.toolsX * scale;
-    const int toolsY =
-        viewportY + (overlay.layout.gridY - 2) * scale;
-    renderPhysicalIcon(
-        renderer,
-        overlay.assets->draw,
-        overlay.theme,
-        toolsX,
-        toolsY,
-        scale,
-        overlay.drawPressed);
-    renderPhysicalIcon(
-        renderer,
-        overlay.assets->erase,
-        overlay.theme,
-        toolsX,
-        toolsY + 27 * scale,
-        scale,
-        overlay.erasePressed);
-    renderPhysicalIcon(
-        renderer,
-        overlay.assets->fill,
-        overlay.theme,
-        toolsX,
-        toolsY + 54 * scale,
-        scale,
-        overlay.fillPressed);
-  }
-
-  setRendererColor565(renderer, overlay.gridColor, 112);
-  for (int index = 0; index <= overlay.gridSize; ++index) {
-    const int offset =
-        index * overlay.layout.cellSize * scale;
-    SDL_RenderDrawLine(
-        renderer,
-        gridLeft + offset,
-        gridTop,
-        gridLeft + offset,
-        gridBottom);
-    SDL_RenderDrawLine(
-        renderer,
-        gridLeft,
-        gridTop + offset,
-        gridRight,
-        gridTop + offset);
-  }
-
-  if (overlay.rulersVisible) {
-    setRendererColor565(renderer, overlay.rulerColor, 255);
-    const int centerX = gridLeft + overlay.layout.gridPixels * scale / 2;
-    const int centerY = gridTop + overlay.layout.gridPixels * scale / 2;
-    SDL_RenderDrawLine(
-        renderer, centerX, gridTop, centerX, gridBottom);
-    SDL_RenderDrawLine(
-        renderer, gridLeft, centerY, gridRight, centerY);
-  }
-
-  SDL_RenderSetLogicalSize(renderer, logicalWidth, logicalHeight);
-  SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
-}
-#endif
-
 void present(
     bitmap16::Canvas& canvas,
     SDL_Texture* texture,
     SDL_Renderer* renderer,
-    uint8_t brightness
-#ifdef BITMAP16_STEAM_DECK
-    ,
-    const HighResolutionOverlay& overlay
-#endif
-    ) {
+    uint8_t brightness) {
   SDL_UpdateTexture(
       texture,
       nullptr,
@@ -576,10 +391,6 @@ void present(
       255);
   SDL_RenderClear(renderer);
   SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-#ifdef BITMAP16_STEAM_DECK
-  renderHighResolutionOverlay(
-      renderer, canvas.width(), canvas.height(), overlay);
-#endif
   if (brightness < 100) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(
@@ -612,27 +423,8 @@ void renderCurrentView(
     const bitmap16::Settings& settings,
     SDL_Texture* texture,
     SDL_Renderer* renderer) {
-#ifdef BITMAP16_STEAM_DECK
-  HighResolutionOverlay highResolutionOverlay;
-#endif
   if (view == DesktopView::Canvas) {
     const bitmap16::Sketch& sketch = editor.sketch();
-#ifdef BITMAP16_STEAM_DECK
-    const bitmap16::CanvasView::Theme theme = canvasTheme(settings);
-    highResolutionOverlay.canvas = true;
-    highResolutionOverlay.layout =
-        bitmap16::CanvasView::layoutFor(
-            canvas.width(), canvas.height(), sketch.gridSize);
-    highResolutionOverlay.gridSize = sketch.gridSize;
-    highResolutionOverlay.rulersVisible = rulersVisible;
-    highResolutionOverlay.gridColor = theme.shadow;
-    highResolutionOverlay.rulerColor = theme.centerLine;
-    highResolutionOverlay.theme = theme;
-    highResolutionOverlay.assets = &canvasAssets();
-    highResolutionOverlay.drawPressed = desktopDrawPressed;
-    highResolutionOverlay.erasePressed = desktopErasePressed;
-    highResolutionOverlay.fillPressed = desktopFillPressed;
-#endif
     const bitmap16::CanvasView::State state = {
         sketch.pixels,
         sketch.gridSize,
@@ -641,22 +433,13 @@ void renderCurrentView(
         editor.cursorX(),
         editor.cursorY(),
         editor.selectedColor(),
-#ifdef BITMAP16_STEAM_DECK
-        false,
-#else
         rulersVisible,
-#endif
         desktopMoveModeActive,
         nullptr,
         platformBatteryPercent(),
         desktopDrawPressed,
         desktopErasePressed,
         desktopFillPressed,
-#ifdef BITMAP16_STEAM_DECK
-        true,
-#else
-        false,
-#endif
     };
     bitmap16::CanvasView::render(
         canvas, state, canvasTheme(settings), &canvasAssets());
@@ -719,16 +502,7 @@ void renderCurrentView(
         nullptr,
         &assets);
   }
-  present(
-      canvas,
-      texture,
-      renderer,
-      settings.displayBrightness
-#ifdef BITMAP16_STEAM_DECK
-      ,
-      highResolutionOverlay
-#endif
-      );
+  present(canvas, texture, renderer, settings.displayBrightness);
   if (matrixSimulator != nullptr) {
     const bitmap16::Sketch& matrixSketch =
         view == DesktopView::Preview && previewOverride != nullptr
