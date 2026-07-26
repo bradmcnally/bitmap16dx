@@ -369,6 +369,26 @@ void present(
       nullptr,
       canvas.pixels(),
       canvas.width() * static_cast<int>(sizeof(uint16_t)));
+  const uint16_t background = canvas.readPixel(0, 0);
+  const int brightnessScale =
+      std::max(0, std::min(100, static_cast<int>(brightness)));
+  const Uint8 backgroundRed = static_cast<Uint8>(
+      (((background >> 11) & 0x1f) * 255 / 31) *
+      brightnessScale / 100);
+  const Uint8 backgroundGreen = static_cast<Uint8>(
+      (((background >> 5) & 0x3f) * 255 / 63) *
+      brightnessScale / 100);
+  const Uint8 backgroundBlue = static_cast<Uint8>(
+      ((background & 0x1f) * 255 / 31) *
+      brightnessScale / 100);
+  // SDL_RenderClear covers the full physical target rather than only the
+  // logical viewport, so integer-scale margins inherit the active view.
+  SDL_SetRenderDrawColor(
+      renderer,
+      backgroundRed,
+      backgroundGreen,
+      backgroundBlue,
+      255);
   SDL_RenderClear(renderer);
   SDL_RenderCopy(renderer, texture, nullptr, nullptr);
   if (brightness < 100) {
@@ -565,6 +585,9 @@ int main(int argc, char** argv) {
             height);
   if (renderer != nullptr) {
     SDL_RenderSetLogicalSize(renderer, width, height);
+#ifdef BITMAP16_STEAM_DECK
+    SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
+#endif
   }
 
   bitmap16::Canvas canvas;
@@ -1208,7 +1231,7 @@ int main(int argc, char** argv) {
 #if defined(BITMAP16_STEAM_DECK) && SDL_VERSION_ATLEAST(2, 0, 14)
         // SDL numbers rear paddles while facing the back of the controller:
         // Paddle 2/4 are the Deck's upper/lower left grips (L4/L5), and
-        // Paddle 1 is its upper right grip (R4).
+        // Paddle 1/3 are its upper/lower right grips (R4/R5).
         case SDL_CONTROLLER_BUTTON_PADDLE2:
           mappedKey = SDLK_g;
           break;
@@ -1217,6 +1240,9 @@ int main(int argc, char** argv) {
           break;
         case SDL_CONTROLLER_BUTTON_PADDLE1:
           mappedKey = SDLK_h;
+          break;
+        case SDL_CONTROLLER_BUTTON_PADDLE3:
+          mappedKey = SDLK_r;
           break;
 #endif
         default:

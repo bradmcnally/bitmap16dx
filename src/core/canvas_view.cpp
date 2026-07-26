@@ -37,26 +37,86 @@ void drawIndexedIcon(
     const Theme& theme,
     bool pressed = false) {
   if (icon.pixels == nullptr) return;
+  const auto iconValue = [&](int column, int row) {
+    const int pixel = row * icon.width + column;
+    const int shift = (3 - pixel % 4) * 2;
+    return static_cast<uint8_t>(
+        (icon.pixels[pixel / 4] >> shift) & 0x03);
+  };
+  if (!pressed) {
+    for (int row = 0; row < icon.height; ++row) {
+      for (int column = 0; column < icon.width; ++column) {
+        const uint8_t value = iconValue(column, row);
+        if (value == 1) {
+          canvas.drawPixel(x + column, y + row, theme.iconDark);
+        } else if (value == 2) {
+          canvas.drawPixel(x + column, y + row, theme.iconLight);
+        }
+      }
+    }
+    return;
+  }
+
   const int drawWidth =
-      pressed ? std::max(1, icon.width * 4 / 5) : icon.width;
+      std::max(1, icon.width * 4 / 5);
   const int drawHeight =
-      pressed ? std::max(1, icon.height * 4 / 5) : icon.height;
+      std::max(1, icon.height * 4 / 5);
   const int offsetX = (icon.width - drawWidth) / 2;
   const int offsetY = (icon.height - drawHeight) / 2;
   for (int row = 0; row < drawHeight; ++row) {
     for (int column = 0; column < drawWidth; ++column) {
-      const int sourceRow = row * icon.height / drawHeight;
-      const int sourceColumn = column * icon.width / drawWidth;
-      const int pixel = sourceRow * icon.width + sourceColumn;
-      const int shift = (3 - pixel % 4) * 2;
-      const uint8_t value =
-          (icon.pixels[pixel / 4] >> shift) & 0x03;
-      if (value == 1) {
+      const float sourceLeft =
+          static_cast<float>(column * icon.width) / drawWidth;
+      const float sourceRight =
+          static_cast<float>((column + 1) * icon.width) / drawWidth;
+      const float sourceTop =
+          static_cast<float>(row * icon.height) / drawHeight;
+      const float sourceBottom =
+          static_cast<float>((row + 1) * icon.height) / drawHeight;
+      float darkWeight = 0.0f;
+      float lightWeight = 0.0f;
+      const int firstX = static_cast<int>(sourceLeft);
+      const int lastX = static_cast<int>(sourceRight);
+      const int firstY = static_cast<int>(sourceTop);
+      const int lastY = static_cast<int>(sourceBottom);
+      for (int sourceY = firstY;
+           sourceY <= lastY && sourceY < icon.height;
+           ++sourceY) {
+        const float overlapY = std::max(
+            0.0f,
+            std::min(sourceBottom, static_cast<float>(sourceY + 1)) -
+                std::max(sourceTop, static_cast<float>(sourceY)));
+        for (int sourceX = firstX;
+             sourceX <= lastX && sourceX < icon.width;
+             ++sourceX) {
+          const float overlapX = std::max(
+              0.0f,
+              std::min(sourceRight, static_cast<float>(sourceX + 1)) -
+                  std::max(sourceLeft, static_cast<float>(sourceX)));
+          const float weight = overlapX * overlapY;
+          const uint8_t value = iconValue(sourceX, sourceY);
+          if (value == 1) darkWeight += weight;
+          else if (value == 2) lightWeight += weight;
+        }
+      }
+      const float area =
+          (sourceRight - sourceLeft) * (sourceBottom - sourceTop);
+      const float backgroundWeight =
+          std::max(0.0f, area - darkWeight - lightWeight);
+      if (darkWeight + lightWeight > 0.0f) {
+        const auto channel = [&](int shift, int mask) {
+          return static_cast<uint16_t>(
+              (((theme.background >> shift) & mask) * backgroundWeight +
+               ((theme.iconDark >> shift) & mask) * darkWeight +
+               ((theme.iconLight >> shift) & mask) * lightWeight) /
+              area);
+        };
+        const uint16_t color = static_cast<uint16_t>(
+            (channel(11, 0x1f) << 11) |
+            (channel(5, 0x3f) << 5) |
+            channel(0, 0x1f));
         canvas.drawPixel(
-            x + offsetX + column, y + offsetY + row, theme.iconDark);
-      } else if (value == 2) {
-        canvas.drawPixel(
-            x + offsetX + column, y + offsetY + row, theme.iconLight);
+            x + offsetX + column, y + offsetY + row, color);
       }
     }
   }
@@ -88,7 +148,8 @@ void cutGridCorners(
 }  // namespace
 
 Layout layoutFor(int width, int height, uint8_t gridSize) {
-  constexpr int kSideRailGap = 19;
+  constexpr int kPaletteRailGap = 19;
+  constexpr int kToolRailGap = 17;
   constexpr int kToolIconWidth = 24;
   const int logicalSize = gridSize == 16 ? 16 : 8;
   const int available = std::max(8, std::min(128, height - 7));
@@ -98,10 +159,10 @@ Layout layoutFor(int width, int height, uint8_t gridSize) {
       std::max(8, std::min(16, height / 8));
   const int gridX = (width - gridPixels) / 2;
   const int toolsX =
-      std::max(3, gridX - kSideRailGap - kToolIconWidth);
+      std::max(3, gridX - kToolRailGap - kToolIconWidth);
   const int paletteX = std::min(
       width - paletteSwatchSize * 2 - 5,
-      gridX + gridPixels + kSideRailGap);
+      gridX + gridPixels + kPaletteRailGap);
   return {
       gridX,
       (height - gridPixels + 1) / 2,
@@ -288,24 +349,25 @@ void render(
   const int cursorCellY =
       layout.gridY + state.cursorY * layout.cellSize;
   if (assets != nullptr) {
+    const int toolsY = layout.gridY - 2;
     drawIndexedIcon(
         canvas,
         layout.toolsX,
-        layout.gridY,
+        toolsY,
         assets->draw,
         theme,
         state.drawPressed);
     drawIndexedIcon(
         canvas,
         layout.toolsX,
-        layout.gridY + 27,
+        toolsY + 27,
         assets->erase,
         theme,
         state.erasePressed);
     drawIndexedIcon(
         canvas,
         layout.toolsX,
-        layout.gridY + 54,
+        toolsY + 54,
         assets->fill,
         theme,
         state.fillPressed);
@@ -317,7 +379,7 @@ void render(
       drawIndexedIcon(
           canvas,
           layout.toolsX,
-          layout.gridY + 82,
+          toolsY + 82,
           assets->battery[batteryStage],
           theme);
     }

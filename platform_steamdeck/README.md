@@ -3,6 +3,8 @@
 This target runs the existing SDL application fullscreen with a 320x200
 logical framebuffer. Steam Deck's 1280x800 panel scales it by an exact 4x.
 It is intended for sideloaded controller testing before Steamworks packaging.
+Other display resolutions use strict integer scaling. Any letterbox or
+pillarbox margins are filled with the active view's background color.
 
 ## Build
 
@@ -82,6 +84,7 @@ battery/charging UI; SteamOS provides the device battery indicator.
 | L4 | Toggle 8x8/16x16 grid | — |
 | L5 | Toggle Preview | Toggle Preview |
 | R4 | Toggle Help | Toggle Help |
+| R5 | Toggle grid rulers | — |
 
 Right-stick color movement follows the palette rail geometry. Up/down changes
 rows. Left/right switches columns only for a 16-color palette.
@@ -103,10 +106,10 @@ Keyboard controls remain available in this quick build.
 7. Draw, release L1 to undo, and press R1 to redo. Confirm L1+L2 saves without
    also undoing, then open Sketches with View and reopen the saved sketch.
 8. Confirm L4 toggles the grid, L5 toggles Preview, and R4 opens Help then
-   returns to the previous screen.
+   returns to the previous screen. Confirm R5 toggles the grid rulers.
 9. Test both Gaming Mode and Desktop Mode, then report any incorrect button
    labels, dead-zone problems, double movements, or missed repeats.
 
 SDL exposes the Deck's rear grips as controller paddles. If Steam Input does
-not pass them through with the selected template, bind L4, L5, and R4 to their
-corresponding gamepad paddle inputs in the game's controller layout.
+not pass them through with the selected template, bind L4, L5, R4, and R5 to
+their corresponding gamepad paddle inputs in the game's controller layout.

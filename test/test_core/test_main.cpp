@@ -126,18 +126,18 @@ void test_canvas_view_layout_is_resolution_and_grid_aware() {
   TEST_ASSERT_EQUAL_INT(128, small.gridPixels);
   TEST_ASSERT_EQUAL_INT(16, small.cellSize);
   TEST_ASSERT_EQUAL_INT(56, small.gridX);
-  TEST_ASSERT_EQUAL_INT(13, small.toolsX);
+  TEST_ASSERT_EQUAL_INT(15, small.toolsX);
   TEST_ASSERT_EQUAL_INT(203, small.paletteX);
-  TEST_ASSERT_EQUAL_INT(13, small.statusX);
+  TEST_ASSERT_EQUAL_INT(15, small.statusX);
 
   const bitmap16::CanvasView::Layout large =
       bitmap16::CanvasView::layoutFor(320, 170, 16);
   TEST_ASSERT_EQUAL_INT(128, large.gridPixels);
   TEST_ASSERT_EQUAL_INT(8, large.cellSize);
   TEST_ASSERT_EQUAL_INT(96, large.gridX);
-  TEST_ASSERT_EQUAL_INT(53, large.toolsX);
+  TEST_ASSERT_EQUAL_INT(55, large.toolsX);
   TEST_ASSERT_EQUAL_INT(243, large.paletteX);
-  TEST_ASSERT_EQUAL_INT(53, large.statusX);
+  TEST_ASSERT_EQUAL_INT(55, large.statusX);
 }
 
 void test_canvas_view_renders_editor_at_both_target_sizes() {
