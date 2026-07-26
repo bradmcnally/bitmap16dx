@@ -113,6 +113,14 @@ bool platformHasShakeUndo() {
 #endif
 }
 
+bool platformHasQuitSetting() {
+#ifdef BITMAP16_STEAM_DECK
+  return true;
+#else
+  return false;
+#endif
+}
+
 bool platformHasBatteryDisplay() {
 #ifdef BITMAP16_STEAM_DECK
   return false;
@@ -476,7 +484,10 @@ void renderCurrentView(
         settingsTheme(settings),
         false,
         platformHasLedMatrixControls(),
-        platformHasShakeUndo());
+        platformHasShakeUndo(),
+        nullptr,
+        nullptr,
+        platformHasQuitSetting());
   } else if (view == DesktopView::Preview) {
     const bitmap16::Sketch& sketch =
         previewOverride == nullptr ? editor.sketch() : *previewOverride;
@@ -1834,7 +1845,8 @@ int main(int argc, char** argv) {
             -1,
             false,
             platformHasLedMatrixControls(),
-            platformHasShakeUndo());
+            platformHasShakeUndo(),
+            platformHasQuitSetting());
       } else if (currentView == DesktopView::Memory) {
         changed = bitmap16::MemoryView::moveCursor(
             memoryState, 0, -1, memoryCatalog.count, width);
@@ -1854,7 +1866,8 @@ int main(int argc, char** argv) {
             1,
             false,
             platformHasLedMatrixControls(),
-            platformHasShakeUndo());
+            platformHasShakeUndo(),
+            platformHasQuitSetting());
       } else if (currentView == DesktopView::Memory) {
         changed = bitmap16::MemoryView::moveCursor(
             memoryState, 0, 1, memoryCatalog.count, width);
@@ -1874,9 +1887,14 @@ int main(int argc, char** argv) {
               settings,
               false,
               platformHasLedMatrixControls(),
-              platformHasShakeUndo());
+              platformHasShakeUndo(),
+              platformHasQuitSetting());
       changed = action != bitmap16::SettingsView::Action::None;
-      if (changed) workspace.saveSettings();
+      if (action == bitmap16::SettingsView::Action::QuitRequested) {
+        running = false;
+      } else if (changed) {
+        workspace.saveSettings();
+      }
     } else if (
         currentView == DesktopView::Palette &&
         (key == SDLK_LEFT || key == SDLK_RIGHT)) {

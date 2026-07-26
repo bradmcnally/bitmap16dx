@@ -293,6 +293,8 @@ void test_settings_view_navigation_and_actions_are_portable() {
       7, bitmap16::SettingsView::itemCount(true, true, true));
   TEST_ASSERT_EQUAL_INT(
       3, bitmap16::SettingsView::itemCount(false, false, false));
+  TEST_ASSERT_EQUAL_INT(
+      4, bitmap16::SettingsView::itemCount(false, false, false, true));
 
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::activate(
@@ -315,6 +317,12 @@ void test_settings_view_navigation_and_actions_are_portable() {
       bitmap16::SettingsView::activate(
           state, settings, true, true, true) ==
       bitmap16::SettingsView::Action::BluetoothRequested);
+
+  state.cursor = 3;
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(
+          state, settings, false, false, false, true) ==
+      bitmap16::SettingsView::Action::QuitRequested);
 }
 
 void test_settings_view_renders_at_both_target_sizes() {

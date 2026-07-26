@@ -17,6 +17,7 @@ enum class Action : uint8_t {
   ExportFormatChanged,
   ShakeUndoChanged,
   BluetoothRequested,
+  QuitRequested,
 };
 
 struct State {
@@ -31,19 +32,24 @@ struct Theme {
 };
 
 int itemCount(
-    bool includeBluetooth, bool includeMatrix, bool includeShakeUndo);
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo,
+    bool includeQuit = false);
 bool moveCursor(
     State& state,
     int delta,
     bool includeBluetooth,
     bool includeMatrix,
-    bool includeShakeUndo);
+    bool includeShakeUndo,
+    bool includeQuit = false);
 Action activate(
     State& state,
     Settings& settings,
     bool includeBluetooth,
     bool includeMatrix,
-    bool includeShakeUndo);
+    bool includeShakeUndo,
+    bool includeQuit = false);
 void render(
     Canvas& canvas,
     State& state,
@@ -53,7 +59,8 @@ void render(
     bool includeMatrix,
     bool includeShakeUndo,
     const char* bluetoothValue = nullptr,
-    const char* statusMessage = nullptr);
+    const char* statusMessage = nullptr,
+    bool includeQuit = false);
 
 }  // namespace SettingsView
 }  // namespace bitmap16

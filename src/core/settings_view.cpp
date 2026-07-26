@@ -22,14 +22,17 @@ constexpr Item kItems[] = {
     {"Export", Action::ExportFormatChanged},
     {"Shake undo", Action::ShakeUndoChanged},
     {"Bluetooth", Action::BluetoothRequested},
+    {"Quit", Action::QuitRequested},
 };
 
 bool itemVisible(
     const Item& item,
     bool includeBluetooth,
     bool includeMatrix,
-    bool includeShakeUndo) {
+    bool includeShakeUndo,
+    bool includeQuit) {
   if (item.action == Action::BluetoothRequested) return includeBluetooth;
+  if (item.action == Action::QuitRequested) return includeQuit;
   if (item.action == Action::MatrixUnitsChanged ||
       item.action == Action::MatrixRotationChanged) {
     return includeMatrix;
@@ -42,11 +45,16 @@ const Item& visibleItem(
     int index,
     bool includeBluetooth,
     bool includeMatrix,
-    bool includeShakeUndo) {
+    bool includeShakeUndo,
+    bool includeQuit) {
   int visibleIndex = 0;
   for (const Item& item : kItems) {
     if (!itemVisible(
-            item, includeBluetooth, includeMatrix, includeShakeUndo)) {
+            item,
+            includeBluetooth,
+            includeMatrix,
+            includeShakeUndo,
+            includeQuit)) {
       continue;
     }
     if (visibleIndex == index) {
@@ -87,6 +95,8 @@ const char* valueFor(
       return settings.shakeUndoEnabled ? "ON" : "OFF";
     case Action::BluetoothRequested:
       return bluetoothValue == nullptr ? "OFF" : bluetoothValue;
+    case Action::QuitRequested:
+      return "EXIT";
     default:
       return "";
   }
@@ -95,11 +105,18 @@ const char* valueFor(
 }  // namespace
 
 int itemCount(
-    bool includeBluetooth, bool includeMatrix, bool includeShakeUndo) {
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo,
+    bool includeQuit) {
   int count = 0;
   for (const Item& item : kItems) {
     if (itemVisible(
-            item, includeBluetooth, includeMatrix, includeShakeUndo)) {
+            item,
+            includeBluetooth,
+            includeMatrix,
+            includeShakeUndo,
+            includeQuit)) {
       ++count;
     }
   }
@@ -111,9 +128,11 @@ bool moveCursor(
     int delta,
     bool includeBluetooth,
     bool includeMatrix,
-    bool includeShakeUndo) {
+    bool includeShakeUndo,
+    bool includeQuit) {
   const int maximum =
-      itemCount(includeBluetooth, includeMatrix, includeShakeUndo) - 1;
+      itemCount(
+          includeBluetooth, includeMatrix, includeShakeUndo, includeQuit) - 1;
   const int next = std::max(0, std::min(maximum, state.cursor + delta));
   if (next == state.cursor) {
     return false;
@@ -127,16 +146,26 @@ Action activate(
     Settings& settings,
     bool includeBluetooth,
     bool includeMatrix,
-    bool includeShakeUndo) {
+    bool includeShakeUndo,
+    bool includeQuit) {
   state.cursor =
       std::max(
           0,
           std::min(
-              itemCount(includeBluetooth, includeMatrix, includeShakeUndo) - 1,
+              itemCount(
+                  includeBluetooth,
+                  includeMatrix,
+                  includeShakeUndo,
+                  includeQuit) -
+                  1,
               state.cursor));
   const Action action =
       visibleItem(
-          state.cursor, includeBluetooth, includeMatrix, includeShakeUndo)
+          state.cursor,
+          includeBluetooth,
+          includeMatrix,
+          includeShakeUndo,
+          includeQuit)
           .action;
   switch (action) {
     case Action::ThemeChanged:
@@ -168,6 +197,8 @@ Action activate(
       return Action::ShakeUndoChanged;
     case Action::BluetoothRequested:
       return includeBluetooth ? Action::BluetoothRequested : Action::None;
+    case Action::QuitRequested:
+      return includeQuit ? Action::QuitRequested : Action::None;
     default:
       return Action::None;
   }
@@ -182,7 +213,8 @@ void render(
     bool includeMatrix,
     bool includeShakeUndo,
     const char* bluetoothValue,
-    const char* statusMessage) {
+    const char* statusMessage,
+    bool includeQuit) {
   if (!canvas.isValid()) {
     return;
   }
@@ -194,7 +226,8 @@ void render(
   canvas.drawString("SETTINGS", 4, 4);
 
   const int totalItems =
-      itemCount(includeBluetooth, includeMatrix, includeShakeUndo);
+      itemCount(
+          includeBluetooth, includeMatrix, includeShakeUndo, includeQuit);
   state.cursor = std::max(0, std::min(totalItems - 1, state.cursor));
   state.scrollOffset =
       std::max(0, std::min(state.cursor, state.scrollOffset));
@@ -232,13 +265,23 @@ void render(
     canvas.setTextAlign(TextAlign::Left);
     canvas.drawString(
         visibleItem(
-            i, includeBluetooth, includeMatrix, includeShakeUndo).label,
+            i,
+            includeBluetooth,
+            includeMatrix,
+            includeShakeUndo,
+            includeQuit)
+            .label,
         labelX,
         textY);
 
     const char* value = valueFor(
         visibleItem(
-            i, includeBluetooth, includeMatrix, includeShakeUndo).action,
+            i,
+            includeBluetooth,
+            includeMatrix,
+            includeShakeUndo,
+            includeQuit)
+            .action,
         settings,
         bluetoothValue,
         valueBuffer,
