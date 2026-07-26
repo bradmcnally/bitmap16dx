@@ -72,6 +72,25 @@ bool decodeSettings(
   return true;
 }
 
+uint64_t sketchSequence(const std::filesystem::path& path) {
+  const std::string stem = path.stem().string();
+  const std::size_t separator = stem.find_last_of("_-");
+  if (separator == std::string::npos || separator + 1 >= stem.size()) {
+    return 0;
+  }
+  uint64_t sequence = 0;
+  for (std::size_t index = separator + 1; index < stem.size(); ++index) {
+    const unsigned char character =
+        static_cast<unsigned char>(stem[index]);
+    if (!std::isdigit(character)) {
+      return 0;
+    }
+    sequence = sequence * 10u +
+        static_cast<uint64_t>(character - '0');
+  }
+  return sequence;
+}
+
 }  // namespace
 
 bool Workspace::initialize(Editor& editor) {
@@ -129,7 +148,18 @@ bool Workspace::loadSketches() {
       candidates.push_back(entry.path());
     }
   }
-  std::sort(candidates.begin(), candidates.end(), std::greater<>());
+  std::sort(
+      candidates.begin(),
+      candidates.end(),
+      [](const std::filesystem::path& left,
+         const std::filesystem::path& right) {
+        const uint64_t leftSequence = sketchSequence(left);
+        const uint64_t rightSequence = sketchSequence(right);
+        if (leftSequence != rightSequence) {
+          return leftSequence > rightSequence;
+        }
+        return left.filename() > right.filename();
+      });
   for (const auto& path : candidates) {
     std::ifstream input(path, std::ios::binary);
     const std::vector<uint8_t> data(

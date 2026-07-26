@@ -928,7 +928,13 @@ int main(int argc, char** argv) {
         memoryCatalog.count,
         width,
         height,
-        static_cast<float>(std::min<Uint32>(elapsed, 100u)) / 1000.0f);
+        static_cast<float>(std::min<Uint32>(elapsed, 100u)) / 1000.0f,
+#ifdef BITMAP16_STEAM_DECK
+        0.7f
+#else
+        0.35f
+#endif
+    );
     renderNow();
   };
   const auto advancePaletteAnimation = [&]() {
