@@ -1066,9 +1066,43 @@ int main(int argc, char** argv) {
   bool focusNewestSketchOnNextMemoryOpen = false;
   bool previewLeftTriggerLatched = false;
   bool previewRightTriggerLatched = false;
+  bool quitRequested = false;
   bool running = !smokeTest;
   while (running) {
     SDL_PumpEvents();
+    if (quitRequested) {
+      bool activationHeld = false;
+      if (controller != nullptr) {
+        for (int button = SDL_CONTROLLER_BUTTON_A;
+             button < SDL_CONTROLLER_BUTTON_MAX;
+             ++button) {
+          if (SDL_GameControllerGetButton(
+                  controller,
+                  static_cast<SDL_GameControllerButton>(button)) != 0) {
+            activationHeld = true;
+            break;
+          }
+        }
+      }
+      const Uint8* keyboard = SDL_GetKeyboardState(nullptr);
+      activationHeld =
+          activationHeld ||
+          keyboard[SDL_SCANCODE_RETURN] != 0 ||
+          keyboard[SDL_SCANCODE_KP_ENTER] != 0 ||
+          keyboard[SDL_SCANCODE_SPACE] != 0;
+      activationHeld =
+          activationHeld ||
+          (SDL_GetMouseState(nullptr, nullptr) &
+           (SDL_BUTTON(SDL_BUTTON_LEFT) |
+            SDL_BUTTON(SDL_BUTTON_RIGHT))) != 0;
+      if (!activationHeld) {
+        // Keep Desktop Mode's controller-to-keyboard/mouse activation from
+        // carrying into Steam or the file manager behind this window.
+        SDL_Delay(350);
+        running = false;
+        break;
+      }
+    }
     if (desktopStatus[0] != '\0' &&
         SDL_TICKS_PASSED(SDL_GetTicks(), desktopStatusUntil)) {
       desktopStatus[0] = '\0';
@@ -1891,7 +1925,7 @@ int main(int argc, char** argv) {
               platformHasQuitSetting());
       changed = action != bitmap16::SettingsView::Action::None;
       if (action == bitmap16::SettingsView::Action::QuitRequested) {
-        running = false;
+        quitRequested = true;
       } else if (changed) {
         workspace.saveSettings();
       }
