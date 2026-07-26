@@ -50,7 +50,7 @@ Settings and sketches persist between launches in:
 ├── trash/
 ├── settings.bin
 └── sketches/
-    └── sketch-0001.b16
+    └── sketch-0001.dat
 ```
 
 Set `BITMAP16_DATA_DIR` to use a different writable location. If

@@ -125,7 +125,7 @@ bool Workspace::loadSketches() {
   for (const auto& entry :
        std::filesystem::directory_iterator(root_ / "sketches", error)) {
     if (error) return false;
-    if (entry.is_regular_file() && entry.path().extension() == ".b16") {
+    if (entry.is_regular_file() && entry.path().extension() == ".dat") {
       candidates.push_back(entry.path());
     }
   }
@@ -192,7 +192,7 @@ bool Workspace::saveSketch(const Editor& editor, bool saveAsNew) {
     do {
       std::ostringstream name;
       name << "sketch-" << std::setw(4) << std::setfill('0') << next++
-           << ".b16";
+           << ".dat";
       path = root_ / "sketches" / name.str();
     } while (std::filesystem::exists(path));
   }
@@ -212,7 +212,8 @@ bool Workspace::deleteSketch(std::size_t index, Editor& editor) {
   int suffix = 1;
   while (std::filesystem::exists(trash)) {
     trash = root_ / "trash" /
-        (original.stem().string() + "-" + std::to_string(suffix++) + ".b16");
+        (original.stem().string() + "-" + std::to_string(suffix++) +
+         original.extension().string());
   }
   std::error_code error;
   std::filesystem::rename(original, trash, error);
@@ -240,7 +241,8 @@ bool Workspace::undoDelete(Editor& editor) {
   while (std::filesystem::exists(restored)) {
     restored = deletedOriginalPath_.parent_path() /
         (deletedOriginalPath_.stem().string() + "-restored-" +
-         std::to_string(suffix++) + ".b16");
+         std::to_string(suffix++) +
+         deletedOriginalPath_.extension().string());
   }
   std::error_code error;
   std::filesystem::rename(deletedTrashPath_, restored, error);
