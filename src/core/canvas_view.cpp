@@ -432,11 +432,12 @@ void render(
         for (int mapX = 0; mapX < minimapSize; ++mapX) {
           const int sourceX = mapX * logicalSize / minimapSize;
           const uint8_t index = state.pixels[sourceY][sourceX];
-          if (index > 0 && index <= state.paletteSize) {
+          if (index > 0) {
             canvas.drawPixel(
                 minimapX + mapX,
                 minimapY + mapY,
-                state.paletteColors[index - 1]);
+                Palette::colorForIndex(
+                    state.paletteColors, state.paletteSize, index));
           }
         }
       }

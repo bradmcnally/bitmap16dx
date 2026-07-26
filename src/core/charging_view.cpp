@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstdio>
 
+#include "core/palette.h"
+
 namespace bitmap16 {
 namespace ChargingView {
 
@@ -72,13 +74,14 @@ void drawSketch(
       const int sourceX =
           destinationX * sketch.gridSize / kSketchSize;
       const uint8_t index = sketch.pixels[sourceY][sourceX];
-      if (index == 0 || index > sketch.paletteSize) {
+      if (index == 0) {
         continue;
       }
       canvas.drawPixel(
           originX + destinationX,
           originY + destinationY,
-          sketch.paletteColors[index - 1]);
+          Palette::colorForIndex(
+              sketch.paletteColors, sketch.paletteSize, index));
     }
   }
 }

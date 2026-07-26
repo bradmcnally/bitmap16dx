@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "core/palette.h"
+
 namespace bitmap16 {
 namespace PreviewView {
 
@@ -91,7 +93,7 @@ void render(
   for (int y = 0; y < image.gridSize; ++y) {
     for (int x = 0; x < image.gridSize; ++x) {
       const uint8_t paletteIndex = image.pixels[y][x];
-      if (paletteIndex == 0 || paletteIndex > image.paletteSize) {
+      if (paletteIndex == 0) {
         continue;
       }
       canvas.fillRect(
@@ -99,7 +101,8 @@ void render(
           viewY + y * cellSize,
           cellSize,
           cellSize,
-          image.paletteColors[paletteIndex - 1]);
+          Palette::colorForIndex(
+              image.paletteColors, image.paletteSize, paletteIndex));
     }
   }
 

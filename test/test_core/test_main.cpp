@@ -427,7 +427,7 @@ void test_preview_view_renders_indexed_pixels_at_both_target_sizes() {
     TEST_ASSERT_EQUAL_HEX16(
         palette[1], canvas.readPixel(viewX + cellSize, viewY));
     TEST_ASSERT_EQUAL_HEX16(
-        theme.gray, canvas.readPixel(viewX + cellSize * 2, viewY));
+        palette[0], canvas.readPixel(viewX + cellSize * 2, viewY));
     TEST_ASSERT_EQUAL_HEX16(theme.gray, canvas.readPixel(0, 0));
   }
 }

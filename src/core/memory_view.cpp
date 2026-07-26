@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "core/palette.h"
+
 namespace bitmap16 {
 namespace MemoryView {
 
@@ -71,7 +73,7 @@ void drawThumbnail(
     for (int sourceY = 0; sourceY < entry.gridSize; ++sourceY) {
       for (int sourceX = 0; sourceX < entry.gridSize; ++sourceX) {
         const uint8_t index = entry.pixels[sourceY][sourceX];
-        if (index == 0 || index > entry.paletteSize) {
+        if (index == 0) {
           continue;
         }
         canvas.fillRect(
@@ -79,7 +81,8 @@ void drawThumbnail(
             artworkY + sourceY * scale,
             scale,
             scale,
-            entry.paletteColors[index - 1]);
+            Palette::colorForIndex(
+                entry.paletteColors, entry.paletteSize, index));
       }
     }
   }
