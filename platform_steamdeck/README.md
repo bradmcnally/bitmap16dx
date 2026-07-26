@@ -5,6 +5,9 @@ logical framebuffer. Steam Deck's 1280x800 panel scales it by an exact 4x.
 It is intended for sideloaded controller testing before Steamworks packaging.
 Other display resolutions use strict integer scaling. Any letterbox or
 pillarbox margins are filled with the active view's background color.
+After the logical framebuffer is scaled, the Deck renderer draws grid and
+ruler lines as one-output-pixel overlays using the actual integer viewport.
+This keeps those details fine at every supported output resolution.
 
 ## Build
 

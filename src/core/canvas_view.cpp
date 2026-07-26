@@ -43,80 +43,18 @@ void drawIndexedIcon(
     return static_cast<uint8_t>(
         (icon.pixels[pixel / 4] >> shift) & 0x03);
   };
-  if (!pressed) {
-    for (int row = 0; row < icon.height; ++row) {
-      for (int column = 0; column < icon.width; ++column) {
-        const uint8_t value = iconValue(column, row);
-        if (value == 1) {
-          canvas.drawPixel(x + column, y + row, theme.iconDark);
-        } else if (value == 2) {
-          canvas.drawPixel(x + column, y + row, theme.iconLight);
-        }
-      }
-    }
-    return;
-  }
-
-  const int drawWidth =
-      std::max(1, icon.width * 4 / 5);
-  const int drawHeight =
-      std::max(1, icon.height * 4 / 5);
-  const int offsetX = (icon.width - drawWidth) / 2;
-  const int offsetY = (icon.height - drawHeight) / 2;
-  for (int row = 0; row < drawHeight; ++row) {
-    for (int column = 0; column < drawWidth; ++column) {
-      const float sourceLeft =
-          static_cast<float>(column * icon.width) / drawWidth;
-      const float sourceRight =
-          static_cast<float>((column + 1) * icon.width) / drawWidth;
-      const float sourceTop =
-          static_cast<float>(row * icon.height) / drawHeight;
-      const float sourceBottom =
-          static_cast<float>((row + 1) * icon.height) / drawHeight;
-      float darkWeight = 0.0f;
-      float lightWeight = 0.0f;
-      const int firstX = static_cast<int>(sourceLeft);
-      const int lastX = static_cast<int>(sourceRight);
-      const int firstY = static_cast<int>(sourceTop);
-      const int lastY = static_cast<int>(sourceBottom);
-      for (int sourceY = firstY;
-           sourceY <= lastY && sourceY < icon.height;
-           ++sourceY) {
-        const float overlapY = std::max(
-            0.0f,
-            std::min(sourceBottom, static_cast<float>(sourceY + 1)) -
-                std::max(sourceTop, static_cast<float>(sourceY)));
-        for (int sourceX = firstX;
-             sourceX <= lastX && sourceX < icon.width;
-             ++sourceX) {
-          const float overlapX = std::max(
-              0.0f,
-              std::min(sourceRight, static_cast<float>(sourceX + 1)) -
-                  std::max(sourceLeft, static_cast<float>(sourceX)));
-          const float weight = overlapX * overlapY;
-          const uint8_t value = iconValue(sourceX, sourceY);
-          if (value == 1) darkWeight += weight;
-          else if (value == 2) lightWeight += weight;
-        }
-      }
-      const float area =
-          (sourceRight - sourceLeft) * (sourceBottom - sourceTop);
-      const float backgroundWeight =
-          std::max(0.0f, area - darkWeight - lightWeight);
-      if (darkWeight + lightWeight > 0.0f) {
-        const auto channel = [&](int shift, int mask) {
-          return static_cast<uint16_t>(
-              (((theme.background >> shift) & mask) * backgroundWeight +
-               ((theme.iconDark >> shift) & mask) * darkWeight +
-               ((theme.iconLight >> shift) & mask) * lightWeight) /
-              area);
-        };
-        const uint16_t color = static_cast<uint16_t>(
-            (channel(11, 0x1f) << 11) |
-            (channel(5, 0x3f) << 5) |
-            channel(0, 0x1f));
-        canvas.drawPixel(
-            x + offsetX + column, y + offsetY + row, color);
+  const uint16_t dark =
+      pressed ? scaleColor(theme.iconDark, 0.8f) : theme.iconDark;
+  const uint16_t light =
+      pressed ? scaleColor(theme.iconLight, 0.8f) : theme.iconLight;
+  const int pressedOffsetY = pressed ? 1 : 0;
+  for (int row = 0; row < icon.height; ++row) {
+    for (int column = 0; column < icon.width; ++column) {
+      const uint8_t value = iconValue(column, row);
+      if (value == 1) {
+        canvas.drawPixel(x + column, y + pressedOffsetY + row, dark);
+      } else if (value == 2) {
+        canvas.drawPixel(x + column, y + pressedOffsetY + row, light);
       }
     }
   }
@@ -350,28 +288,30 @@ void render(
       layout.gridY + state.cursorY * layout.cellSize;
   if (assets != nullptr) {
     const int toolsY = layout.gridY - 2;
-    drawIndexedIcon(
-        canvas,
-        layout.toolsX,
-        toolsY,
-        assets->draw,
-        theme,
-        state.drawPressed);
-    drawIndexedIcon(
-        canvas,
-        layout.toolsX,
-        toolsY + 27,
-        assets->erase,
-        theme,
-        state.erasePressed);
-    drawIndexedIcon(
-        canvas,
-        layout.toolsX,
-        toolsY + 54,
-        assets->fill,
-        theme,
-        state.fillPressed);
-    if (state.batteryPercent >= 0) {
+    if (!state.hideToolIcons) {
+      drawIndexedIcon(
+          canvas,
+          layout.toolsX,
+          toolsY,
+          assets->draw,
+          theme,
+          state.drawPressed);
+      drawIndexedIcon(
+          canvas,
+          layout.toolsX,
+          toolsY + 27,
+          assets->erase,
+          theme,
+          state.erasePressed);
+      drawIndexedIcon(
+          canvas,
+          layout.toolsX,
+          toolsY + 54,
+          assets->fill,
+          theme,
+          state.fillPressed);
+    }
+    if (!state.hideToolIcons && state.batteryPercent >= 0) {
       int batteryStage = 0;
       if (state.batteryPercent >= 90) batteryStage = 3;
       else if (state.batteryPercent >= 50) batteryStage = 2;
