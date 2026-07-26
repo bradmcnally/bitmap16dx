@@ -50,7 +50,8 @@ void render(
     Canvas& canvas,
     const State& state,
     const Image& image,
-    const Theme& theme);
+    const Theme& theme,
+    const char* statusMessage = nullptr);
 
 }  // namespace PreviewView
 }  // namespace bitmap16

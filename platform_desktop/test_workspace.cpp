@@ -44,6 +44,11 @@ int main() {
       !restored.settings().matrixEnabled) {
     return 5;
   }
+  if (!restored.saveSketch(restoredEditor, false) ||
+      !std::filesystem::exists(
+          root / "sketches" / "sketch_101.dat")) {
+    return 5;
+  }
 
   restored.newSketch(restoredEditor);
   restoredEditor.toggleGridSize();
@@ -55,7 +60,7 @@ int main() {
       restored.sketches().size() != 2 ||
       restored.sketches()[0].gridSize != 32 ||
       !std::filesystem::exists(
-          root / "sketches" / "sketch_101.dat")) {
+          root / "sketches" / "sketch_102.dat")) {
     return 6;
   }
 

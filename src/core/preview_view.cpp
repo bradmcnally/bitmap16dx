@@ -67,7 +67,8 @@ void render(
     Canvas& canvas,
     const State& state,
     const Image& image,
-    const Theme& theme) {
+    const Theme& theme,
+    const char* statusMessage) {
   if (!canvas.isValid()) {
     return;
   }
@@ -99,6 +100,16 @@ void render(
           cellSize,
           image.paletteColors[paletteIndex - 1]);
     }
+  }
+
+  if (statusMessage != nullptr && statusMessage[0] != '\0') {
+    const bool darkBackground =
+        state.background == Background::Black ||
+        state.background == Background::Dark;
+    canvas.setTextAlign(TextAlign::Center);
+    canvas.setTextSize(1);
+    canvas.setTextColor(darkBackground ? theme.white : theme.black);
+    canvas.drawString(statusMessage, canvas.width() / 2, canvas.height() - 11);
   }
 }
 

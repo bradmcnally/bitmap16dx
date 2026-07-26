@@ -486,7 +486,11 @@ void renderCurrentView(
         sketch.paletteSize,
     };
     bitmap16::PreviewView::render(
-        canvas, previewState, previewImage, previewTheme());
+        canvas,
+        previewState,
+        previewImage,
+        previewTheme(),
+        desktopStatus[0] == '\0' ? nullptr : desktopStatus);
   } else if (view == DesktopView::Charging) {
     const bitmap16::Sketch& sketch = editor.sketch();
     const bitmap16::ChargingView::SketchImage chargingSketch = {
@@ -1042,7 +1046,8 @@ int main(int argc, char** argv) {
         SDL_TICKS_PASSED(SDL_GetTicks(), desktopStatusUntil)) {
       desktopStatus[0] = '\0';
       desktopStatusUntil = 0;
-      if (currentView == DesktopView::Canvas) {
+      if (currentView == DesktopView::Canvas ||
+          currentView == DesktopView::Preview) {
         renderNow();
       }
     }
@@ -1542,6 +1547,13 @@ int main(int argc, char** argv) {
         galleryAutoAdvance = false;
         previewOverride = nullptr;
       } else {
+        bitmap16::PreviewView::selectBackground(
+            previewState,
+            static_cast<int>(
+                settings.theme == bitmap16::ThemeId::Dark
+                    ? bitmap16::PreviewView::Background::Dark
+                    : bitmap16::PreviewView::Background::Gray));
+        setDesktopStatus("Preview");
         galleryMode =
             currentView == DesktopView::Memory &&
             !workspace.sketches().empty();

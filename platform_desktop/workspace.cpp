@@ -214,20 +214,31 @@ bool Workspace::writeSketch(
 
 bool Workspace::saveSketch(const Editor& editor, bool saveAsNew) {
   std::filesystem::path path;
+  uint64_t next = 1;
+  for (const auto& existing : sketchPaths_) {
+    next = std::max(next, sketchSequence(existing) + 1);
+  }
+  const auto nextPath = [&]() {
+    std::filesystem::path candidate;
+    do {
+      candidate = root_ / "sketches" /
+          ("sketch_" + std::to_string(next++) + ".dat");
+    } while (std::filesystem::exists(candidate));
+    return candidate;
+  };
   if (!saveAsNew && activeIndex_ >= 0 &&
       activeIndex_ < static_cast<int>(sketchPaths_.size())) {
     path = sketchPaths_[activeIndex_];
+    if (!writeSketch(path, editor.sketch())) return false;
+    const std::filesystem::path promoted = nextPath();
+    std::error_code error;
+    std::filesystem::rename(path, promoted, error);
+    if (error) return false;
+    path = promoted;
   } else {
-    uint64_t next = 1;
-    for (const auto& existing : sketchPaths_) {
-      next = std::max(next, sketchSequence(existing) + 1);
-    }
-    do {
-      path = root_ / "sketches" /
-          ("sketch_" + std::to_string(next++) + ".dat");
-    } while (std::filesystem::exists(path));
+    path = nextPath();
+    if (!writeSketch(path, editor.sketch())) return false;
   }
-  if (!writeSketch(path, editor.sketch())) return false;
   loadSketches();
   const auto found = std::find(sketchPaths_.begin(), sketchPaths_.end(), path);
   activeIndex_ = found == sketchPaths_.end()

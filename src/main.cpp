@@ -2041,7 +2041,11 @@ void drawPreviewImage(
       Display::canvas(),
       viewState.preview.display,
       image,
-      previewTheme());
+      previewTheme(),
+      statusMessage[0] != '\0' &&
+              millis() - statusMessageTime < STATUS_DISPLAY_DURATION
+          ? statusMessage
+          : nullptr);
   Display::endFrame();
 }
 
@@ -2091,6 +2095,13 @@ void loadGallerySketch(int index) {
 void enterPreviewView() {
   const bool fromMemoryView =
       app.currentView() == bitmap16::ViewId::Memory;
+  bitmap16::PreviewView::selectBackground(
+      viewState.preview.display,
+      static_cast<int>(
+          currentTheme == &THEME_DARK
+              ? bitmap16::PreviewView::Background::Dark
+              : bitmap16::PreviewView::Background::Gray));
+  setStatusMessage("Preview");
   app.setView(bitmap16::ViewId::Preview);
   viewState.preview.ownsCanvas = !Display::isReady();
   viewState.preview.canvasAvailable = Display::init();
@@ -3580,6 +3591,16 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
  * Handle Preview View input and rendering
  */
 void handlePreviewView(const bitmap16::InputFrame& input) {
+  drawStatusMessage();
+  if (statusMessageJustCleared) {
+    if (viewState.preview.galleryMode) {
+      loadGallerySketch(viewState.preview.galleryIndex);
+    } else {
+      drawCanvasPreview();
+    }
+    statusMessageJustCleared = false;
+  }
+
   // Auto-advance logic (ONLY in gallery mode)
   if (viewState.preview.galleryMode && viewState.preview.autoAdvance) {
     unsigned long now = millis();
