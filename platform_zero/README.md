@@ -69,6 +69,7 @@ signal adapter.
 - `S`: save; `Alt`+`S`: save as a new sketch; `N`: new sketch
 - `X`: export at 128×128; `Alt+X`: export at the logical grid size
 - `C`: next color; `F`: fill; `Z`: undo; `G`: grid size; `R`: rulers
+- `+` / `-`: integer canvas zoom in/out; moving at a viewport edge pans
 - Hold `M` with an arrow to move the artwork
 - `K` or `Alt+Backspace`: clear the canvas
 - Hold `B` with `+` or `-`: display brightness

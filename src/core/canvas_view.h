@@ -8,6 +8,12 @@
 namespace bitmap16 {
 namespace CanvasView {
 
+struct Viewport {
+  uint8_t cellSize = 0;
+  uint8_t x = 0;
+  uint8_t y = 0;
+};
+
 struct State {
   const uint8_t (*pixels)[kMaxGridSize] = nullptr;
   uint8_t gridSize = 8;
@@ -23,6 +29,9 @@ struct State {
   bool drawPressed = false;
   bool erasePressed = false;
   bool fillPressed = false;
+  uint8_t viewportCellSize = 0;
+  uint8_t viewportX = 0;
+  uint8_t viewportY = 0;
 };
 
 struct Theme {
@@ -69,6 +78,21 @@ struct Layout {
 };
 
 Layout layoutFor(int width, int height, uint8_t gridSize);
+bool adjustZoom(
+    Viewport& viewport,
+    int delta,
+    int width,
+    int height,
+    uint8_t gridSize,
+    uint8_t cursorX,
+    uint8_t cursorY);
+bool keepCursorVisible(
+    Viewport& viewport,
+    int width,
+    int height,
+    uint8_t gridSize,
+    uint8_t cursorX,
+    uint8_t cursorY);
 void render(
     Canvas& canvas,
     const State& state,

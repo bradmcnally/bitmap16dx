@@ -146,6 +146,7 @@ struct EditorState {
   bool drawPressed = false;
   bool erasePressed = false;
   bool fillPressed = false;
+  bitmap16::CanvasView::Viewport viewport;
   uint8_t undoCanvas[MAX_currentGridSize][MAX_currentGridSize] = {};
   bool undoAvailable = false;
   uint8_t undoPaletteSize = 0;
@@ -1373,6 +1374,9 @@ void drawSharedCanvasView() {
       editorState.drawPressed,
       editorState.erasePressed,
       editorState.fillPressed,
+      editorState.viewport.cellSize,
+      editorState.viewport.x,
+      editorState.viewport.y,
   };
   const bitmap16::CanvasView::Theme theme = {
       currentTheme->background,
@@ -1669,6 +1673,7 @@ void toggleGridSize() {
     setStatusMessage(StatusMsg::GRID_8X8);
   }
   editorState.cellSize = 128 / editorState.gridSize;
+  editorState.viewport = {};
 
   // Keep cursor in bounds
   if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
@@ -1695,6 +1700,7 @@ void openSketch(String filename) {
   // Copy to canvas
   editorState.gridSize = documentState.sketch.gridSize;
   editorState.cellSize = 128 / editorState.gridSize;
+  editorState.viewport = {};
 
   for (int y = 0; y < MAX_currentGridSize; y++) {
     for (int x = 0; x < MAX_currentGridSize; x++) {
@@ -4443,6 +4449,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   bool themeToggled = false;
   bool floodFilled = false;
   bool canvasMoved = false;
+  bool zoomChanged = false;
   static bool moveUndoSaved = false;
   // Check if enter or delete is currently being held (for drawing while moving)
   bool enterHeld = input.enterHeld;
@@ -4776,6 +4783,17 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
         "BRIGHT: %d%%",
         displayBrightness);
     setStatusMessage(brightnessMsg);
+  } else if (!input.lHeld &&
+             (input.event == bitmap16::InputEvent::Plus ||
+              input.event == bitmap16::InputEvent::Minus)) {
+    zoomChanged = bitmap16::CanvasView::adjustZoom(
+        editorState.viewport,
+        input.event == bitmap16::InputEvent::Plus ? 1 : -1,
+        Display::canvas().width(),
+        Display::canvas().height(),
+        static_cast<uint8_t>(editorState.gridSize),
+        static_cast<uint8_t>(editorState.cursorX),
+        static_cast<uint8_t>(editorState.cursorY));
   }
 
 #if ENABLE_LED_MATRIX
@@ -4916,6 +4934,13 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
 
   // Update LED matrix when cursor moves (to highlight current position)
   if (moved) {
+    bitmap16::CanvasView::keepCursorVisible(
+        editorState.viewport,
+        Display::canvas().width(),
+        Display::canvas().height(),
+        static_cast<uint8_t>(editorState.gridSize),
+        static_cast<uint8_t>(editorState.cursorX),
+        static_cast<uint8_t>(editorState.cursorY));
     LED_CANVAS_UPDATED();
   }
 
@@ -4927,6 +4952,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       moved || pixelPlaced || colorChanged || canvasCleared ||
       undoPerformed || gridToggled || rulersToggled || themeToggled ||
       floodFilled || canvasMoved || moveModeChanged ||
+      zoomChanged ||
       toolStateChanged ||
       statusMessage[0] != '\0' || statusMessageJustCleared;
   if (canvasViewChanged) {

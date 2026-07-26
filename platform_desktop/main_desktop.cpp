@@ -53,6 +53,7 @@ bool desktopMoveModeActive = false;
 bool desktopDrawPressed = false;
 bool desktopErasePressed = false;
 bool desktopFillPressed = false;
+bitmap16::CanvasView::Viewport desktopCanvasViewport;
 
 int platformBatteryPercent() {
 #ifdef BITMAP16_STEAM_DECK
@@ -440,6 +441,9 @@ void renderCurrentView(
         desktopDrawPressed,
         desktopErasePressed,
         desktopFillPressed,
+        desktopCanvasViewport.cellSize,
+        desktopCanvasViewport.x,
+        desktopCanvasViewport.y,
     };
     bitmap16::CanvasView::render(
         canvas, state, canvasTheme(settings), &canvasAssets());
@@ -1424,6 +1428,13 @@ int main(int argc, char** argv) {
       }
       const bool moved = editor.moveCursor(dx, dy);
       if (!moved) return false;
+      bitmap16::CanvasView::keepCursorVisible(
+          desktopCanvasViewport,
+          width,
+          height,
+          editor.sketch().gridSize,
+          editor.cursorX(),
+          editor.cursorY());
       if (drawHeld) editor.draw();
       if (eraseHeld) editor.erase();
       return true;
@@ -1465,6 +1476,17 @@ int main(int argc, char** argv) {
                       (plusKey ? 1 : -1))));
       workspace.saveSettings();
       changed = true;
+    } else if (
+        currentView == DesktopView::Canvas &&
+        (plusKey || minusKey)) {
+      changed = bitmap16::CanvasView::adjustZoom(
+          desktopCanvasViewport,
+          plusKey ? 1 : -1,
+          width,
+          height,
+          editor.sketch().gridSize,
+          editor.cursorX(),
+          editor.cursorY());
     } else if (
         matrixHeld && (key == SDLK_RETURN || key == SDLK_SPACE) &&
         matrixSimulator != nullptr) {
@@ -1553,6 +1575,7 @@ int main(int argc, char** argv) {
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_n) {
       workspace.newSketch(editor);
+      desktopCanvasViewport = {};
       activePalette = findActivePalette(editor.sketch(), paletteEntries);
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_c) {
@@ -1570,6 +1593,7 @@ int main(int argc, char** argv) {
       changed = editor.undo();
     } else if (currentView == DesktopView::Canvas && key == SDLK_g) {
       changed = editor.toggleGridSize();
+      desktopCanvasViewport = {};
     } else if (currentView == DesktopView::Canvas && key == SDLK_r) {
       rulersVisible = !rulersVisible;
       changed = true;
@@ -1678,6 +1702,7 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Memory && key == SDLK_RETURN) {
       if (memoryState.cursor == 0) {
         workspace.newSketch(editor);
+        desktopCanvasViewport = {};
         activePalette = findActivePalette(editor.sketch(), paletteEntries);
         currentView = DesktopView::Canvas;
         refreshMemoryCatalog();
@@ -1685,6 +1710,7 @@ int main(int argc, char** argv) {
       } else if (workspace.openSketch(
                      static_cast<std::size_t>(memoryState.cursor - 1),
                      editor)) {
+        desktopCanvasViewport = {};
         activePalette = findActivePalette(editor.sketch(), paletteEntries);
         currentView = DesktopView::Canvas;
         refreshMemoryCatalog();

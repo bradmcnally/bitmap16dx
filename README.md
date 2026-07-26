@@ -91,6 +91,7 @@ controller layout and copy/run instructions.
 | `fn` + `1-8` | Quick color selection (colors 9-16) |
 | `C` | **C**ycle to next color |
 | `G` | Cycle the 8×8, 16×16, and 32×32 **g**rid |
+| `+` / `-` | Zoom canvas in/out at integer pixel scales |
 | `R` | Toggle **r**ulers (center guide lines) |
 | `T` | Toggle Se**t**tings |
 | `Z` | Undo last action (or just shake to undo)|

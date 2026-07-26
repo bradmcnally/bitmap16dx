@@ -140,6 +140,35 @@ void test_canvas_view_layout_is_resolution_and_grid_aware() {
   TEST_ASSERT_EQUAL_INT(55, large.statusX);
 }
 
+void test_canvas_view_zoom_is_integer_and_follows_cursor() {
+  bitmap16::CanvasView::Viewport viewport;
+  TEST_ASSERT_TRUE(bitmap16::CanvasView::adjustZoom(
+      viewport, 1, 240, 135, 32, 16, 16));
+  TEST_ASSERT_EQUAL_UINT8(8, viewport.cellSize);
+  TEST_ASSERT_EQUAL_UINT8(8, viewport.x);
+  TEST_ASSERT_EQUAL_UINT8(8, viewport.y);
+
+  TEST_ASSERT_TRUE(bitmap16::CanvasView::adjustZoom(
+      viewport, 1, 240, 135, 32, 16, 16));
+  TEST_ASSERT_EQUAL_UINT8(16, viewport.cellSize);
+  TEST_ASSERT_EQUAL_UINT8(12, viewport.x);
+  TEST_ASSERT_EQUAL_UINT8(12, viewport.y);
+
+  TEST_ASSERT_TRUE(bitmap16::CanvasView::keepCursorVisible(
+      viewport, 240, 135, 32, 20, 16));
+  TEST_ASSERT_EQUAL_UINT8(13, viewport.x);
+  TEST_ASSERT_EQUAL_UINT8(12, viewport.y);
+
+  TEST_ASSERT_TRUE(bitmap16::CanvasView::adjustZoom(
+      viewport, -1, 240, 135, 32, 20, 16));
+  TEST_ASSERT_EQUAL_UINT8(8, viewport.cellSize);
+  TEST_ASSERT_TRUE(bitmap16::CanvasView::adjustZoom(
+      viewport, -1, 240, 135, 32, 20, 16));
+  TEST_ASSERT_EQUAL_UINT8(0, viewport.cellSize);
+  TEST_ASSERT_FALSE(bitmap16::CanvasView::adjustZoom(
+      viewport, -1, 240, 135, 32, 20, 16));
+}
+
 void test_canvas_view_renders_editor_at_both_target_sizes() {
   uint8_t pixels[bitmap16::kMaxGridSize][bitmap16::kMaxGridSize] = {};
   uint16_t colors[16] = {};
@@ -1202,6 +1231,7 @@ int main(int, char**) {
   RUN_TEST(test_canvas_allocation_fill_and_release);
   RUN_TEST(test_canvas_clips_rectangles_and_pixels);
   RUN_TEST(test_canvas_view_layout_is_resolution_and_grid_aware);
+  RUN_TEST(test_canvas_view_zoom_is_integer_and_follows_cursor);
   RUN_TEST(test_canvas_view_renders_editor_at_both_target_sizes);
   RUN_TEST(test_canvas_draws_lines_and_rectangles);
   RUN_TEST(test_canvas_pushes_clipped_and_byte_swapped_images);

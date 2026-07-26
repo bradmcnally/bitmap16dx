@@ -112,6 +112,69 @@ Layout layoutFor(int width, int height, uint8_t gridSize) {
   };
 }
 
+bool keepCursorVisible(
+    Viewport& viewport,
+    int width,
+    int height,
+    uint8_t gridSize,
+    uint8_t cursorX,
+    uint8_t cursorY) {
+  if (!isSupportedGridSize(gridSize)) return false;
+  const Layout layout = layoutFor(width, height, gridSize);
+  const int cellSize = viewport.cellSize == 0
+      ? layout.cellSize
+      : std::max(layout.cellSize, static_cast<int>(viewport.cellSize));
+  const int visible = std::max(1, layout.gridPixels / cellSize);
+  const int maximumOffset = std::max(0, gridSize - visible);
+  int nextX = std::min<int>(viewport.x, maximumOffset);
+  int nextY = std::min<int>(viewport.y, maximumOffset);
+  if (cursorX < nextX) nextX = cursorX;
+  if (cursorX >= nextX + visible) nextX = cursorX - visible + 1;
+  if (cursorY < nextY) nextY = cursorY;
+  if (cursorY >= nextY + visible) nextY = cursorY - visible + 1;
+  nextX = std::max(0, std::min(maximumOffset, nextX));
+  nextY = std::max(0, std::min(maximumOffset, nextY));
+  const bool changed =
+      nextX != viewport.x || nextY != viewport.y;
+  viewport.x = static_cast<uint8_t>(nextX);
+  viewport.y = static_cast<uint8_t>(nextY);
+  return changed;
+}
+
+bool adjustZoom(
+    Viewport& viewport,
+    int delta,
+    int width,
+    int height,
+    uint8_t gridSize,
+    uint8_t cursorX,
+    uint8_t cursorY) {
+  if (delta == 0 || !isSupportedGridSize(gridSize)) return false;
+  const Layout layout = layoutFor(width, height, gridSize);
+  const int current = viewport.cellSize == 0
+      ? layout.cellSize
+      : viewport.cellSize;
+  const int maximum = std::max(layout.cellSize, 16);
+  const int next = delta > 0
+      ? std::min(maximum, current * 2)
+      : std::max(layout.cellSize, current / 2);
+  if (next == current) return false;
+  viewport.cellSize =
+      next == layout.cellSize ? 0 : static_cast<uint8_t>(next);
+  const int visible = std::max(1, layout.gridPixels / next);
+  viewport.x = static_cast<uint8_t>(std::max(
+      0,
+      std::min<int>(
+          gridSize - visible,
+          static_cast<int>(cursorX) - visible / 2)));
+  viewport.y = static_cast<uint8_t>(std::max(
+      0,
+      std::min<int>(
+          gridSize - visible,
+          static_cast<int>(cursorY) - visible / 2)));
+  return true;
+}
+
 void render(
     Canvas& canvas,
     const State& state,
@@ -126,6 +189,27 @@ void render(
       layoutFor(canvas.width(), canvas.height(), state.gridSize);
   const int logicalSize =
       isSupportedGridSize(state.gridSize) ? state.gridSize : 8;
+  const int cellSize = state.viewportCellSize == 0
+      ? layout.cellSize
+      : std::max(
+            layout.cellSize,
+            static_cast<int>(state.viewportCellSize));
+  const int visibleCells =
+      std::max(1, layout.gridPixels / cellSize);
+  const int viewportX = std::max(
+      0,
+      std::min(
+          logicalSize - visibleCells,
+          static_cast<int>(state.viewportX)));
+  const int viewportY = std::max(
+      0,
+      std::min(
+          logicalSize - visibleCells,
+          static_cast<int>(state.viewportY)));
+  const int viewportRight =
+      std::min(logicalSize, viewportX + visibleCells);
+  const int viewportBottom =
+      std::min(logicalSize, viewportY + visibleCells);
   drawShadow(
       canvas,
       layout.gridX,
@@ -133,22 +217,24 @@ void render(
       layout.gridPixels,
       layout.gridPixels,
       theme);
-  for (int y = 0; y < logicalSize; ++y) {
-    for (int x = 0; x < logicalSize; ++x) {
+  for (int y = viewportY; y < viewportBottom; ++y) {
+    for (int x = viewportX; x < viewportRight; ++x) {
       const uint8_t pixel = state.pixels[y][x];
-      const int cellX = layout.gridX + x * layout.cellSize;
-      const int cellY = layout.gridY + y * layout.cellSize;
+      const int cellX =
+          layout.gridX + (x - viewportX) * cellSize;
+      const int cellY =
+          layout.gridY + (y - viewportY) * cellSize;
       const bool selected = x == state.cursorX && y == state.cursorY;
       if (pixel != 0) {
         uint16_t color = Palette::colorForIndex(
             state.paletteColors, state.paletteSize, pixel);
         if (selected) color = scaleColor(color, 0.8f);
         canvas.fillRect(
-            cellX, cellY, layout.cellSize, layout.cellSize, color);
+            cellX, cellY, cellSize, cellSize, color);
       } else {
-        const int checkSize = std::max(1, layout.cellSize / 2);
-        for (int py = 0; py < layout.cellSize; py += checkSize) {
-          for (int px = 0; px < layout.cellSize; px += checkSize) {
+        const int checkSize = std::max(1, cellSize / 2);
+        for (int py = 0; py < cellSize; py += checkSize) {
+          for (int px = 0; px < cellSize; px += checkSize) {
             const bool dark =
                 (((cellX + px) / checkSize) +
                  ((cellY + py) / checkSize)) % 2 == 0;
@@ -160,23 +246,27 @@ void render(
             canvas.fillRect(
                 cellX + px,
                 cellY + py,
-                std::min(checkSize, layout.cellSize - px),
-                std::min(checkSize, layout.cellSize - py),
+                std::min(checkSize, cellSize - px),
+                std::min(checkSize, cellSize - py),
                 color);
           }
         }
         if (state.rulersVisible) {
-          const int centerX = layout.gridX + layout.gridPixels / 2;
-          const int centerY = layout.gridY + layout.gridPixels / 2;
+          const int centerX =
+              layout.gridX +
+              (logicalSize / 2 - viewportX) * cellSize;
+          const int centerY =
+              layout.gridY +
+              (logicalSize / 2 - viewportY) * cellSize;
           if (centerX >= cellX &&
-              centerX < cellX + layout.cellSize) {
+              centerX < cellX + cellSize) {
             canvas.drawFastVLine(
-                centerX, cellY, layout.cellSize, theme.centerLine);
+                centerX, cellY, cellSize, theme.centerLine);
           }
           if (centerY >= cellY &&
-              centerY < cellY + layout.cellSize) {
+              centerY < cellY + cellSize) {
             canvas.drawFastHLine(
-                cellX, centerY, layout.cellSize, theme.centerLine);
+                cellX, centerY, cellSize, theme.centerLine);
           }
         }
       }
@@ -283,9 +373,9 @@ void render(
   }
 
   const int cursorCellX =
-      layout.gridX + state.cursorX * layout.cellSize;
+      layout.gridX + (state.cursorX - viewportX) * cellSize;
   const int cursorCellY =
-      layout.gridY + state.cursorY * layout.cellSize;
+      layout.gridY + (state.cursorY - viewportY) * cellSize;
   if (assets != nullptr) {
     const int toolsY = layout.gridY - 2;
     drawIndexedIcon(
@@ -309,7 +399,8 @@ void render(
         assets->fill,
         theme,
         state.fillPressed);
-    if (state.batteryPercent >= 0) {
+    const bool zoomed = cellSize > layout.cellSize;
+    if (state.batteryPercent >= 0 && !zoomed) {
       int batteryStage = 0;
       if (state.batteryPercent >= 90) batteryStage = 3;
       else if (state.batteryPercent >= 50) batteryStage = 2;
@@ -322,15 +413,58 @@ void render(
           theme);
     }
 
+    if (zoomed) {
+      constexpr int minimapSize = 24;
+      const int minimapX = layout.toolsX;
+      const int minimapY = toolsY + 82;
+      canvas.fillRect(
+          minimapX,
+          minimapY,
+          minimapSize,
+          minimapSize,
+          theme.cellDark);
+      for (int mapY = 0; mapY < minimapSize; ++mapY) {
+        const int sourceY = mapY * logicalSize / minimapSize;
+        for (int mapX = 0; mapX < minimapSize; ++mapX) {
+          const int sourceX = mapX * logicalSize / minimapSize;
+          const uint8_t index = state.pixels[sourceY][sourceX];
+          if (index > 0 && index <= state.paletteSize) {
+            canvas.drawPixel(
+                minimapX + mapX,
+                minimapY + mapY,
+                state.paletteColors[index - 1]);
+          }
+        }
+      }
+      const int keyX =
+          minimapX + viewportX * minimapSize / logicalSize;
+      const int keyY =
+          minimapY + viewportY * minimapSize / logicalSize;
+      const int keyWidth = std::max(
+          2, visibleCells * minimapSize / logicalSize);
+      const int keyHeight = std::max(
+          2, visibleCells * minimapSize / logicalSize);
+      canvas.drawRect(
+          keyX, keyY, keyWidth, keyHeight, theme.iconDark);
+      if (keyWidth > 2 && keyHeight > 2) {
+        canvas.drawRect(
+            keyX + 1,
+            keyY + 1,
+            keyWidth - 2,
+            keyHeight - 2,
+            theme.iconLight);
+      }
+    }
+
     const Icon& cursor =
         state.moveMode ? assets->moveCursor : assets->cursor;
     drawIndexedIcon(
         canvas,
-        cursorCellX + layout.cellSize +
+        cursorCellX + cellSize +
             (state.moveMode
                  ? assets->moveCursorOffsetX
                  : assets->cursorOffsetX),
-        cursorCellY + layout.cellSize +
+        cursorCellY + cellSize +
             (state.moveMode
                  ? assets->moveCursorOffsetY
                  : assets->cursorOffsetY),
@@ -340,8 +474,8 @@ void render(
     canvas.drawRect(
         cursorCellX,
         cursorCellY,
-        layout.cellSize,
-        layout.cellSize,
+        cellSize,
+        cellSize,
         theme.text);
   }
 
