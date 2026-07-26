@@ -1522,7 +1522,36 @@ int main(int argc, char** argv) {
       return true;
     };
 
-    if (key == SDLK_m && currentView == DesktopView::Canvas) {
+    if (key == SDLK_F12) {
+#ifdef BITMAP16_STEAM_DECK
+      const bitmap16::Sketch& screenshotSketch =
+          currentView == DesktopView::Preview &&
+                  previewOverride != nullptr
+              ? *previewOverride
+              : editor.sketch();
+      const uint16_t screenshotBackground =
+          currentView == DesktopView::Preview
+              ? bitmap16::PreviewView::backgroundColor(
+                    previewState, previewTheme())
+              : canvasTheme(settings).background;
+      std::filesystem::path outputPath;
+      if (workspace.exportSteamScreenshot(
+              screenshotSketch,
+              screenshotBackground,
+              outputPath)) {
+        SDL_Log(
+            "UI-free screenshot: %s",
+            outputPath.string().c_str());
+        setDesktopStatus("Screenshot saved");
+        rumble(0x1000, 0x3800, 75);
+      } else {
+        SDL_Log("UI-free screenshot export failed");
+        setDesktopStatus("Screenshot failed");
+        rumble(0x4800, 0x0800, 180);
+      }
+      changed = true;
+#endif
+    } else if (key == SDLK_m && currentView == DesktopView::Canvas) {
       desktopMoveModeActive = true;
       changed = true;
     } else if (key == SDLK_ESCAPE) {

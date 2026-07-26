@@ -85,11 +85,28 @@ int main() {
     return 8;
   }
 
+  std::filesystem::path screenshot;
+  if (!restored.exportSteamScreenshot(
+          restoredEditor.sketch(), 0x1111, screenshot) ||
+      !std::filesystem::exists(screenshot)) {
+    return 9;
+  }
+  std::ifstream screenshotPng(screenshot, std::ios::binary);
+  screenshotPng.read(reinterpret_cast<char*>(signature), 8);
+  screenshotPng.read(reinterpret_cast<char*>(ihdr), 16);
+  if (screenshotPng.gcount() != 16 ||
+      ihdr[8] != 0 || ihdr[9] != 0 ||
+      ihdr[10] != 5 || ihdr[11] != 0 ||
+      ihdr[12] != 0 || ihdr[13] != 0 ||
+      ihdr[14] != 3 || ihdr[15] != 32) {
+    return 9;
+  }
+
   if (!restored.deleteSketch(0, restoredEditor) ||
       restored.sketches().size() != 1 ||
       !restored.undoDelete(restoredEditor) ||
       restored.sketches().size() != 2) {
-    return 9;
+    return 10;
   }
 
   std::filesystem::path palettePath = root / "palettes" / "test-palette.hex";
@@ -101,7 +118,7 @@ int main() {
       restored.userPalettes().size() != 1 ||
       restored.userPalettes()[0].size != 4 ||
       restored.userPalettes()[0].name != "TEST PALETTE") {
-    return 10;
+    return 11;
   }
 
   if (std::getenv("BITMAP16_KEEP_TEST_DATA") == nullptr) {

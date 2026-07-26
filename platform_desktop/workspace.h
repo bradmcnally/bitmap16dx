@@ -39,6 +39,10 @@ class Workspace {
       const Sketch& sketch,
       bool scaled,
       std::filesystem::path& outputPath) const;
+  bool exportSteamScreenshot(
+      const Sketch& sketch,
+      uint16_t background,
+      std::filesystem::path& outputPath) const;
   bool reloadUserPalettes();
   bool saveSettings() const;
 

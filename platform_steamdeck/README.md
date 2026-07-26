@@ -92,6 +92,23 @@ rows. Left/right switches columns only for a 16-color palette.
 
 Keyboard controls remain available in this quick build.
 
+## UI-free screenshot export
+
+Press `F12` to write a UI-free 1280x800 PNG to:
+
+```text
+~/.local/share/bitmap16dx/exports/
+```
+
+The artwork is centered at the largest integer scale that fits the Steam Deck
+screen. Transparent pixels use the active theme background, or the selected
+Preview background when exporting from Preview. The saved image excludes the
+cursor, tools, palette rail, rulers, labels, and all other UI.
+
+This local export is the App-ID-independent screenshot path. A future optional
+Steamworks adapter can submit the same RGB buffer to `ISteamScreenshots` when
+an App ID is available.
+
 ## First Deck test
 
 1. Confirm the window fills 1280x800 and retains sharp integer-scaled pixels.
@@ -110,6 +127,8 @@ Keyboard controls remain available in this quick build.
    returns to the previous screen. Confirm R5 toggles the grid rulers.
 9. Test both Gaming Mode and Desktop Mode, then report any incorrect button
    labels, dead-zone problems, double movements, or missed repeats.
+10. Press F12 and inspect the resulting 1280x800 PNG in `exports/`. Confirm it
+    contains only integer-scaled artwork and the selected background.
 
 SDL exposes the Deck's rear grips as controller paddles. If Steam Input does
 not pass them through with the selected template, bind L4, L5, R4, and R5 to

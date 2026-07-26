@@ -27,6 +27,7 @@ add_executable(bitmap16dx_desktop
   platform_desktop/main_desktop.cpp
   platform_desktop/matrix_simulator.cpp
   platform_desktop/png_export.cpp
+  platform_desktop/steam_screenshot.cpp
   platform_desktop/workspace.cpp
   src/core/canvas.cpp
   src/core/canvas_view.cpp
@@ -62,6 +63,7 @@ if(BUILD_TESTING)
   add_executable(bitmap16dx_workspace_test
     platform_desktop/test_workspace.cpp
     platform_desktop/png_export.cpp
+    platform_desktop/steam_screenshot.cpp
     platform_desktop/workspace.cpp
     src/core/editor.cpp
     src/core/palette.cpp

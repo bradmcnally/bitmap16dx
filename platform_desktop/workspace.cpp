@@ -13,6 +13,7 @@
 #include "core/sketch_codec.h"
 #include "palettes.h"
 #include "png_export.h"
+#include "steam_screenshot.h"
 
 namespace bitmap16 {
 namespace Desktop {
@@ -313,6 +314,24 @@ bool Workspace::exportSketch(
   } while (std::filesystem::exists(outputPath));
   return PngExport::write(
       outputPath, sketch, scaled, settings_.exportFormat);
+}
+
+bool Workspace::exportSteamScreenshot(
+    const Sketch& sketch,
+    uint16_t background,
+    std::filesystem::path& outputPath) const {
+  int next = 1;
+  do {
+    std::ostringstream name;
+    name << "screenshot-" << std::setw(4) << std::setfill('0') << next++
+         << ".png";
+    outputPath = root_ / "exports" / name.str();
+  } while (std::filesystem::exists(outputPath));
+
+  SteamScreenshot::Image image;
+  return SteamScreenshot::render(sketch, background, image) &&
+      PngExport::writeRgb(
+          outputPath, image.rgb, image.width, image.height);
 }
 
 bool Workspace::reloadUserPalettes() {
