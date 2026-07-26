@@ -655,6 +655,17 @@ int main(int argc, char** argv) {
   for (int device = 0; device < SDL_NumJoysticks(); ++device) {
     openController(device);
   }
+  const auto rumble = [&](Uint16 low, Uint16 high, Uint32 duration) {
+#ifdef BITMAP16_STEAM_DECK
+    if (controller != nullptr) {
+      SDL_GameControllerRumble(controller, low, high, duration);
+    }
+#else
+    (void)low;
+    (void)high;
+    (void)duration;
+#endif
+  };
 
   DesktopView currentView = DesktopView::Canvas;
   DesktopView returnView = DesktopView::Canvas;
@@ -1091,9 +1102,16 @@ int main(int argc, char** argv) {
         drawPressed != desktopDrawPressed ||
         erasePressed != desktopErasePressed ||
         fillPressed != desktopFillPressed;
+    const bool toolPressed =
+        (drawPressed && !desktopDrawPressed) ||
+        (erasePressed && !desktopErasePressed) ||
+        (fillPressed && !desktopFillPressed);
     desktopDrawPressed = drawPressed;
     desktopErasePressed = erasePressed;
     desktopFillPressed = fillPressed;
+    if (toolPressed && currentView == DesktopView::Canvas) {
+      rumble(0x0800, 0x1800, 24);
+    }
     if (toolStateChanged && currentView == DesktopView::Canvas) {
       renderNow();
     }
@@ -1140,7 +1158,12 @@ int main(int argc, char** argv) {
                   previewSketch.gridSize,
                   std::min(width, height)));
           previewLabelUntil = SDL_GetTicks() + 2000u;
+          rumble(0x0800, 0x2000, 28);
           renderNow();
+        } else if (
+            (leftTriggerHeld && !previewLeftTriggerLatched) ||
+            (rightTriggerHeld && !previewRightTriggerLatched)) {
+          rumble(0x3000, 0x0800, 70);
         }
       }
       previewLeftTriggerLatched = leftTriggerHeld;
@@ -1399,6 +1422,10 @@ int main(int argc, char** argv) {
       if (currentView == DesktopView::Canvas) {
         const bool redone = editor.redo();
         setDesktopStatus(redone ? "Redo" : "No redo");
+        rumble(
+            redone ? 0x0800 : 0x3800,
+            redone ? 0x1800 : 0x0800,
+            redone ? 30 : 110);
         renderNow();
       }
       continue;
@@ -1424,6 +1451,9 @@ int main(int argc, char** argv) {
         changed = bitmap16::PaletteView::moveCursor(
             paletteState,
             event.user.code == kColorLeft ? -1 : 1);
+      }
+      if (changed && currentView == DesktopView::Palette) {
+        rumble(0x0400, 0x1400, 22);
       }
       if (changed) renderNow();
       continue;
@@ -1565,6 +1595,9 @@ int main(int argc, char** argv) {
                 previewSketch.gridSize,
                 std::min(width, height)));
         previewLabelUntil = SDL_GetTicks() + 2000u;
+        rumble(0x0800, 0x2000, 28);
+      } else {
+        rumble(0x3000, 0x0800, 70);
       }
     } else if (
         matrixHeld && (key == SDLK_RETURN || key == SDLK_SPACE) &&
@@ -1655,10 +1688,12 @@ int main(int argc, char** argv) {
         refreshMemoryCatalog();
         SDL_Log(altHeld ? "Saved new sketch" : "Saved sketch");
         setDesktopStatus("Saved");
+        rumble(0x1000, 0x3800, 75);
         changed = true;
       } else {
         SDL_Log("Sketch save failed");
         setDesktopStatus("Failed to save");
+        rumble(0x4800, 0x0800, 180);
         changed = true;
       }
     } else if (currentView == DesktopView::Canvas && key == SDLK_x) {
@@ -1816,6 +1851,9 @@ int main(int argc, char** argv) {
         (key == SDLK_LEFT || key == SDLK_RIGHT)) {
       changed = bitmap16::PaletteView::moveCursor(
           paletteState, key == SDLK_LEFT ? -1 : 1);
+      if (changed) {
+        rumble(0x0400, 0x1400, 22);
+      }
     } else if (
         currentView == DesktopView::Memory &&
         (key == SDLK_LEFT || key == SDLK_RIGHT)) {
@@ -1874,7 +1912,10 @@ int main(int argc, char** argv) {
             activePalette < paletteCatalog.count) {
           applyPalette(editor, paletteEntries[activePalette]);
         }
+        rumble(0x1800, 0x5000, 120);
         changed = true;
+      } else {
+        rumble(0x4800, 0x0800, 140);
       }
     } else if (
         currentView == DesktopView::Palette &&

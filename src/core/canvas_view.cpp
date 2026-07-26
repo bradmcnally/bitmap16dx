@@ -185,8 +185,12 @@ void render(
     return;
   }
 
-  const Layout layout =
+  Layout layout =
       layoutFor(canvas.width(), canvas.height(), state.gridSize);
+  if (state.toolsAtLeftEdge) {
+    layout.toolsX = 3;
+    layout.statusX = 3;
+  }
   const int logicalSize =
       isSupportedGridSize(state.gridSize) ? state.gridSize : 8;
   const int cellSize = state.viewportCellSize == 0

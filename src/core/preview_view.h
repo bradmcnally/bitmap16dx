@@ -51,7 +51,8 @@ void render(
     const State& state,
     const Image& image,
     const Theme& theme,
-    const char* statusMessage = nullptr);
+    const char* statusMessage = nullptr,
+    bool statusCentered = true);
 
 }  // namespace PreviewView
 }  // namespace bitmap16

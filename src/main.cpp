@@ -819,39 +819,42 @@ bool saveActiveSketchToSD() {
     return false;
   }
 
-  // Generate filename (use existing if saving in place, or new timestamp if new)
-  String fullPath;
-  if (documentState.filename.length() > 0 && !documentState.isNew) {
-    // Save to existing file
-    fullPath = "/bitmap16dx/sketches/" + documentState.filename;
-  } else {
-    // Create new file with incrementing counter (persists across reboots)
-    unsigned long counter =
-        PreferenceStore::readUInt32("sketchCounter", 0);
-
-    // If counter is 0 (first time or after NVS reset), scan existing files to find highest number
-    if (counter == 0 &&
-        Filesystem::exists("/bitmap16dx/sketches")) {
-      Filesystem::listDirectory(
-          "/bitmap16dx/sketches",
-          findHighestSketchCounter,
-          &counter);
-    }
-
-    counter++;
-    PreferenceStore::writeUInt32("sketchCounter", counter);
-
-    fullPath = "/bitmap16dx/sketches/sketch_" + String(counter) + ".dat";
-    documentState.filename = "sketch_" + String(counter) + ".dat";
-
-    documentState.isNew = false;
+  // Every successful save receives the newest sequence number so the Memory
+  // view's filename ordering also reflects most-recently-saved order.
+  const bool replacingExisting =
+      documentState.filename.length() > 0 && !documentState.isNew;
+  const String previousPath = replacingExisting
+      ? "/bitmap16dx/sketches/" + documentState.filename
+      : "";
+  unsigned long counter =
+      PreferenceStore::readUInt32("sketchCounter", 0);
+  if (Filesystem::exists("/bitmap16dx/sketches")) {
+    Filesystem::listDirectory(
+        "/bitmap16dx/sketches",
+        findHighestSketchCounter,
+        &counter);
   }
+  counter++;
+  const String nextFilename =
+      "sketch_" + String(counter) + ".dat";
+  const String fullPath =
+      "/bitmap16dx/sketches/" + nextFilename;
 
   if (!writeSketchFile(fullPath.c_str(), documentState.sketch)) {
     setStatusMessage(StatusMsg::FAILED_TO_SAVE);
     sdCardAvailable = false;
     return false;
   }
+  if (replacingExisting &&
+      previousPath != fullPath &&
+      !Filesystem::remove(previousPath.c_str())) {
+    Filesystem::remove(fullPath.c_str());
+    setStatusMessage(StatusMsg::FAILED_TO_SAVE);
+    return false;
+  }
+  PreferenceStore::writeUInt32("sketchCounter", counter);
+  documentState.filename = nextFilename;
+  documentState.isNew = false;
   documentState.sketch.isEmpty = false;
 
   setStatusMessage(StatusMsg::SAVED);
@@ -1379,6 +1382,8 @@ void drawSharedCanvasView() {
       editorState.viewport.cellSize,
       editorState.viewport.x,
       editorState.viewport.y,
+      false,
+      true,
   };
   const bitmap16::CanvasView::Theme theme = {
       currentTheme->background,
@@ -2046,7 +2051,8 @@ void drawPreviewImage(
       previewTheme(),
       static_cast<long>(viewState.preview.labelUntil - millis()) > 0
           ? viewState.preview.label
-          : nullptr);
+          : nullptr,
+      false);
   Display::endFrame();
 }
 

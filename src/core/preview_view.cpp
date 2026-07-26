@@ -68,7 +68,8 @@ void render(
     const State& state,
     const Image& image,
     const Theme& theme,
-    const char* statusMessage) {
+    const char* statusMessage,
+    bool statusCentered) {
   if (!canvas.isValid()) {
     return;
   }
@@ -106,10 +107,14 @@ void render(
     const bool darkBackground =
         state.background == Background::Black ||
         state.background == Background::Dark;
-    canvas.setTextAlign(TextAlign::Center);
+    canvas.setTextAlign(
+        statusCentered ? TextAlign::Center : TextAlign::Left);
     canvas.setTextSize(1);
     canvas.setTextColor(darkBackground ? theme.white : theme.black);
-    canvas.drawString(statusMessage, canvas.width() / 2, canvas.height() - 11);
+    canvas.drawString(
+        statusMessage,
+        statusCentered ? canvas.width() / 2 : 3,
+        canvas.height() - 11);
   }
 }
 
