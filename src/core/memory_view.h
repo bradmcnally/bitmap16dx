@@ -44,6 +44,7 @@ struct Assets {
 };
 
 int columnCount(int width);
+int thumbnailSize();
 void clamp(State& state, int sketchCount);
 bool moveCursor(
     State& state,

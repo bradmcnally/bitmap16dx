@@ -8,7 +8,16 @@ namespace MemoryView {
 
 namespace {
 
+#ifdef BITMAP16_STEAM_DECK
 constexpr int kThumbnailSize = 32;
+constexpr int kMaximumColumns = 7;
+#elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
+constexpr int kThumbnailSize = 64;
+constexpr int kMaximumColumns = 5;
+#else
+constexpr int kThumbnailSize = 48;
+constexpr int kMaximumColumns = 5;
+#endif
 constexpr int kGap = 8;
 constexpr int kTitleHeight = 14;
 constexpr int kTopMargin = 5;
@@ -197,7 +206,15 @@ void drawCursor(
 }  // namespace
 
 int columnCount(int width) {
-  return std::max(1, std::min(5, (width - 8 + kGap) / (kThumbnailSize + kGap)));
+  return std::max(
+      1,
+      std::min(
+          kMaximumColumns,
+          (width - 8 + kGap) / (kThumbnailSize + kGap)));
+}
+
+int thumbnailSize() {
+  return kThumbnailSize;
 }
 
 void clamp(State& state, int sketchCount) {

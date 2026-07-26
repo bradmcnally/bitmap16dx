@@ -568,14 +568,14 @@ void test_palette_view_renders_carousel_at_both_target_sizes() {
 
 void test_memory_view_navigation_and_scroll_are_resolution_aware() {
   bitmap16::MemoryView::State state;
-  TEST_ASSERT_EQUAL_INT(5, bitmap16::MemoryView::columnCount(240));
+  TEST_ASSERT_EQUAL_INT(4, bitmap16::MemoryView::columnCount(240));
   TEST_ASSERT_EQUAL_INT(5, bitmap16::MemoryView::columnCount(320));
   TEST_ASSERT_TRUE(
       bitmap16::MemoryView::moveCursor(state, 0, 1, 8, 240));
-  TEST_ASSERT_EQUAL_INT(5, state.cursor);
+  TEST_ASSERT_EQUAL_INT(4, state.cursor);
   TEST_ASSERT_TRUE(
       bitmap16::MemoryView::moveCursor(state, 1, 0, 8, 240));
-  TEST_ASSERT_EQUAL_INT(6, state.cursor);
+  TEST_ASSERT_EQUAL_INT(5, state.cursor);
   state.cursor = 15;
   bitmap16::MemoryView::advance(state, 15, 240, 135, 0.016f, 1.0f);
   TEST_ASSERT_GREATER_THAN_INT(0, state.scrollOffset);
@@ -610,8 +610,11 @@ void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
         canvas, state, catalog, theme, "Ready", &assets);
 
     const int columns = bitmap16::MemoryView::columnCount(width);
+    const int thumbnailSize = bitmap16::MemoryView::thumbnailSize();
     const int startX =
-        (width - (columns * 32 + (columns - 1) * 8)) / 2;
+        (width - (columns * thumbnailSize + (columns - 1) * 8)) / 2;
+    const int sketchX = startX + thumbnailSize + 8;
+    const int artworkInset = (thumbnailSize - 32) / 2;
     TEST_ASSERT_EQUAL_HEX16(
         theme.background, canvas.readPixel(startX, 19));
     TEST_ASSERT_EQUAL_HEX16(
@@ -619,9 +622,15 @@ void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
     TEST_ASSERT_EQUAL_HEX16(
         theme.selectionLight, canvas.readPixel(startX - 4, 15));
     TEST_ASSERT_EQUAL_HEX16(
-        theme.background, canvas.readPixel(startX + 41, 20));
+        theme.background,
+        canvas.readPixel(
+            sketchX + artworkInset + 1,
+            19 + artworkInset + 1));
     TEST_ASSERT_EQUAL_HEX16(
-        palette[0], canvas.readPixel(startX + 42, 21));
+        palette[0],
+        canvas.readPixel(
+            sketchX + artworkInset + 2,
+            19 + artworkInset + 2));
     TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
     TEST_ASSERT_EQUAL_HEX16(
         theme.background, canvas.readPixel(width - 1, height - 1));
