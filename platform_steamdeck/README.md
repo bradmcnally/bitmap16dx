@@ -78,7 +78,7 @@ battery/charging UI; SteamOS provides the device battery indicator.
 | L3 | Cycle 8x8/16x16/32x32 grid | — |
 | L1 | Undo on release | — |
 | R1 | Redo | — |
-| L1 + L2 | Save once per chord | — |
+| L2 + R2 | Save once per chord | Zoom out / in individually |
 | View | Open Sketches | Close Sketches |
 | Menu | Open Settings | Close Settings |
 | D-pad | Move canvas cursor with hold repeat | Navigate with hold repeat |

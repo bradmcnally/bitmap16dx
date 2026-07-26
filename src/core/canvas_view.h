@@ -32,6 +32,7 @@ struct State {
   uint8_t viewportCellSize = 0;
   uint8_t viewportX = 0;
   uint8_t viewportY = 0;
+  bool statusCentered = false;
 };
 
 struct Theme {

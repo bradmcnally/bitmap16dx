@@ -479,11 +479,14 @@ void render(
         theme.text);
   }
 
-  canvas.setTextAlign(TextAlign::Left);
   canvas.setTextColor(theme.text);
   if (state.status != nullptr && state.status[0] != '\0') {
+    canvas.setTextAlign(
+        state.statusCentered ? TextAlign::Center : TextAlign::Left);
     canvas.drawString(
-        state.status, layout.statusX, canvas.height() - 11);
+        state.status,
+        state.statusCentered ? canvas.width() / 2 : layout.statusX,
+        canvas.height() - 11);
   }
   if (assets == nullptr && state.batteryPercent >= 0) {
     // Large enough for every possible int value, a percent sign, and NUL.

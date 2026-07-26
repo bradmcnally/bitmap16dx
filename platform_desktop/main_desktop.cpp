@@ -54,6 +54,14 @@ bool desktopDrawPressed = false;
 bool desktopErasePressed = false;
 bool desktopFillPressed = false;
 bitmap16::CanvasView::Viewport desktopCanvasViewport;
+char desktopStatus[32] = {};
+Uint32 desktopStatusUntil = 0;
+
+void setDesktopStatus(const char* message) {
+  std::strncpy(desktopStatus, message, sizeof(desktopStatus) - 1);
+  desktopStatus[sizeof(desktopStatus) - 1] = '\0';
+  desktopStatusUntil = SDL_GetTicks() + 2000u;
+}
 
 int platformBatteryPercent() {
 #ifdef BITMAP16_STEAM_DECK
@@ -436,7 +444,7 @@ void renderCurrentView(
         editor.selectedColor(),
         rulersVisible,
         desktopMoveModeActive,
-        nullptr,
+        desktopStatus[0] == '\0' ? nullptr : desktopStatus,
         platformBatteryPercent(),
         desktopDrawPressed,
         desktopErasePressed,
@@ -444,6 +452,11 @@ void renderCurrentView(
         desktopCanvasViewport.cellSize,
         desktopCanvasViewport.x,
         desktopCanvasViewport.y,
+#ifdef BITMAP16_STEAM_DECK
+        true,
+#else
+        false,
+#endif
     };
     bitmap16::CanvasView::render(
         canvas, state, canvasTheme(settings), &canvasAssets());
@@ -1020,12 +1033,19 @@ int main(int argc, char** argv) {
   bool controllerMoveHeld = false;
   bool controllerShiftStarted = false;
   bool controllerSaveChordLatched = false;
-  bool controllerSaveChordConsumed = false;
   bool previewLeftTriggerLatched = false;
   bool previewRightTriggerLatched = false;
   bool running = !smokeTest;
   while (running) {
     SDL_PumpEvents();
+    if (desktopStatus[0] != '\0' &&
+        SDL_TICKS_PASSED(SDL_GetTicks(), desktopStatusUntil)) {
+      desktopStatus[0] = '\0';
+      desktopStatusUntil = 0;
+      if (currentView == DesktopView::Canvas) {
+        renderNow();
+      }
+    }
     const Uint8* heldKeys = SDL_GetKeyboardState(nullptr);
     const bool drawPressed =
         heldKeys[SDL_SCANCODE_RETURN] != 0 ||
@@ -1093,15 +1113,18 @@ int main(int argc, char** argv) {
       }
       previewLeftTriggerLatched = leftTriggerHeld;
       previewRightTriggerLatched = rightTriggerHeld;
-      const bool saveChordHeld = leftShoulderHeld && leftTriggerHeld;
+      const bool saveChordHeld =
+          currentView == DesktopView::Canvas &&
+          leftTriggerHeld &&
+          rightTriggerHeld;
       if (saveChordHeld && !controllerSaveChordLatched) {
         pushKeyEvent(SDLK_s, false);
-        controllerSaveChordConsumed = true;
       }
       controllerSaveChordLatched = saveChordHeld;
       const bool nextMoveHeld =
           currentView == DesktopView::Canvas &&
           leftTriggerHeld &&
+          !rightTriggerHeld &&
           !leftShoulderHeld;
       if (nextMoveHeld != controllerMoveHeld) {
         controllerMoveHeld = nextMoveHeld;
@@ -1248,7 +1271,6 @@ int main(int argc, char** argv) {
         controllerMoveHeld = false;
         controllerShiftStarted = false;
         controllerSaveChordLatched = false;
-        controllerSaveChordConsumed = false;
         previewLeftTriggerLatched = false;
         previewRightTriggerLatched = false;
         desktopMoveModeActive = false;
@@ -1338,14 +1360,13 @@ int main(int argc, char** argv) {
     }
     if (event.type == SDL_CONTROLLERBUTTONUP &&
         event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
-      if (!controllerSaveChordConsumed) {
-        pushKeyEvent(SDLK_z, false);
-      }
-      controllerSaveChordConsumed = false;
+      pushKeyEvent(SDLK_z, false);
       continue;
     }
     if (event.type == SDL_USEREVENT && event.user.code == kRedo) {
-      if (currentView == DesktopView::Canvas && editor.redo()) {
+      if (currentView == DesktopView::Canvas) {
+        const bool redone = editor.redo();
+        setDesktopStatus(redone ? "Redo" : "No redo");
         renderNow();
       }
       continue;
@@ -1562,9 +1583,12 @@ int main(int argc, char** argv) {
       if (workspace.saveSketch(editor, altHeld)) {
         refreshMemoryCatalog();
         SDL_Log(altHeld ? "Saved new sketch" : "Saved sketch");
+        setDesktopStatus("Saved");
         changed = true;
       } else {
         SDL_Log("Sketch save failed");
+        setDesktopStatus("Failed to save");
+        changed = true;
       }
     } else if (currentView == DesktopView::Canvas && key == SDLK_x) {
       std::filesystem::path outputPath;
@@ -1574,14 +1598,17 @@ int main(int argc, char** argv) {
             window,
             ("BitMap16 DX - Exported " + outputPath.filename().string())
                 .c_str());
+        setDesktopStatus("Exported!");
       } else {
         SDL_Log("PNG export failed");
+        setDesktopStatus("Export failed");
       }
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_n) {
       workspace.newSketch(editor);
       desktopCanvasViewport = {};
       activePalette = findActivePalette(editor.sketch(), paletteEntries);
+      setDesktopStatus("New sketch");
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_c) {
       const uint8_t next = static_cast<uint8_t>(
@@ -1589,9 +1616,16 @@ int main(int argc, char** argv) {
       editor.setSelectedColor(next);
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_f) {
-      changed = editor.floodFill();
+      editor.floodFill();
+      setDesktopStatus("Fill");
+      changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_z) {
-      changed = altHeld ? editor.redo() : editor.undo();
+      const bool performed = altHeld ? editor.redo() : editor.undo();
+      setDesktopStatus(
+          altHeld
+              ? performed ? "Redo" : "No redo"
+              : performed ? "Undo" : "No undo");
+      changed = true;
     } else if (
         currentView == DesktopView::Canvas && key == SDLK_y &&
         settings.shakeUndoEnabled) {
@@ -1599,8 +1633,17 @@ int main(int argc, char** argv) {
     } else if (currentView == DesktopView::Canvas && key == SDLK_g) {
       changed = editor.toggleGridSize();
       desktopCanvasViewport = {};
+      char gridStatus[16] = {};
+      std::snprintf(
+          gridStatus,
+          sizeof(gridStatus),
+          "%ux%u",
+          editor.sketch().gridSize,
+          editor.sketch().gridSize);
+      setDesktopStatus(gridStatus);
     } else if (currentView == DesktopView::Canvas && key == SDLK_r) {
       rulersVisible = !rulersVisible;
+      setDesktopStatus(rulersVisible ? "Rulers: On" : "Rulers: Off");
       changed = true;
     } else if (
         currentView == DesktopView::Canvas &&
@@ -1609,9 +1652,17 @@ int main(int argc, char** argv) {
     } else if (
         currentView == DesktopView::Canvas &&
         (key == SDLK_BACKSPACE || key == SDLK_DELETE)) {
-      changed = altHeld ? editor.clear() : editor.erase();
+      if (altHeld) {
+        editor.clear();
+        setDesktopStatus("Clear");
+        changed = true;
+      } else {
+        changed = editor.erase();
+      }
     } else if (currentView == DesktopView::Canvas && key == SDLK_k) {
-      changed = editor.clear();
+      editor.clear();
+      setDesktopStatus("Clear");
+      changed = true;
     } else if (
         currentView == DesktopView::Canvas &&
         key >= SDLK_1 && key <= SDLK_8) {
@@ -1711,6 +1762,7 @@ int main(int argc, char** argv) {
         activePalette = findActivePalette(editor.sketch(), paletteEntries);
         currentView = DesktopView::Canvas;
         refreshMemoryCatalog();
+        setDesktopStatus("New sketch");
         changed = true;
       } else if (workspace.openSketch(
                      static_cast<std::size_t>(memoryState.cursor - 1),
@@ -1719,6 +1771,7 @@ int main(int argc, char** argv) {
         activePalette = findActivePalette(editor.sketch(), paletteEntries);
         currentView = DesktopView::Canvas;
         refreshMemoryCatalog();
+        setDesktopStatus("Loaded");
         changed = true;
       }
     } else if (
@@ -1730,6 +1783,7 @@ int main(int argc, char** argv) {
       if (changed) {
         refreshMemoryCatalog();
         activePalette = findActivePalette(editor.sketch(), paletteEntries);
+        setDesktopStatus("Restored sketch");
       }
     } else if (
         currentView == DesktopView::Memory && key == SDLK_z) {

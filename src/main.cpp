@@ -1600,19 +1600,21 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
 
   // Visited array to track which pixels we've already added to the stack
   // This prevents duplicates and ensures we process each pixel exactly once
-  bool visited[MAX_currentGridSize][MAX_currentGridSize] = {false};
-
-  // Simple stack structure for positions to check
-  // Maximum possible stack size is the entire grid.
   struct Point {
-    int x;
-    int y;
+    uint8_t x;
+    uint8_t y;
   };
-  Point stack[MAX_currentGridSize * MAX_currentGridSize];
+  // These buffers are static so a 32×32 fill does not consume the ESP32 loop
+  // task's limited stack. Coordinates only need five bits at this grid size.
+  static bool visited[MAX_currentGridSize][MAX_currentGridSize];
+  static Point stack[MAX_currentGridSize * MAX_currentGridSize];
+  memset(visited, 0, sizeof(visited));
   int stackSize = 0;
 
   // Add starting position to stack and mark as visited
-  stack[stackSize++] = {startX, startY};
+  stack[stackSize++] = {
+      static_cast<uint8_t>(startX),
+      static_cast<uint8_t>(startY)};
   visited[startY][startX] = true;
 
   // Process stack until empty
@@ -1621,7 +1623,7 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
     Point p = stack[--stackSize];
 
     // Skip if out of bounds (shouldn't happen, but safety check)
-    if (p.x < 0 || p.x >= editorState.gridSize || p.y < 0 || p.y >= editorState.gridSize) {
+    if (p.x >= editorState.gridSize || p.y >= editorState.gridSize) {
       continue;
     }
 
@@ -1637,22 +1639,26 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
     // Only add if not visited and within bounds
     // Up
     if (p.y > 0 && !visited[p.y - 1][p.x]) {
-      stack[stackSize++] = {p.x, p.y - 1};
+      stack[stackSize++] = {
+          p.x, static_cast<uint8_t>(p.y - 1)};
       visited[p.y - 1][p.x] = true;
     }
     // Down
     if (p.y < editorState.gridSize - 1 && !visited[p.y + 1][p.x]) {
-      stack[stackSize++] = {p.x, p.y + 1};
+      stack[stackSize++] = {
+          p.x, static_cast<uint8_t>(p.y + 1)};
       visited[p.y + 1][p.x] = true;
     }
     // Left
     if (p.x > 0 && !visited[p.y][p.x - 1]) {
-      stack[stackSize++] = {p.x - 1, p.y};
+      stack[stackSize++] = {
+          static_cast<uint8_t>(p.x - 1), p.y};
       visited[p.y][p.x - 1] = true;
     }
     // Right
     if (p.x < editorState.gridSize - 1 && !visited[p.y][p.x + 1]) {
-      stack[stackSize++] = {p.x + 1, p.y};
+      stack[stackSize++] = {
+          static_cast<uint8_t>(p.x + 1), p.y};
       visited[p.y][p.x + 1] = true;
     }
   }
