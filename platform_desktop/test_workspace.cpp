@@ -38,10 +38,15 @@ int main() {
   bitmap16::Desktop::Workspace restored;
   if (!restored.initialize(restoredEditor)) return 4;
   if (restored.sketches().size() != 1 ||
-      restoredEditor.sketch().pixels[2][3] != 4 ||
+      restored.activeIndex() != -1 ||
+      restoredEditor.sketch().pixels[2][3] != 0 ||
       restored.settings().theme != bitmap16::ThemeId::Dark ||
       restored.settings().defaultGridSize != 16 ||
       !restored.settings().matrixEnabled) {
+    return 5;
+  }
+  if (!restored.openSketch(0, restoredEditor) ||
+      restoredEditor.sketch().pixels[2][3] != 4) {
     return 5;
   }
   if (!restored.saveSketch(restoredEditor, false) ||

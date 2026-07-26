@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Update and Build BitMap16 DX
+Comment=Pull the latest changes and rebuild the Steam Deck target
+Exec=konsole --hold -e distrobox enter dev -- /home/deck/bitmap16dx/platform_steamdeck/update_and_build.sh
+Terminal=false
+Icon=applications-development
+Categories=Development;

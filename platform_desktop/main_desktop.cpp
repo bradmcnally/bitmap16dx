@@ -27,6 +27,11 @@
 #include "palettes.h"
 #include "workspace.h"
 
+#ifndef PROGMEM
+#define PROGMEM
+#endif
+#include "../src/boot_image.h"
+
 #ifndef BITMAP16_DEFAULT_WIDTH
 #define BITMAP16_DEFAULT_WIDTH 320
 #endif
@@ -422,6 +427,57 @@ void present(
   SDL_RenderPresent(renderer);
 }
 
+bool showBootScreen(
+    bitmap16::Canvas& canvas,
+    SDL_Texture* texture,
+    SDL_Renderer* renderer,
+    uint8_t brightness) {
+  constexpr Uint32 kBootDurationMs = 2500u;
+  constexpr const char* kVersion = "v0.7.1";
+  const int imageX = (canvas.width() - BOOT_IMAGE_WIDTH) / 2;
+  const int imageY = (canvas.height() - BOOT_IMAGE_HEIGHT) / 2;
+
+  canvas.fillScreen(0x0000);
+  for (int y = 0; y < BOOT_IMAGE_HEIGHT; ++y) {
+    for (int x = 0; x < BOOT_IMAGE_WIDTH; ++x) {
+      const uint8_t colorIndex =
+          BOOT_IMAGE[y * BOOT_IMAGE_WIDTH + x];
+      if (colorIndex != 2) {
+        canvas.drawPixel(
+            imageX + x, imageY + y, BOOT_PALETTE[colorIndex]);
+      }
+    }
+  }
+
+  const int labelY = imageY + BOOT_IMAGE_HEIGHT - 12;
+  canvas.setTextColor(0xffff);
+  canvas.setTextSize(1);
+  canvas.setTextAlign(bitmap16::TextAlign::Left);
+  canvas.drawString(kVersion, imageX + 4, labelY);
+  canvas.setTextAlign(bitmap16::TextAlign::Center);
+  canvas.drawString(
+      "beepbot", imageX + BOOT_IMAGE_WIDTH / 2, labelY);
+  const int helpX = imageX + BOOT_IMAGE_WIDTH - 4 - (4 * 6);
+  canvas.setTextAlign(bitmap16::TextAlign::Left);
+  canvas.drawString("HELP", helpX, labelY);
+  canvas.drawFastHLine(helpX, labelY + 9, 6, 0xffff);
+  present(canvas, texture, renderer, brightness);
+
+  const Uint32 startedAt = SDL_GetTicks();
+  while (SDL_GetTicks() - startedAt <= kBootDurationMs) {
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+      if (event.type == SDL_QUIT) return false;
+      if (event.type == SDL_KEYDOWN &&
+          event.key.keysym.sym == SDLK_ESCAPE) {
+        return true;
+      }
+    }
+    SDL_Delay(10);
+  }
+  return true;
+}
+
 void renderCurrentView(
     DesktopView view,
     bitmap16::Canvas& canvas,
@@ -688,6 +744,18 @@ int main(int argc, char** argv) {
   }
   SDL_Log("Workspace: %s", workspace.root().string().c_str());
   bitmap16::Settings& settings = workspace.settings();
+  if (!showBootScreen(
+          canvas,
+          texture,
+          renderer,
+          settings.displayBrightness)) {
+    if (controller != nullptr) SDL_GameControllerClose(controller);
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+    return 0;
+  }
   const bitmap16::Sketch& initialSketch = editor.sketch();
   const bitmap16::PreviewView::Image previewImage = {
       initialSketch.pixels,

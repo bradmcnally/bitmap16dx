@@ -108,12 +108,9 @@ bool Workspace::initialize(Editor& editor) {
   loadSettings();
   reloadUserPalettes();
   loadSketches();
-  if (!sketches_.empty()) {
-    activeIndex_ = 0;
-    editor.reset(sketches_[0]);
-  } else {
-    newSketch(editor);
-  }
+  // Match the device lifecycle: launch into a fresh unsaved sketch while
+  // keeping every saved sketch available in the sketches view.
+  newSketch(editor);
   return true;
 }
 
