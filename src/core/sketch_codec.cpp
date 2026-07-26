@@ -40,13 +40,23 @@ Result decode(const uint8_t* data, std::size_t size, Sketch& sketch) {
   if (data == nullptr) {
     return Result::InvalidData;
   }
-  if (size != kLegacyFileSize && size != kCurrentFileSize) {
+  if (size != kLegacyFileSize &&
+      size != kVersion2FileSize &&
+      size != kCurrentFileSize) {
     return Result::InvalidSize;
   }
 
   std::size_t offset = 0;
-  if (size == kCurrentFileSize && data[offset++] != kCurrentVersion) {
-    return Result::UnsupportedVersion;
+  std::size_t storedGridCapacity = 16;
+  if (size != kLegacyFileSize) {
+    const uint8_t version = data[offset++];
+    if (version == 2 && size == kVersion2FileSize) {
+      storedGridCapacity = 16;
+    } else if (version == kCurrentVersion && size == kCurrentFileSize) {
+      storedGridCapacity = kMaxGridSize;
+    } else {
+      return Result::UnsupportedVersion;
+    }
   }
 
   Sketch decoded;
@@ -62,8 +72,8 @@ Result decode(const uint8_t* data, std::size_t size, Sketch& sketch) {
     const uint16_t low = data[offset++];
     decoded.paletteColors[i] = static_cast<uint16_t>((high << 8) | low);
   }
-  for (std::size_t y = 0; y < kMaxGridSize; ++y) {
-    for (std::size_t x = 0; x < kMaxGridSize; ++x) {
+  for (std::size_t y = 0; y < storedGridCapacity; ++y) {
+    for (std::size_t x = 0; x < storedGridCapacity; ++x) {
       const uint8_t pixel = data[offset++];
       if (pixel > kMaxPaletteColors) {
         return Result::InvalidData;

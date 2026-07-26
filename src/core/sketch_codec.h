@@ -8,9 +8,10 @@
 namespace bitmap16 {
 namespace SketchCodec {
 
-constexpr uint8_t kCurrentVersion = 2;
+constexpr uint8_t kCurrentVersion = 3;
 constexpr std::size_t kLegacyFileSize = 290;
-constexpr std::size_t kCurrentFileSize = 291;
+constexpr std::size_t kVersion2FileSize = 291;
+constexpr std::size_t kCurrentFileSize = 1059;
 
 enum class Result {
   Ok,

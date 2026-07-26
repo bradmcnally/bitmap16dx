@@ -6,7 +6,7 @@ BitMap16 DX is a tiny pixel art sketchbook for M5Stack Cardputer devices, channe
 ![Sketches](img/sketches_latest.png)
 
 ## Features
-- 8×8 and 16×16 canvas modes
+- 8×8, 16×16, and 32×32 canvas modes
 - Draw, Erase, Fill, Move tools
 - Undo last action
 - Save/open sketches from SD card
@@ -90,7 +90,7 @@ controller layout and copy/run instructions.
 | `1-8` | Quick color selection (colors 1-8) |
 | `fn` + `1-8` | Quick color selection (colors 9-16) |
 | `C` | **C**ycle to next color |
-| `G` | Toggle between 8×8 and 16×16 **g**rid |
+| `G` | Cycle the 8×8, 16×16, and 32×32 **g**rid |
 | `R` | Toggle **r**ulers (center guide lines) |
 | `T` | Toggle Se**t**tings |
 | `Z` | Undo last action (or just shake to undo)|
@@ -98,7 +98,7 @@ controller layout and copy/run instructions.
 | `S` | **S**ave sketch (update current or create new) |
 | `FN` + `S` | **S**ave as new sketch (always creates new file) |
 | `X` | E**x**port PNG (128×128 scaled) |
-| `FN` + `X` | Export PNG (logical size: 8×8 or 16×16) |
+| `FN` + `X` | Export PNG at its logical grid size |
 | `H` | Open **h**elp screen (key commands) |
 | `P` | Open **P**alette Menu |
 | `O` | **O**pen Sketches Menu |
@@ -163,7 +163,7 @@ View your saved sketches in a fullscreen slideshow with optional auto-advance.
 ### Settings *(T)*
 
 - Set UI theme (light, dark)
-- Set default grid (8x8, 16x16)
+- Set default grid (8x8, 16x16, or 32x32)
 - Set RGB matrix count (1, 4)
 - Set RGB matrix rotation (0, 90, 180, 270)
 - Set export format (RGB888, RGB565)

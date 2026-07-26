@@ -67,7 +67,7 @@ signal adapter.
 - `Enter` or `Space`: draw/activate; `Backspace` or `Delete`: erase
 - `1`-`8`: colors 1-8; `Alt`+`1`-`8`: colors 9-16
 - `S`: save; `Alt`+`S`: save as a new sketch; `N`: new sketch
-- `X`: export at 128×128; `Alt+X`: export at 8×8 or 16×16
+- `X`: export at 128×128; `Alt+X`: export at the logical grid size
 - `C`: next color; `F`: fill; `Z`: undo; `G`: grid size; `R`: rulers
 - Hold `M` with an arrow to move the artwork
 - `K` or `Alt+Backspace`: clear the canvas

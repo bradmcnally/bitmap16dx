@@ -141,7 +141,7 @@ void test_canvas_view_layout_is_resolution_and_grid_aware() {
 }
 
 void test_canvas_view_renders_editor_at_both_target_sizes() {
-  uint8_t pixels[16][16] = {};
+  uint8_t pixels[bitmap16::kMaxGridSize][bitmap16::kMaxGridSize] = {};
   uint16_t colors[16] = {};
   colors[0] = 0xf800;
   colors[1] = 0x07e0;
@@ -336,8 +336,30 @@ void test_preview_view_background_selection_is_bounded() {
       state.background == bitmap16::PreviewView::Background::Gray);
 }
 
+void test_preview_view_zoom_is_integer_and_bounded() {
+  bitmap16::PreviewView::State state;
+  TEST_ASSERT_EQUAL_INT(
+      10,
+      bitmap16::PreviewView::resolvedZoom(state, 16, 170));
+  TEST_ASSERT_TRUE(
+      bitmap16::PreviewView::adjustZoom(state, -1, 16, 170));
+  TEST_ASSERT_EQUAL_INT(9, state.zoom);
+  for (int step = 0; step < 10; ++step) {
+    bitmap16::PreviewView::adjustZoom(state, -1, 16, 170);
+  }
+  TEST_ASSERT_EQUAL_INT(1, state.zoom);
+  TEST_ASSERT_FALSE(
+      bitmap16::PreviewView::adjustZoom(state, -1, 16, 170));
+  for (int step = 0; step < 10; ++step) {
+    bitmap16::PreviewView::adjustZoom(state, 1, 16, 170);
+  }
+  TEST_ASSERT_EQUAL_INT(10, state.zoom);
+  TEST_ASSERT_FALSE(
+      bitmap16::PreviewView::adjustZoom(state, 1, 16, 170));
+}
+
 void test_preview_view_renders_indexed_pixels_at_both_target_sizes() {
-  uint8_t pixels[16][16] = {};
+  uint8_t pixels[bitmap16::kMaxGridSize][bitmap16::kMaxGridSize] = {};
   uint16_t palette[16] = {};
   pixels[0][0] = 1;
   pixels[0][1] = 2;
@@ -367,13 +389,16 @@ void test_preview_view_renders_indexed_pixels_at_both_target_sizes() {
 
     bitmap16::PreviewView::render(canvas, state, image, theme);
 
-    const int viewX = (width - 128) / 2;
-    const int viewY = (height - 128 + 1) / 2;
+    const int cellSize =
+        bitmap16::PreviewView::resolvedZoom(state, image.gridSize, height);
+    const int viewSize = cellSize * image.gridSize;
+    const int viewX = (width - viewSize) / 2;
+    const int viewY = (height - viewSize + 1) / 2;
     TEST_ASSERT_EQUAL_HEX16(palette[0], canvas.readPixel(viewX, viewY));
     TEST_ASSERT_EQUAL_HEX16(
-        palette[1], canvas.readPixel(viewX + 8, viewY));
+        palette[1], canvas.readPixel(viewX + cellSize, viewY));
     TEST_ASSERT_EQUAL_HEX16(
-        theme.gray, canvas.readPixel(viewX + 16, viewY));
+        theme.gray, canvas.readPixel(viewX + cellSize * 2, viewY));
     TEST_ASSERT_EQUAL_HEX16(theme.gray, canvas.readPixel(0, 0));
   }
 }
@@ -406,7 +431,7 @@ void test_charging_view_initializes_and_bounces_within_bounds() {
 void test_charging_view_renders_icons_sketch_and_battery_at_target_sizes() {
   uint8_t icons[4][144];
   std::memset(icons, 0xaa, sizeof(icons));
-  uint8_t sketchPixels[16][16] = {};
+  uint8_t sketchPixels[bitmap16::kMaxGridSize][bitmap16::kMaxGridSize] = {};
   uint16_t sketchPalette[16] = {};
   sketchPixels[0][0] = 1;
   sketchPalette[0] = 0xf800;
@@ -531,7 +556,7 @@ void test_memory_view_navigation_and_scroll_are_resolution_aware() {
 }
 
 void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
-  uint8_t pixels[16][16] = {};
+  uint8_t pixels[bitmap16::kMaxGridSize][bitmap16::kMaxGridSize] = {};
   uint16_t palette[16] = {};
   pixels[0][0] = 1;
   palette[0] = 0xf800;
@@ -628,12 +653,17 @@ void test_editor_toggle_grid_clamps_cursor_and_undo_restores_grid() {
   editor.setCursor(15, 14);
 
   editor.toggleGridSize();
+  TEST_ASSERT_EQUAL_UINT8(32, editor.sketch().gridSize);
+  TEST_ASSERT_EQUAL_UINT8(15, editor.cursorX());
+  TEST_ASSERT_EQUAL_UINT8(14, editor.cursorY());
+
+  editor.toggleGridSize();
   TEST_ASSERT_EQUAL_UINT8(8, editor.sketch().gridSize);
   TEST_ASSERT_EQUAL_UINT8(7, editor.cursorX());
   TEST_ASSERT_EQUAL_UINT8(7, editor.cursorY());
 
   TEST_ASSERT_TRUE(editor.undo());
-  TEST_ASSERT_EQUAL_UINT8(16, editor.sketch().gridSize);
+  TEST_ASSERT_EQUAL_UINT8(32, editor.sketch().gridSize);
 }
 
 void test_palette_index_collapse_matches_existing_rules() {
@@ -683,10 +713,10 @@ void test_palette_parser_rejects_unsupported_count() {
       bitmap16::Palette::parseLospecHex(text, std::strlen(text), parsed));
 }
 
-void test_codec_v2_round_trip_is_exact() {
-  Sketch original = makeSketch(16, 8);
+void test_codec_v3_round_trip_is_exact() {
+  Sketch original = makeSketch(32, 8);
   original.pixels[0][0] = 1;
-  original.pixels[15][15] = 8;
+  original.pixels[31][31] = 8;
   original.isEmpty = false;
 
   uint8_t bytes[bitmap16::SketchCodec::kCurrentFileSize] = {};
@@ -705,11 +735,11 @@ void test_codec_v2_round_trip_is_exact() {
       static_cast<int>(bitmap16::SketchCodec::Result::Ok),
       static_cast<int>(
           bitmap16::SketchCodec::decode(bytes, written, decoded)));
-  TEST_ASSERT_EQUAL_UINT8(16, decoded.gridSize);
+  TEST_ASSERT_EQUAL_UINT8(32, decoded.gridSize);
   TEST_ASSERT_EQUAL_UINT8(8, decoded.paletteSize);
   TEST_ASSERT_EQUAL_HEX16(original.paletteColors[15], decoded.paletteColors[15]);
   TEST_ASSERT_EQUAL_UINT8(1, decoded.pixels[0][0]);
-  TEST_ASSERT_EQUAL_UINT8(8, decoded.pixels[15][15]);
+  TEST_ASSERT_EQUAL_UINT8(8, decoded.pixels[31][31]);
   TEST_ASSERT_FALSE(decoded.isEmpty);
 }
 
@@ -717,19 +747,28 @@ void test_codec_reads_legacy_v1_format() {
   Sketch original = makeSketch(8, 4);
   original.pixels[4][5] = 4;
 
-  uint8_t v2[bitmap16::SketchCodec::kCurrentFileSize] = {};
-  std::size_t written = 0;
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(bitmap16::SketchCodec::Result::Ok),
-      static_cast<int>(bitmap16::SketchCodec::encode(
-          original, v2, sizeof(v2), written)));
+  uint8_t legacy[bitmap16::SketchCodec::kLegacyFileSize] = {};
+  std::size_t offset = 0;
+  legacy[offset++] = original.gridSize;
+  legacy[offset++] = original.paletteSize;
+  for (std::size_t color = 0; color < bitmap16::kMaxPaletteColors; ++color) {
+    legacy[offset++] =
+        static_cast<uint8_t>(original.paletteColors[color] >> 8);
+    legacy[offset++] =
+        static_cast<uint8_t>(original.paletteColors[color] & 0xff);
+  }
+  for (std::size_t y = 0; y < 16; ++y) {
+    for (std::size_t x = 0; x < 16; ++x) {
+      legacy[offset++] = original.pixels[y][x];
+    }
+  }
 
   Sketch decoded;
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(bitmap16::SketchCodec::Result::Ok),
       static_cast<int>(bitmap16::SketchCodec::decode(
-          v2 + 1,
-          bitmap16::SketchCodec::kLegacyFileSize,
+          legacy,
+          sizeof(legacy),
           decoded)));
   TEST_ASSERT_EQUAL_UINT8(8, decoded.gridSize);
   TEST_ASSERT_EQUAL_UINT8(4, decoded.paletteSize);
@@ -1172,6 +1211,7 @@ int main(int, char**) {
   RUN_TEST(test_settings_view_navigation_and_actions_are_portable);
   RUN_TEST(test_settings_view_renders_at_both_target_sizes);
   RUN_TEST(test_preview_view_background_selection_is_bounded);
+  RUN_TEST(test_preview_view_zoom_is_integer_and_bounded);
   RUN_TEST(test_preview_view_renders_indexed_pixels_at_both_target_sizes);
   RUN_TEST(test_charging_view_initializes_and_bounces_within_bounds);
   RUN_TEST(
@@ -1188,7 +1228,7 @@ int main(int, char**) {
   RUN_TEST(test_sketch_initialization_repeats_small_palettes);
   RUN_TEST(test_palette_parser_accepts_lospec_format_and_repeats_colors);
   RUN_TEST(test_palette_parser_rejects_unsupported_count);
-  RUN_TEST(test_codec_v2_round_trip_is_exact);
+  RUN_TEST(test_codec_v3_round_trip_is_exact);
   RUN_TEST(test_codec_reads_legacy_v1_format);
   RUN_TEST(test_codec_rejects_wrong_version_and_size);
   RUN_TEST(test_led_mapping_matches_current_single_and_quad_layout);

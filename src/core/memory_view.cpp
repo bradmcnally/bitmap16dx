@@ -54,19 +54,24 @@ void drawThumbnail(
     const Entry& entry,
     const Theme& theme) {
   if (entry.pixels != nullptr && entry.paletteColors != nullptr &&
-      (entry.gridSize == 8 || entry.gridSize == 16)) {
-    const int cell = kThumbnailSize / entry.gridSize;
-    for (int row = 0; row < entry.gridSize; ++row) {
-      for (int column = 0; column < entry.gridSize; ++column) {
-        const uint8_t index = entry.pixels[row][column];
+      isSupportedGridSize(entry.gridSize)) {
+    for (int destinationY = 0;
+         destinationY < kThumbnailSize;
+         ++destinationY) {
+      const int sourceY =
+          destinationY * entry.gridSize / kThumbnailSize;
+      for (int destinationX = 0;
+           destinationX < kThumbnailSize;
+           ++destinationX) {
+        const int sourceX =
+            destinationX * entry.gridSize / kThumbnailSize;
+        const uint8_t index = entry.pixels[sourceY][sourceX];
         if (index == 0 || index > entry.paletteSize) {
           continue;
         }
-        canvas.fillRect(
-            x + column * cell,
-            y + row * cell,
-            cell,
-            cell,
+        canvas.drawPixel(
+            x + destinationX,
+            y + destinationY,
             entry.paletteColors[index - 1]);
       }
     }

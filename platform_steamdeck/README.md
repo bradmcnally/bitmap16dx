@@ -64,24 +64,25 @@ battery/charging UI; SteamOS provides the device battery indicator.
 
 ## Provisional controller layout
 
-| Control | Canvas | Menus |
+| Control | Canvas | Menus / Preview |
 |---|---|---|
 | Left stick | Move canvas cursor | Navigate, including Palettes |
 | Right stick | Move color cursor by visible row/column | Browse Palettes left/right |
-| A | Draw; hold while moving to paint | Activate/apply |
-| X | Erase; hold while moving to erase | Delete selected sketch |
-| Y | Flood fill | — |
+| A | Draw; hold while moving to paint | Activate/apply; gray background in Preview |
+| X | Erase; hold while moving to erase | Delete sketch; black background in Preview |
+| Y | Flood fill | White background in Preview |
 | B | Back | Back |
 | LT + left stick | Move artwork | — |
+| LT / RT | — | Zoom out / in by one integer step in Preview |
 | R3 | Open Palettes | — |
-| L3 | Toggle 8x8/16x16 grid | — |
+| L3 | Cycle 8x8/16x16/32x32 grid | — |
 | L1 | Undo on release | — |
 | R1 | Redo | — |
 | L1 + L2 | Save once per chord | — |
 | View | Open Sketches | Close Sketches |
 | Menu | Open Settings | Close Settings |
 | D-pad | Move canvas cursor with hold repeat | Navigate with hold repeat |
-| L4 | Toggle 8x8/16x16 grid | — |
+| L4 | Cycle 8x8/16x16/32x32 grid | — |
 | L5 | Toggle Preview | Toggle Preview |
 | R4 | Toggle Help | Toggle Help |
 | R5 | Toggle grid rulers | — |

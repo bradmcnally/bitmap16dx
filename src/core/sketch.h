@@ -5,7 +5,7 @@
 
 namespace bitmap16 {
 
-constexpr std::size_t kMaxGridSize = 16;
+constexpr std::size_t kMaxGridSize = 32;
 constexpr std::size_t kMaxPaletteColors = 16;
 
 struct Sketch {

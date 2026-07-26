@@ -330,8 +330,8 @@ void applyPalette(
   for (int index = 0; index < 16; ++index) {
     sketch.paletteColors[index] = entry.colors[index];
   }
-  for (int y = 0; y < 16; ++y) {
-    for (int x = 0; x < 16; ++x) {
+  for (std::size_t y = 0; y < bitmap16::kMaxGridSize; ++y) {
+    for (std::size_t x = 0; x < bitmap16::kMaxGridSize; ++x) {
       sketch.pixels[y][x] =
           bitmap16::Palette::collapseIndex(
               sketch.pixels[y][x], entry.size);
@@ -1012,6 +1012,8 @@ int main(int argc, char** argv) {
   bool controllerShiftStarted = false;
   bool controllerSaveChordLatched = false;
   bool controllerSaveChordConsumed = false;
+  bool previewLeftTriggerLatched = false;
+  bool previewRightTriggerLatched = false;
   bool running = !smokeTest;
   while (running) {
     SDL_PumpEvents();
@@ -1051,13 +1053,47 @@ int main(int argc, char** argv) {
       const bool leftTriggerHeld =
           SDL_GameControllerGetAxis(
               controller, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 16000;
+      const bool rightTriggerHeld =
+          SDL_GameControllerGetAxis(
+              controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000;
+      if (currentView == DesktopView::Preview) {
+        const bitmap16::Sketch& previewSketch =
+            previewOverride == nullptr
+                ? editor.sketch()
+                : *previewOverride;
+        bool zoomChanged = false;
+        if (leftTriggerHeld && !previewLeftTriggerLatched) {
+          zoomChanged = bitmap16::PreviewView::adjustZoom(
+              previewState,
+              -1,
+              previewSketch.gridSize,
+              std::min(width, height));
+        }
+        if (rightTriggerHeld && !previewRightTriggerLatched) {
+          zoomChanged =
+              bitmap16::PreviewView::adjustZoom(
+                  previewState,
+                  1,
+                  previewSketch.gridSize,
+                  std::min(width, height)) ||
+              zoomChanged;
+        }
+        if (zoomChanged) {
+          renderNow();
+        }
+      }
+      previewLeftTriggerLatched = leftTriggerHeld;
+      previewRightTriggerLatched = rightTriggerHeld;
       const bool saveChordHeld = leftShoulderHeld && leftTriggerHeld;
       if (saveChordHeld && !controllerSaveChordLatched) {
         pushKeyEvent(SDLK_s, false);
         controllerSaveChordConsumed = true;
       }
       controllerSaveChordLatched = saveChordHeld;
-      const bool nextMoveHeld = leftTriggerHeld && !leftShoulderHeld;
+      const bool nextMoveHeld =
+          currentView == DesktopView::Canvas &&
+          leftTriggerHeld &&
+          !leftShoulderHeld;
       if (nextMoveHeld != controllerMoveHeld) {
         controllerMoveHeld = nextMoveHeld;
         controllerShiftStarted = false;
@@ -1204,6 +1240,8 @@ int main(int argc, char** argv) {
         controllerShiftStarted = false;
         controllerSaveChordLatched = false;
         controllerSaveChordConsumed = false;
+        previewLeftTriggerLatched = false;
+        previewRightTriggerLatched = false;
         desktopMoveModeActive = false;
         leftStickX = {};
         leftStickY = {};
@@ -1216,6 +1254,25 @@ int main(int argc, char** argv) {
       continue;
     }
     if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+      if (currentView == DesktopView::Preview &&
+          (event.cbutton.button == SDL_CONTROLLER_BUTTON_A ||
+           event.cbutton.button == SDL_CONTROLLER_BUTTON_X ||
+           event.cbutton.button == SDL_CONTROLLER_BUTTON_Y)) {
+        const int background =
+            event.cbutton.button == SDL_CONTROLLER_BUTTON_X
+                ? static_cast<int>(
+                      bitmap16::PreviewView::Background::Black)
+                : event.cbutton.button == SDL_CONTROLLER_BUTTON_Y
+                    ? static_cast<int>(
+                          bitmap16::PreviewView::Background::White)
+                    : static_cast<int>(
+                          bitmap16::PreviewView::Background::Gray);
+        if (bitmap16::PreviewView::selectBackground(
+                previewState, background)) {
+          renderNow();
+        }
+        continue;
+      }
       SDL_Keycode mappedKey = SDLK_UNKNOWN;
       switch (event.cbutton.button) {
         case SDL_CONTROLLER_BUTTON_A:

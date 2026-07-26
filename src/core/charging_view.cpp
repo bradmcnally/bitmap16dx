@@ -56,23 +56,28 @@ void drawSketch(
     const Item& item,
     const SketchImage& sketch) {
   if (sketch.pixels == nullptr || sketch.paletteColors == nullptr ||
-      (sketch.gridSize != 8 && sketch.gridSize != 16)) {
+      !isSupportedGridSize(sketch.gridSize)) {
     return;
   }
-  const int cellSize = kSketchSize / sketch.gridSize;
   const int originX = static_cast<int>(item.x);
   const int originY = static_cast<int>(item.y);
-  for (int y = 0; y < sketch.gridSize; ++y) {
-    for (int x = 0; x < sketch.gridSize; ++x) {
-      const uint8_t index = sketch.pixels[y][x];
+  for (int destinationY = 0;
+       destinationY < kSketchSize;
+       ++destinationY) {
+    const int sourceY =
+        destinationY * sketch.gridSize / kSketchSize;
+    for (int destinationX = 0;
+         destinationX < kSketchSize;
+         ++destinationX) {
+      const int sourceX =
+          destinationX * sketch.gridSize / kSketchSize;
+      const uint8_t index = sketch.pixels[sourceY][sourceX];
       if (index == 0 || index > sketch.paletteSize) {
         continue;
       }
-      canvas.fillRect(
-          originX + x * cellSize,
-          originY + y * cellSize,
-          cellSize,
-          cellSize,
+      canvas.drawPixel(
+          originX + destinationX,
+          originY + destinationY,
           sketch.paletteColors[index - 1]);
     }
   }

@@ -22,7 +22,8 @@ Settings normalizeSettings(Settings settings) {
     settings.theme = ThemeId::Light;
   }
   if (settings.defaultGridSize != 8 &&
-      settings.defaultGridSize != 16) {
+      settings.defaultGridSize != 16 &&
+      settings.defaultGridSize != 32) {
     settings.defaultGridSize = 8;
   }
   if (settings.matrixUnits != 1 && settings.matrixUnits != 4) {

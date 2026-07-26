@@ -168,7 +168,8 @@ bool Editor::shift(int dx, int dy, bool saveUndoState) {
 
 bool Editor::toggleGridSize() {
   saveUndo();
-  sketch_.gridSize = sketch_.gridSize == 8 ? 16 : 8;
+  sketch_.gridSize =
+      sketch_.gridSize == 8 ? 16 : sketch_.gridSize == 16 ? 32 : 8;
   setCursor(cursorX_, cursorY_);
   return true;
 }

@@ -87,7 +87,8 @@ Layout layoutFor(int width, int height, uint8_t gridSize) {
   constexpr int kPaletteRailGap = 19;
   constexpr int kToolRailGap = 17;
   constexpr int kToolIconWidth = 24;
-  const int logicalSize = gridSize == 16 ? 16 : 8;
+  const int logicalSize =
+      isSupportedGridSize(gridSize) ? gridSize : 8;
   const int available = std::max(8, std::min(128, height - 7));
   const int cellSize = std::max(1, available / logicalSize);
   const int gridPixels = cellSize * logicalSize;
@@ -123,7 +124,8 @@ void render(
 
   const Layout layout =
       layoutFor(canvas.width(), canvas.height(), state.gridSize);
-  const int logicalSize = state.gridSize == 16 ? 16 : 8;
+  const int logicalSize =
+      isSupportedGridSize(state.gridSize) ? state.gridSize : 8;
   drawShadow(
       canvas,
       layout.gridX,

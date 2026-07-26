@@ -5,7 +5,7 @@
 namespace bitmap16 {
 
 bool isSupportedGridSize(uint8_t gridSize) {
-  return gridSize == 8 || gridSize == 16;
+  return gridSize == 8 || gridSize == 16 || gridSize == 32;
 }
 
 bool isSupportedPaletteSize(uint8_t paletteSize) {

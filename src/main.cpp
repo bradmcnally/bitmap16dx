@@ -123,13 +123,14 @@ const char* FIRMWARE_VERSION = "v0.7.1";
 // File format version for sketch files
 // Version 1: gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 290 bytes
 // Version 2: formatVersion (1B) + gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 291 bytes
-const uint8_t SKETCH_FORMAT_VERSION = 2;
-const int SKETCH_FILE_SIZE_V1 = 290;  // Legacy format without version byte
-const int SKETCH_FILE_SIZE_V2 = 291;  // Current format with version byte
+// Version 3 expands pixel storage to 32×32.
+const uint8_t SKETCH_FORMAT_VERSION = bitmap16::SketchCodec::kCurrentVersion;
+const int SKETCH_FILE_SIZE_V1 = bitmap16::SketchCodec::kLegacyFileSize;
+const int SKETCH_FILE_SIZE_V2 = bitmap16::SketchCodec::kVersion2FileSize;
+const int SKETCH_FILE_SIZE_V3 = bitmap16::SketchCodec::kCurrentFileSize;
 
 // Canvas size in logical pixels
-// The canvas is always 16×16 to support both modes
-const int MAX_currentGridSize = 16;
+const int MAX_currentGridSize = bitmap16::kMaxGridSize;
 
 struct EditorState {
   int gridSize = 8;
@@ -139,18 +140,18 @@ struct EditorState {
   int lastCursorScreenX = -1;
   int lastCursorScreenY = -1;
   bool moveModeActive = false;
-  uint8_t canvas[16][16] = {};
+  uint8_t canvas[MAX_currentGridSize][MAX_currentGridSize] = {};
   uint8_t selectedColor = 1;
   bool rulersVisible = false;
   bool drawPressed = false;
   bool erasePressed = false;
   bool fillPressed = false;
-  uint8_t undoCanvas[16][16] = {};
+  uint8_t undoCanvas[MAX_currentGridSize][MAX_currentGridSize] = {};
   bool undoAvailable = false;
   uint8_t undoPaletteSize = 0;
   uint16_t undoPaletteColors[16] = {};
   uint8_t undoGridSize = 0;
-  uint8_t redoCanvas[16][16] = {};
+  uint8_t redoCanvas[MAX_currentGridSize][MAX_currentGridSize] = {};
   bool redoAvailable = false;
   uint8_t redoPaletteSize = 0;
   uint16_t redoPaletteColors[16] = {};
@@ -353,10 +354,9 @@ char btNotifyMsg[32] = "";
 // Index 0 is always Transparent. Indices 1..paletteSize map to drawable colors.
 // Palette changes are explicit and never rewrite pixel indices.
 
-// Sketch data structure (unchanged format - 290 bytes on disk)
 struct Sketch {
-  uint8_t pixels[16][16];        // Indexed bitmap (values are palette indices)
-  uint8_t gridSize;              // 8 or 16
+  uint8_t pixels[MAX_currentGridSize][MAX_currentGridSize];
+  uint8_t gridSize;              // 8, 16, or 32
   uint8_t paletteSize;           // 8 or 16 (number of drawable colors, excludes 0)
   uint16_t paletteColors[16];    // Maps indices 1..paletteSize to RGB565 colors
                                  // paletteColors[0] is unused (index 0 = Transparent)
@@ -563,8 +563,8 @@ void setStatusMessage(const char* message) {
  */
 void initializeActiveSketch() {
   // Clear pixel data (all transparent)
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
+  for (int y = 0; y < MAX_currentGridSize; y++) {
+    for (int x = 0; x < MAX_currentGridSize; x++) {
       documentState.sketch.pixels[y][x] = 0;
     }
   }
@@ -622,8 +622,8 @@ bitmap16::Sketch toPortableSketch(const Sketch& source) {
   for (int i = 0; i < 16; ++i) {
     result.paletteColors[i] = source.paletteColors[i];
   }
-  for (int y = 0; y < 16; ++y) {
-    for (int x = 0; x < 16; ++x) {
+  for (int y = 0; y < MAX_currentGridSize; ++y) {
+    for (int x = 0; x < MAX_currentGridSize; ++x) {
       result.pixels[y][x] = source.pixels[y][x];
     }
   }
@@ -637,8 +637,8 @@ void fromPortableSketch(const bitmap16::Sketch& source, Sketch& destination) {
   for (int i = 0; i < 16; ++i) {
     destination.paletteColors[i] = source.paletteColors[i];
   }
-  for (int y = 0; y < 16; ++y) {
-    for (int x = 0; x < 16; ++x) {
+  for (int y = 0; y < MAX_currentGridSize; ++y) {
+    for (int x = 0; x < MAX_currentGridSize; ++x) {
       destination.pixels[y][x] = source.pixels[y][x];
     }
   }
@@ -717,7 +717,8 @@ bool collectSketchFile(
   const unsigned long timestamp =
       filename.substring(underscorePos + 1, dotPos).toInt();
   if ((file.size != SKETCH_FILE_SIZE_V1 &&
-       file.size != SKETCH_FILE_SIZE_V2) ||
+       file.size != SKETCH_FILE_SIZE_V2 &&
+       file.size != SKETCH_FILE_SIZE_V3) ||
       timestamp == 0) {
     return true;
   }
@@ -1456,8 +1457,8 @@ void restoreUndo() {
   }
 
   // Preserve the current document so Fn+Z can redo this undo.
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
+  for (int y = 0; y < MAX_currentGridSize; y++) {
+    for (int x = 0; x < MAX_currentGridSize; x++) {
       editorState.redoCanvas[y][x] = editorState.canvas[y][x];
     }
   }
@@ -1471,7 +1472,7 @@ void restoreUndo() {
   // If we have saved grid size info (from sketch deletion), restore it
   if (editorState.undoGridSize > 0) {
     editorState.gridSize = editorState.undoGridSize;
-    editorState.cellSize = (editorState.gridSize == 8) ? 16 : 8;
+    editorState.cellSize = 128 / editorState.gridSize;
 
     // Keep cursor in bounds
     if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
@@ -1479,8 +1480,8 @@ void restoreUndo() {
   }
 
   // Restore all pixels (always restore full 16x16 to handle grid size changes)
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
+  for (int y = 0; y < MAX_currentGridSize; y++) {
+    for (int x = 0; x < MAX_currentGridSize; x++) {
       editorState.canvas[y][x] = editorState.undoCanvas[y][x];
     }
   }
@@ -1508,8 +1509,8 @@ void restoreRedo() {
     return;
   }
 
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
+  for (int y = 0; y < MAX_currentGridSize; y++) {
+    for (int x = 0; x < MAX_currentGridSize; x++) {
       editorState.undoCanvas[y][x] = editorState.canvas[y][x];
       editorState.canvas[y][x] = editorState.redoCanvas[y][x];
     }
@@ -1523,7 +1524,7 @@ void restoreRedo() {
   editorState.undoAvailable = true;
 
   editorState.gridSize = editorState.redoGridSize;
-  editorState.cellSize = editorState.gridSize == 8 ? 16 : 8;
+  editorState.cellSize = 128 / editorState.gridSize;
   documentState.sketch.gridSize = editorState.redoGridSize;
   documentState.sketch.paletteSize = editorState.redoPaletteSize;
   if (editorState.cursorX >= editorState.gridSize) {
@@ -1555,7 +1556,7 @@ void clearCanvas() {
 
 // Shift the entire canvas by (dx, dy) with wrapping
 void shiftCanvas(int dx, int dy) {
-  uint8_t temp[16][16];
+  uint8_t temp[MAX_currentGridSize][MAX_currentGridSize];
   int size = editorState.gridSize;
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
@@ -1595,15 +1596,15 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
 
   // Visited array to track which pixels we've already added to the stack
   // This prevents duplicates and ensures we process each pixel exactly once
-  bool visited[16][16] = {false};
+  bool visited[MAX_currentGridSize][MAX_currentGridSize] = {false};
 
   // Simple stack structure for positions to check
-  // Maximum possible stack size is the entire grid (16×16 = 256 positions)
+  // Maximum possible stack size is the entire grid.
   struct Point {
     int x;
     int y;
   };
-  Point stack[256];
+  Point stack[MAX_currentGridSize * MAX_currentGridSize];
   int stackSize = 0;
 
   // Add starting position to stack and mark as visited
@@ -1654,22 +1655,20 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
 }
 
 /**
- * Toggle between 8×8 and 16×16 grid modes
- *
- * When switching from 16×16 to 8×8, the top-left 8×8 portion is preserved.
- * When switching from 8×8 to 16×16, the 8×8 art appears in the top-left.
+ * Cycle between 8×8, 16×16, and 32×32 grid modes.
  */
 void toggleGridSize() {
-  // Toggle between 8 and 16
   if (editorState.gridSize == 8) {
     editorState.gridSize = 16;
-    editorState.cellSize = 8;  // Smaller cells for more pixels
     setStatusMessage(StatusMsg::GRID_16X16);
+  } else if (editorState.gridSize == 16) {
+    editorState.gridSize = 32;
+    setStatusMessage("Grid: 32x32");
   } else {
     editorState.gridSize = 8;
-    editorState.cellSize = 16;  // Larger cells for fewer pixels
     setStatusMessage(StatusMsg::GRID_8X8);
   }
+  editorState.cellSize = 128 / editorState.gridSize;
 
   // Keep cursor in bounds
   if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
@@ -1695,10 +1694,10 @@ void openSketch(String filename) {
 
   // Copy to canvas
   editorState.gridSize = documentState.sketch.gridSize;
-  editorState.cellSize = (editorState.gridSize == 8) ? 16 : 8;
+  editorState.cellSize = 128 / editorState.gridSize;
 
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
+  for (int y = 0; y < MAX_currentGridSize; y++) {
+    for (int x = 0; x < MAX_currentGridSize; x++) {
       editorState.canvas[y][x] = documentState.sketch.pixels[y][x];
     }
   }
@@ -1720,15 +1719,15 @@ void openSketch(String filename) {
 void createNewSketch() {
   initializeActiveSketch();
 
-  for (int y = 0; y < 16; y++) {
-    for (int x = 0; x < 16; x++) {
+  for (int y = 0; y < MAX_currentGridSize; y++) {
+    for (int x = 0; x < MAX_currentGridSize; x++) {
       editorState.canvas[y][x] = 0;
     }
   }
 
   // Use default grid size from settings instead of hardcoded 16
   editorState.gridSize = defaultGridSize;
-  editorState.cellSize = (editorState.gridSize == 16) ? 8 : 16;
+  editorState.cellSize = 128 / editorState.gridSize;
   documentState.sketch.gridSize = editorState.gridSize;
   editorState.cursorX = 0;
   editorState.cursorY = 0;
@@ -2006,7 +2005,7 @@ bitmap16::PreviewView::Theme previewTheme() {
 }
 
 void drawPreviewImage(
-    const uint8_t pixels[][16],
+    const uint8_t pixels[][MAX_currentGridSize],
     uint8_t gridSize,
     const uint16_t* paletteColors,
     uint8_t paletteSize) {
@@ -2385,13 +2384,20 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           break;
 
         case 1:  // Default Grid Size
-          // Toggle between 8×8 and 16×16
-          defaultGridSize = (defaultGridSize == 8) ? 16 : 8;
+          defaultGridSize =
+              defaultGridSize == 8
+                  ? 16
+                  : defaultGridSize == 16 ? 32 : 8;
 
           // Save preference
           PreferenceStore::writeUInt8("defaultGrid", defaultGridSize);
 
-          setStatusMessage(defaultGridSize == 8 ? "Default: 8x8" : "Default: 16x16");
+          setStatusMessage(
+              defaultGridSize == 8
+                  ? "Default: 8x8"
+                  : defaultGridSize == 16
+                      ? "Default: 16x16"
+                      : "Default: 32x32");
           break;
 
         case 2:  // RGB Matrix Units
@@ -2923,7 +2929,8 @@ void updateLEDMatrix(bool showCursor) {
   if (!LEDMatrix::isEnabled()) {
     return;
   }
-  if (editorState.gridSize == 16 && rgbMatrixUnits == 1) {
+  const uint8_t matrixSize = rgbMatrixUnits == 4 ? 16 : 8;
+  if (editorState.gridSize > matrixSize) {
     clearLEDMatrix();
     return;
   }
@@ -2969,7 +2976,8 @@ void updateLEDMatrixFromSketch(Sketch& sketch) {
   if (!LEDMatrix::isEnabled()) {
     return;
   }
-  if (sketch.gridSize == 16 && rgbMatrixUnits == 1) {
+  const uint8_t matrixSize = rgbMatrixUnits == 4 ? 16 : 8;
+  if (sketch.gridSize > matrixSize) {
     clearLEDMatrix();
     return;
   }
@@ -3345,8 +3353,8 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
       Sketch& sketchData = sketchList[sketchIndex].sketchData;
 
       // Copy pixel data to undo buffer
-      for (int y = 0; y < 16; y++) {
-        for (int x = 0; x < 16; x++) {
+      for (int y = 0; y < MAX_currentGridSize; y++) {
+        for (int x = 0; x < MAX_currentGridSize; x++) {
           editorState.undoCanvas[y][x] = sketchData.pixels[y][x];
         }
       }
@@ -3405,7 +3413,7 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
           // If we have saved grid size info, restore it
           if (editorState.undoGridSize > 0) {
             editorState.gridSize = editorState.undoGridSize;
-            editorState.cellSize = (editorState.gridSize == 8) ? 16 : 8;
+            editorState.cellSize = 128 / editorState.gridSize;
 
             // Keep cursor in bounds
             if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
@@ -3413,8 +3421,8 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
           }
 
           // Restore pixel data to canvas
-          for (int y = 0; y < 16; y++) {
-            for (int x = 0; x < 16; x++) {
+          for (int y = 0; y < MAX_currentGridSize; y++) {
+            for (int x = 0; x < MAX_currentGridSize; x++) {
               editorState.canvas[y][x] = editorState.undoCanvas[y][x];
             }
           }
@@ -3431,8 +3439,8 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
 
           // Save restored sketch to SD card (now uses active sketch system)
           // Copy canvas to active sketch before saving
-          for (int y = 0; y < 16; y++) {
-            for (int x = 0; x < 16; x++) {
+          for (int y = 0; y < MAX_currentGridSize; y++) {
+            for (int x = 0; x < MAX_currentGridSize; x++) {
               documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
             }
           }
@@ -4573,8 +4581,8 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     // S key - Save sketch (or Alt+S to save as new)
     else if (btChar == 's' || btChar == 'S') {
       // Copy canvas to active sketch before saving
-      for (int y = 0; y < 16; y++) {
-        for (int x = 0; x < 16; x++) {
+      for (int y = 0; y < MAX_currentGridSize; y++) {
+        for (int x = 0; x < MAX_currentGridSize; x++) {
           documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
         }
       }
@@ -4710,8 +4718,8 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   } else if (command == 'o' || command == 'O') {
     enterMemoryView();
   } else if (command == 's' || command == 'S') {
-    for (int y = 0; y < 16; ++y) {
-      for (int x = 0; x < 16; ++x) {
+    for (int y = 0; y < MAX_currentGridSize; ++y) {
+      for (int x = 0; x < MAX_currentGridSize; ++x) {
         documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
       }
     }

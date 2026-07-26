@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "core/canvas.h"
+#include "core/sketch.h"
 
 namespace bitmap16 {
 namespace ChargingView {
@@ -33,7 +34,7 @@ struct Theme {
 };
 
 struct SketchImage {
-  const uint8_t (*pixels)[16] = nullptr;
+  const uint8_t (*pixels)[kMaxGridSize] = nullptr;
   uint8_t gridSize = 8;
   const uint16_t* paletteColors = nullptr;
   uint8_t paletteSize = 16;

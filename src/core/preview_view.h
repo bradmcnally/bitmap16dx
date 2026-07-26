@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "core/canvas.h"
+#include "core/sketch.h"
 
 namespace bitmap16 {
 namespace PreviewView {
@@ -16,6 +17,8 @@ enum class Background : uint8_t {
 
 struct State {
   Background background = Background::Black;
+  // Zero means fit to the current preview viewport.
+  uint8_t zoom = 0;
 };
 
 struct Theme {
@@ -26,13 +29,22 @@ struct Theme {
 };
 
 struct Image {
-  const uint8_t (*pixels)[16] = nullptr;
+  const uint8_t (*pixels)[kMaxGridSize] = nullptr;
   uint8_t gridSize = 8;
   const uint16_t* paletteColors = nullptr;
   uint8_t paletteSize = 16;
 };
 
 bool selectBackground(State& state, int selection);
+bool adjustZoom(
+    State& state,
+    int delta,
+    uint8_t gridSize,
+    int availableSize);
+int resolvedZoom(
+    const State& state,
+    uint8_t gridSize,
+    int availableSize);
 uint16_t backgroundColor(const State& state, const Theme& theme);
 void render(
     Canvas& canvas,

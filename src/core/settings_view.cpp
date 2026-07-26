@@ -67,7 +67,9 @@ const char* valueFor(
     case Action::ThemeChanged:
       return settings.theme == ThemeId::Light ? "Light" : "Dark";
     case Action::DefaultGridChanged:
-      return settings.defaultGridSize == 8 ? "8" : "16";
+      return settings.defaultGridSize == 8
+          ? "8"
+          : settings.defaultGridSize == 16 ? "16" : "32";
     case Action::MatrixUnitsChanged:
       return settings.matrixUnits == 1 ? "1" : "4";
     case Action::MatrixRotationChanged:
@@ -144,7 +146,9 @@ Action activate(
       return Action::ThemeChanged;
     case Action::DefaultGridChanged:
       settings.defaultGridSize =
-          settings.defaultGridSize == 8 ? 16 : 8;
+          settings.defaultGridSize == 8
+              ? 16
+              : settings.defaultGridSize == 16 ? 32 : 8;
       return Action::DefaultGridChanged;
     case Action::MatrixUnitsChanged:
       settings.matrixUnits = settings.matrixUnits == 1 ? 4 : 1;

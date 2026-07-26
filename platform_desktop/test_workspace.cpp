@@ -41,7 +41,11 @@ int main() {
   }
 
   restored.newSketch(restoredEditor);
-  if (restoredEditor.sketch().gridSize != 16 ||
+  restoredEditor.toggleGridSize();
+  restoredEditor.setCursor(31, 31);
+  restoredEditor.setSelectedColor(3);
+  if (!restoredEditor.draw() ||
+      restoredEditor.sketch().gridSize != 32 ||
       !restored.saveSketch(restoredEditor, true) ||
       restored.sketches().size() != 2) {
     return 6;

@@ -79,6 +79,10 @@ void MatrixSimulator::render(
   }
 
   const int matrixSize = settings.matrixUnits == 4 ? 16 : 8;
+  if (sketch.gridSize > matrixSize) {
+    SDL_RenderPresent(renderer_);
+    return;
+  }
   std::array<LedMapping::Rgb888, 256> leds = {};
   for (int y = 0; y < sketch.gridSize; ++y) {
     for (int x = 0; x < sketch.gridSize; ++x) {

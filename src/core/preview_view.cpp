@@ -18,6 +18,37 @@ bool selectBackground(State& state, int selection) {
   return true;
 }
 
+int resolvedZoom(
+    const State& state,
+    uint8_t gridSize,
+    int availableSize) {
+  if (!isSupportedGridSize(gridSize)) {
+    return 1;
+  }
+  const int maximum = std::max(1, availableSize / gridSize);
+  return state.zoom == 0
+      ? maximum
+      : std::max(1, std::min(maximum, static_cast<int>(state.zoom)));
+}
+
+bool adjustZoom(
+    State& state,
+    int delta,
+    uint8_t gridSize,
+    int availableSize) {
+  if (delta == 0 || !isSupportedGridSize(gridSize)) {
+    return false;
+  }
+  const int current = resolvedZoom(state, gridSize, availableSize);
+  const int maximum = std::max(1, availableSize / gridSize);
+  const int next = std::max(1, std::min(maximum, current + delta));
+  if (next == current) {
+    return false;
+  }
+  state.zoom = static_cast<uint8_t>(next);
+  return true;
+}
+
 uint16_t backgroundColor(const State& state, const Theme& theme) {
   switch (state.background) {
     case Background::White:
@@ -44,14 +75,13 @@ void render(
   const uint16_t clearColor = backgroundColor(state, theme);
   canvas.fillScreen(clearColor);
   if (image.pixels == nullptr || image.paletteColors == nullptr ||
-      (image.gridSize != 8 && image.gridSize != 16)) {
+      !isSupportedGridSize(image.gridSize)) {
     return;
   }
 
-  constexpr int maximumViewSize = 128;
   const int availableSize = std::min(canvas.width(), canvas.height());
   const int cellSize =
-      std::max(1, std::min(maximumViewSize, availableSize) / image.gridSize);
+      resolvedZoom(state, image.gridSize, availableSize);
   const int viewSize = cellSize * image.gridSize;
   const int viewX = (canvas.width() - viewSize) / 2;
   const int viewY = (canvas.height() - viewSize + 1) / 2;
