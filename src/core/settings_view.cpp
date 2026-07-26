@@ -11,23 +11,42 @@ namespace {
 
 struct Item {
   const char* label;
-  bool requiresBluetooth;
+  Action action;
 };
 
 constexpr Item kItems[] = {
-    {"UI theme", false},
-    {"Grid default", false},
-    {"RGB matrix", false},
-    {"Rotate matrix", false},
-    {"Export", false},
-    {"Shake undo", false},
-    {"Bluetooth", true},
+    {"UI theme", Action::ThemeChanged},
+    {"Grid default", Action::DefaultGridChanged},
+    {"RGB matrix", Action::MatrixUnitsChanged},
+    {"Rotate matrix", Action::MatrixRotationChanged},
+    {"Export", Action::ExportFormatChanged},
+    {"Shake undo", Action::ShakeUndoChanged},
+    {"Bluetooth", Action::BluetoothRequested},
 };
 
-const Item& visibleItem(int index, bool includeBluetooth) {
+bool itemVisible(
+    const Item& item,
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo) {
+  if (item.action == Action::BluetoothRequested) return includeBluetooth;
+  if (item.action == Action::MatrixUnitsChanged ||
+      item.action == Action::MatrixRotationChanged) {
+    return includeMatrix;
+  }
+  if (item.action == Action::ShakeUndoChanged) return includeShakeUndo;
+  return true;
+}
+
+const Item& visibleItem(
+    int index,
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo) {
   int visibleIndex = 0;
   for (const Item& item : kItems) {
-    if (!includeBluetooth && item.requiresBluetooth) {
+    if (!itemVisible(
+            item, includeBluetooth, includeMatrix, includeShakeUndo)) {
       continue;
     }
     if (visibleIndex == index) {
@@ -39,32 +58,32 @@ const Item& visibleItem(int index, bool includeBluetooth) {
 }
 
 const char* valueFor(
-    int index,
+    Action action,
     const Settings& settings,
     const char* bluetoothValue,
     char* buffer,
     std::size_t bufferSize) {
-  switch (index) {
-    case 0:
+  switch (action) {
+    case Action::ThemeChanged:
       return settings.theme == ThemeId::Light ? "Light" : "Dark";
-    case 1:
+    case Action::DefaultGridChanged:
       return settings.defaultGridSize == 8 ? "8" : "16";
-    case 2:
+    case Action::MatrixUnitsChanged:
       return settings.matrixUnits == 1 ? "1" : "4";
-    case 3:
+    case Action::MatrixRotationChanged:
       std::snprintf(
           buffer,
           bufferSize,
           "%u",
           static_cast<unsigned>(settings.matrixRotation) * 90);
       return buffer;
-    case 4:
+    case Action::ExportFormatChanged:
       return settings.exportFormat == ExportFormat::Rgb565
           ? "RGB565"
           : "RGB888";
-    case 5:
+    case Action::ShakeUndoChanged:
       return settings.shakeUndoEnabled ? "ON" : "OFF";
-    case 6:
+    case Action::BluetoothRequested:
       return bluetoothValue == nullptr ? "OFF" : bluetoothValue;
     default:
       return "";
@@ -73,18 +92,26 @@ const char* valueFor(
 
 }  // namespace
 
-int itemCount(bool includeBluetooth) {
+int itemCount(
+    bool includeBluetooth, bool includeMatrix, bool includeShakeUndo) {
   int count = 0;
   for (const Item& item : kItems) {
-    if (includeBluetooth || !item.requiresBluetooth) {
+    if (itemVisible(
+            item, includeBluetooth, includeMatrix, includeShakeUndo)) {
       ++count;
     }
   }
   return count;
 }
 
-bool moveCursor(State& state, int delta, bool includeBluetooth) {
-  const int maximum = itemCount(includeBluetooth) - 1;
+bool moveCursor(
+    State& state,
+    int delta,
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo) {
+  const int maximum =
+      itemCount(includeBluetooth, includeMatrix, includeShakeUndo) - 1;
   const int next = std::max(0, std::min(maximum, state.cursor + delta));
   if (next == state.cursor) {
     return false;
@@ -96,36 +123,46 @@ bool moveCursor(State& state, int delta, bool includeBluetooth) {
 Action activate(
     State& state,
     Settings& settings,
-    bool includeBluetooth) {
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo) {
   state.cursor =
-      std::max(0, std::min(itemCount(includeBluetooth) - 1, state.cursor));
-  switch (state.cursor) {
-    case 0:
+      std::max(
+          0,
+          std::min(
+              itemCount(includeBluetooth, includeMatrix, includeShakeUndo) - 1,
+              state.cursor));
+  const Action action =
+      visibleItem(
+          state.cursor, includeBluetooth, includeMatrix, includeShakeUndo)
+          .action;
+  switch (action) {
+    case Action::ThemeChanged:
       settings.theme = settings.theme == ThemeId::Light
           ? ThemeId::Dark
           : ThemeId::Light;
       return Action::ThemeChanged;
-    case 1:
+    case Action::DefaultGridChanged:
       settings.defaultGridSize =
           settings.defaultGridSize == 8 ? 16 : 8;
       return Action::DefaultGridChanged;
-    case 2:
+    case Action::MatrixUnitsChanged:
       settings.matrixUnits = settings.matrixUnits == 1 ? 4 : 1;
       return Action::MatrixUnitsChanged;
-    case 3:
+    case Action::MatrixRotationChanged:
       settings.matrixRotation =
           static_cast<uint8_t>((settings.matrixRotation + 1) % 4);
       return Action::MatrixRotationChanged;
-    case 4:
+    case Action::ExportFormatChanged:
       settings.exportFormat =
           settings.exportFormat == ExportFormat::Rgb888
               ? ExportFormat::Rgb565
               : ExportFormat::Rgb888;
       return Action::ExportFormatChanged;
-    case 5:
+    case Action::ShakeUndoChanged:
       settings.shakeUndoEnabled = !settings.shakeUndoEnabled;
       return Action::ShakeUndoChanged;
-    case 6:
+    case Action::BluetoothRequested:
       return includeBluetooth ? Action::BluetoothRequested : Action::None;
     default:
       return Action::None;
@@ -138,6 +175,8 @@ void render(
     const Settings& settings,
     const Theme& theme,
     bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo,
     const char* bluetoothValue,
     const char* statusMessage) {
   if (!canvas.isValid()) {
@@ -150,7 +189,8 @@ void render(
   canvas.setTextColor(theme.text);
   canvas.drawString("SETTINGS", 4, 4);
 
-  const int totalItems = itemCount(includeBluetooth);
+  const int totalItems =
+      itemCount(includeBluetooth, includeMatrix, includeShakeUndo);
   state.cursor = std::max(0, std::min(totalItems - 1, state.cursor));
   state.scrollOffset =
       std::max(0, std::min(state.cursor, state.scrollOffset));
@@ -187,12 +227,14 @@ void render(
     canvas.setTextColor(selected ? theme.text : theme.textSecondary);
     canvas.setTextAlign(TextAlign::Left);
     canvas.drawString(
-        visibleItem(i, includeBluetooth).label,
+        visibleItem(
+            i, includeBluetooth, includeMatrix, includeShakeUndo).label,
         labelX,
         textY);
 
     const char* value = valueFor(
-        i,
+        visibleItem(
+            i, includeBluetooth, includeMatrix, includeShakeUndo).action,
         settings,
         bluetoothValue,
         valueBuffer,

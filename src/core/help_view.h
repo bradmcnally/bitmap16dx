@@ -18,13 +18,18 @@ struct Theme {
   uint16_t textSecondary = 0x7bef;
 };
 
-int itemCount(bool includeLedMatrixControls);
-bool moveCursor(State& state, int delta, bool includeLedMatrixControls);
+int itemCount(bool includeLedMatrixControls, bool includeBatteryControls);
+bool moveCursor(
+    State& state,
+    int delta,
+    bool includeLedMatrixControls,
+    bool includeBatteryControls);
 void render(
     Canvas& canvas,
     State& state,
     const Theme& theme,
-    bool includeLedMatrixControls);
+    bool includeLedMatrixControls,
+    bool includeBatteryControls);
 
 }  // namespace HelpView
 }  // namespace bitmap16

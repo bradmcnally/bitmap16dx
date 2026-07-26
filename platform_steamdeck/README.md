@@ -57,11 +57,14 @@ Data is stored under:
 
 Set `BITMAP16_DATA_DIR` before launching to use an isolated test workspace.
 
+The Deck build does not read system battery information or draw Bitmap16's
+battery/charging UI; SteamOS provides the device battery indicator.
+
 ## Provisional controller layout
 
 | Control | Canvas | Menus |
 |---|---|---|
-| Left stick | Move canvas cursor | Navigate |
+| Left stick | Move canvas cursor | Navigate, including Palettes |
 | Right stick | Move color cursor by visible row/column | Browse Palettes left/right |
 | A | Draw; hold while moving to paint | Activate/apply |
 | X | Erase; hold while moving to erase | Delete selected sketch |
@@ -70,11 +73,15 @@ Set `BITMAP16_DATA_DIR` before launching to use an isolated test workspace.
 | LT + left stick | Move artwork | — |
 | R3 | Open Palettes | — |
 | L3 | Toggle 8x8/16x16 grid | — |
-| L1 | Save | — |
-| R1 | Preview | — |
+| L1 | Undo on release | — |
+| R1 | Redo | — |
+| L1 + L2 | Save once per chord | — |
 | View | Open Sketches | Close Sketches |
 | Menu | Open Settings | Close Settings |
-| D-pad | Move canvas cursor | Navigate |
+| D-pad | Move canvas cursor with hold repeat | Navigate with hold repeat |
+| L4 | Toggle 8x8/16x16 grid | — |
+| L5 | Toggle Preview | Toggle Preview |
+| R4 | Toggle Help | Toggle Help |
 
 Right-stick color movement follows the palette rail geometry. Up/down changes
 rows. Left/right switches columns only for a 16-color palette.
@@ -90,7 +97,16 @@ Keyboard controls remain available in this quick build.
    artwork movement.
 5. Move the right stick through 4-, 8-, and 16-color palette rails.
 6. Press R3, browse palettes with the right stick, apply with A, and cancel
-   with B.
-7. Save with L1, open Sketches with View, and reopen the saved sketch.
-8. Test both Gaming Mode and Desktop Mode, then report any incorrect button
+   with B. Also verify left stick, D-pad, and keyboard arrows browse the
+   animated carousel, and that A plays the insertion animation before
+   returning to the canvas.
+7. Draw, release L1 to undo, and press R1 to redo. Confirm L1+L2 saves without
+   also undoing, then open Sketches with View and reopen the saved sketch.
+8. Confirm L4 toggles the grid, L5 toggles Preview, and R4 opens Help then
+   returns to the previous screen.
+9. Test both Gaming Mode and Desktop Mode, then report any incorrect button
    labels, dead-zone problems, double movements, or missed repeats.
+
+SDL exposes the Deck's rear grips as controller paddles. If Steam Input does
+not pass them through with the selected template, bind L4, L5, and R4 to their
+corresponding gamepad paddle inputs in the game's controller layout.

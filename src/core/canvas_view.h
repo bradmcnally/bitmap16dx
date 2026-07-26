@@ -19,6 +19,9 @@ struct State {
   bool moveMode = false;
   const char* status = nullptr;
   int batteryPercent = -1;
+  bool drawPressed = false;
+  bool erasePressed = false;
+  bool fillPressed = false;
 };
 
 struct Theme {

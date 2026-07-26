@@ -14,6 +14,7 @@
  * - Hold Backspace + Arrow keys to erase lines
  * - G to toggle between 8×8 and 16×16 grid
  * - Z to undo last action
+ * - Fn+Z to redo the last undone action
  * - Shake device to undo (IMU gesture)
  * - S to save current canvas as snapshot
  * - Fn+S to save as new sketch
@@ -141,11 +142,19 @@ struct EditorState {
   uint8_t canvas[16][16] = {};
   uint8_t selectedColor = 1;
   bool rulersVisible = false;
+  bool drawPressed = false;
+  bool erasePressed = false;
+  bool fillPressed = false;
   uint8_t undoCanvas[16][16] = {};
   bool undoAvailable = false;
   uint8_t undoPaletteSize = 0;
   uint16_t undoPaletteColors[16] = {};
   uint8_t undoGridSize = 0;
+  uint8_t redoCanvas[16][16] = {};
+  bool redoAvailable = false;
+  uint8_t redoPaletteSize = 0;
+  uint16_t redoPaletteColors[16] = {};
+  uint8_t redoGridSize = 0;
 };
 
 EditorState editorState;
@@ -302,6 +311,7 @@ bool btEnter = false;
 bool btBackspace = false;
 bool btEscape = false;
 bool btSpace = false;                 // Space key for drawing (BT only)
+bool btFill = false;
 bool btFnHeld = false;                // Alt key maps to Fn
 
 // Character queue for letters/numbers
@@ -322,6 +332,7 @@ int btScanCountdown = 0;  // Countdown timer during scan
 #define HID_KEY_ESCAPE      0x29
 #define HID_KEY_BACKSPACE   0x2A
 #define HID_KEY_SPACE       0x2C
+#define HID_KEY_F           0x09
 #define HID_KEY_RIGHT_ARROW 0x4F
 #define HID_KEY_LEFT_ARROW  0x50
 #define HID_KEY_DOWN_ARROW  0x51
@@ -1356,6 +1367,9 @@ void drawSharedCanvasView() {
       editorState.moveModeActive,
       statusMessage,
       Power::getBatteryPercent(),
+      editorState.drawPressed,
+      editorState.erasePressed,
+      editorState.fillPressed,
   };
   const bitmap16::CanvasView::Theme theme = {
       currentTheme->background,
@@ -1427,6 +1441,7 @@ void saveUndo() {
   editorState.undoPaletteSize = 0;
   editorState.undoGridSize = 0;
   editorState.undoAvailable = true;
+  editorState.redoAvailable = false;
 }
 
 /**
@@ -1437,6 +1452,19 @@ void restoreUndo() {
     setStatusMessage(StatusMsg::NO_UNDO);
     return;
   }
+
+  // Preserve the current document so Fn+Z can redo this undo.
+  for (int y = 0; y < 16; y++) {
+    for (int x = 0; x < 16; x++) {
+      editorState.redoCanvas[y][x] = editorState.canvas[y][x];
+    }
+  }
+  editorState.redoGridSize = editorState.gridSize;
+  editorState.redoPaletteSize = documentState.sketch.paletteSize;
+  for (int i = 0; i < 16; i++) {
+    editorState.redoPaletteColors[i] = documentState.sketch.paletteColors[i];
+  }
+  editorState.redoAvailable = true;
 
   // If we have saved grid size info (from sketch deletion), restore it
   if (editorState.undoGridSize > 0) {
@@ -1470,6 +1498,41 @@ void restoreUndo() {
   LED_CANVAS_UPDATED();
 
   setStatusMessage(StatusMsg::UNDO);
+}
+
+void restoreRedo() {
+  if (!editorState.redoAvailable) {
+    setStatusMessage("No redo");
+    return;
+  }
+
+  for (int y = 0; y < 16; y++) {
+    for (int x = 0; x < 16; x++) {
+      editorState.undoCanvas[y][x] = editorState.canvas[y][x];
+      editorState.canvas[y][x] = editorState.redoCanvas[y][x];
+    }
+  }
+  editorState.undoGridSize = editorState.gridSize;
+  editorState.undoPaletteSize = documentState.sketch.paletteSize;
+  for (int i = 0; i < 16; i++) {
+    editorState.undoPaletteColors[i] = documentState.sketch.paletteColors[i];
+    documentState.sketch.paletteColors[i] = editorState.redoPaletteColors[i];
+  }
+  editorState.undoAvailable = true;
+
+  editorState.gridSize = editorState.redoGridSize;
+  editorState.cellSize = editorState.gridSize == 8 ? 16 : 8;
+  documentState.sketch.gridSize = editorState.redoGridSize;
+  documentState.sketch.paletteSize = editorState.redoPaletteSize;
+  if (editorState.cursorX >= editorState.gridSize) {
+    editorState.cursorX = editorState.gridSize - 1;
+  }
+  if (editorState.cursorY >= editorState.gridSize) {
+    editorState.cursorY = editorState.gridSize - 1;
+  }
+  editorState.redoAvailable = false;
+  LED_CANVAS_UPDATED();
+  setStatusMessage("Redo");
 }
 
 /**
@@ -2257,6 +2320,8 @@ void drawSettingsView() {
       currentSettingsValues(),
       theme,
       ENABLE_BLUETOOTH != 0,
+      true,
+      true,
 #if ENABLE_BLUETOOTH
       bluetoothSettingsValue(),
 #else
@@ -2469,7 +2534,9 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
     if (bitmap16::SettingsView::moveCursor(
             viewState.settings.navigation,
             settingsMovement,
-            ENABLE_BLUETOOTH != 0)) {
+            ENABLE_BLUETOOTH != 0,
+            true,
+            true)) {
       settingsViewNeedsRedraw = true;
     }
 
@@ -2489,12 +2556,12 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
 
   if (btArrowUp && !btPrevUpSettings &&
       bitmap16::SettingsView::moveCursor(
-          viewState.settings.navigation, -1, true)) {
+          viewState.settings.navigation, -1, true, true, true)) {
     settingsViewNeedsRedraw = true;
   }
   if (btArrowDown && !btPrevDownSettings &&
       bitmap16::SettingsView::moveCursor(
-          viewState.settings.navigation, 1, true)) {
+          viewState.settings.navigation, 1, true, true, true)) {
     settingsViewNeedsRedraw = true;
   }
   if (btEscape && !btPrevEscSettings) {
@@ -2586,7 +2653,8 @@ void drawHelpView() {
       Display::canvas(),
       viewState.help.navigation,
       theme,
-      ENABLE_LED_MATRIX != 0);
+      ENABLE_LED_MATRIX != 0,
+      true);
 
   CanvasProofMetrics& metrics = viewState.help.metrics;
   metrics.lastRenderMicros = micros() - renderStart;
@@ -3198,7 +3266,8 @@ void handleHelpView(const bitmap16::InputFrame& input) {
   if (bitmap16::HelpView::moveCursor(
           viewState.help.navigation,
           helpMovement,
-          ENABLE_LED_MATRIX != 0)) {
+          ENABLE_LED_MATRIX != 0,
+          true)) {
     drawHelpView();
   }
 
@@ -3214,14 +3283,14 @@ void handleHelpView(const bitmap16::InputFrame& input) {
 
   if (btUp && !btPrevUpHelp &&
       bitmap16::HelpView::moveCursor(
-          viewState.help.navigation, -1, ENABLE_LED_MATRIX != 0)) {
+          viewState.help.navigation, -1, ENABLE_LED_MATRIX != 0, true)) {
     drawHelpView();
   }
   btPrevUpHelp = btUp;
 
   if (btDown && !btPrevDownHelp &&
       bitmap16::HelpView::moveCursor(
-          viewState.help.navigation, 1, ENABLE_LED_MATRIX != 0)) {
+          viewState.help.navigation, 1, ENABLE_LED_MATRIX != 0, true)) {
     drawHelpView();
   }
   btPrevDownHelp = btDown;
@@ -4127,6 +4196,7 @@ void btProcessHIDReport(uint8_t* data, size_t len) {
   btBackspace = false;
   btEscape = false;
   btSpace = false;
+  btFill = false;
 
   // Process key codes (bytes 2-7)
   for (int i = 2; i < 8; i++) {
@@ -4152,6 +4222,10 @@ void btProcessHIDReport(uint8_t* data, size_t len) {
       case HID_KEY_BACKSPACE:   btBackspace = true; break;
       case HID_KEY_ESCAPE:      btEscape = true; break;
       case HID_KEY_SPACE:       btSpace = true; break;
+      case HID_KEY_F:
+        btFill = true;
+        if (isNewPress) btQueuePush(shift ? 'F' : 'f');
+        break;
       default:
         // For character keys, only queue on new press
         if (isNewPress) {
@@ -4235,7 +4309,7 @@ bool btQueuePop(char& c) {
  */
 void btClearInputState() {
   btArrowUp = btArrowDown = btArrowLeft = btArrowRight = false;
-  btEnter = btBackspace = btEscape = btSpace = btFnHeld = false;
+  btEnter = btBackspace = btEscape = btSpace = btFill = btFnHeld = false;
   btQueueHead = btQueueTail = 0;
   memset(btPrevReport, 0, 8);
 }
@@ -4458,7 +4532,11 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     }
     // Z key - Undo
     else if (btChar == 'z' || btChar == 'Z') {
-      restoreUndo();
+      if (fnHeld) {
+        restoreRedo();
+      } else {
+        restoreUndo();
+      }
       undoPerformed = true;
     }
     // G key - Toggle grid
@@ -4539,6 +4617,22 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   bool fnHeld = input.fnHeld;
 #endif
 
+  const bool drawPressed = enterHeld;
+  const bool erasePressed = deleteHeld;
+  const bool fillPressed =
+      input.fHeld
+#if ENABLE_BLUETOOTH
+      || btFill
+#endif
+      ;
+  const bool toolStateChanged =
+      drawPressed != editorState.drawPressed ||
+      erasePressed != editorState.erasePressed ||
+      fillPressed != editorState.fillPressed;
+  editorState.drawPressed = drawPressed;
+  editorState.erasePressed = erasePressed;
+  editorState.fillPressed = fillPressed;
+
   if (input.enterPressed) {
     saveUndo();
     editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
@@ -4598,7 +4692,11 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
         editorState.selectedColor);
     setStatusMessage(colorMsg);
   } else if (command == 'z' || command == 'Z') {
-    restoreUndo();
+    if (fnHeld) {
+      restoreRedo();
+    } else {
+      restoreUndo();
+    }
     undoPerformed = true;
   } else if (command == 'g' || command == 'G') {
     toggleGridSize();
@@ -4819,6 +4917,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       moved || pixelPlaced || colorChanged || canvasCleared ||
       undoPerformed || gridToggled || rulersToggled || themeToggled ||
       floodFilled || canvasMoved || moveModeChanged ||
+      toolStateChanged ||
       statusMessage[0] != '\0' || statusMessageJustCleared;
   if (canvasViewChanged) {
     drawSharedCanvasView();

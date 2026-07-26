@@ -19,6 +19,7 @@ class Editor {
   uint8_t cursorY() const { return cursorY_; }
   uint8_t selectedColor() const { return selectedColor_; }
   bool canUndo() const { return undoAvailable_; }
+  bool canRedo() const { return redoAvailable_; }
 
   void setCursor(uint8_t x, uint8_t y);
   bool moveCursor(int dx, int dy);
@@ -31,6 +32,7 @@ class Editor {
   bool shift(int dx, int dy, bool saveUndoState = true);
   bool toggleGridSize();
   bool undo();
+  bool redo();
 
   void saveUndo();
 
@@ -40,10 +42,12 @@ class Editor {
 
   Sketch sketch_;
   Sketch undoSketch_;
+  Sketch redoSketch_;
   uint8_t cursorX_ = 0;
   uint8_t cursorY_ = 0;
   uint8_t selectedColor_ = 1;
   bool undoAvailable_ = false;
+  bool redoAvailable_ = false;
 };
 
 }  // namespace bitmap16

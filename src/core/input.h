@@ -62,6 +62,7 @@ struct InputFrame {
   bool mHeld = false;
   bool bHeld = false;
   bool lHeld = false;
+  bool fHeld = false;
   bool actionHeld = false;
 
   bool enterPressed = false;

@@ -71,8 +71,16 @@ void test_editor_draw_erase_and_undo() {
   TEST_ASSERT_TRUE(editor.undo());
   TEST_ASSERT_EQUAL_UINT8(0, editor.sketch().pixels[3][2]);
   TEST_ASSERT_FALSE(editor.canUndo());
+  TEST_ASSERT_TRUE(editor.canRedo());
+  TEST_ASSERT_TRUE(editor.redo());
+  TEST_ASSERT_EQUAL_UINT8(4, editor.sketch().pixels[3][2]);
+  TEST_ASSERT_TRUE(editor.canUndo());
+  TEST_ASSERT_FALSE(editor.canRedo());
+  TEST_ASSERT_TRUE(editor.undo());
+  TEST_ASSERT_EQUAL_UINT8(0, editor.sketch().pixels[3][2]);
 
   editor.draw();
+  TEST_ASSERT_FALSE(editor.canRedo());
   TEST_ASSERT_TRUE(editor.erase());
   TEST_ASSERT_EQUAL_UINT8(0, editor.sketch().pixels[3][2]);
   TEST_ASSERT_TRUE(editor.undo());
@@ -118,18 +126,18 @@ void test_canvas_view_layout_is_resolution_and_grid_aware() {
   TEST_ASSERT_EQUAL_INT(128, small.gridPixels);
   TEST_ASSERT_EQUAL_INT(16, small.cellSize);
   TEST_ASSERT_EQUAL_INT(56, small.gridX);
-  TEST_ASSERT_EQUAL_INT(3, small.toolsX);
+  TEST_ASSERT_EQUAL_INT(13, small.toolsX);
   TEST_ASSERT_EQUAL_INT(203, small.paletteX);
-  TEST_ASSERT_EQUAL_INT(3, small.statusX);
+  TEST_ASSERT_EQUAL_INT(13, small.statusX);
 
   const bitmap16::CanvasView::Layout large =
       bitmap16::CanvasView::layoutFor(320, 170, 16);
   TEST_ASSERT_EQUAL_INT(128, large.gridPixels);
   TEST_ASSERT_EQUAL_INT(8, large.cellSize);
   TEST_ASSERT_EQUAL_INT(96, large.gridX);
-  TEST_ASSERT_EQUAL_INT(43, large.toolsX);
+  TEST_ASSERT_EQUAL_INT(53, large.toolsX);
   TEST_ASSERT_EQUAL_INT(243, large.paletteX);
-  TEST_ASSERT_EQUAL_INT(43, large.statusX);
+  TEST_ASSERT_EQUAL_INT(53, large.statusX);
 }
 
 void test_canvas_view_renders_editor_at_both_target_sizes() {
@@ -162,7 +170,7 @@ void test_canvas_view_renders_editor_at_both_target_sizes() {
     TEST_ASSERT_EQUAL_HEX16(
         colors[1],
         canvas.readPixel(
-            layout.paletteX + layout.paletteSwatchSize + 4,
+            layout.paletteX + 4,
             layout.gridY + layout.paletteSwatchSize + 4));
   }
 }
@@ -213,14 +221,19 @@ void test_canvas_draws_scaled_and_aligned_text() {
 
 void test_help_view_navigation_clamps_to_available_items() {
   bitmap16::HelpView::State state;
-  TEST_ASSERT_EQUAL_INT(20, bitmap16::HelpView::itemCount(false));
-  TEST_ASSERT_EQUAL_INT(22, bitmap16::HelpView::itemCount(true));
-  TEST_ASSERT_FALSE(bitmap16::HelpView::moveCursor(state, -1, false));
-  TEST_ASSERT_TRUE(bitmap16::HelpView::moveCursor(state, 30, false));
+  TEST_ASSERT_EQUAL_INT(21, bitmap16::HelpView::itemCount(false, true));
+  TEST_ASSERT_EQUAL_INT(23, bitmap16::HelpView::itemCount(true, true));
+  TEST_ASSERT_EQUAL_INT(20, bitmap16::HelpView::itemCount(false, false));
+  TEST_ASSERT_FALSE(
+      bitmap16::HelpView::moveCursor(state, -1, false, true));
+  TEST_ASSERT_TRUE(
+      bitmap16::HelpView::moveCursor(state, 30, false, true));
+  TEST_ASSERT_EQUAL_INT(20, state.cursor);
+  TEST_ASSERT_FALSE(
+      bitmap16::HelpView::moveCursor(state, 1, false, true));
+  TEST_ASSERT_TRUE(
+      bitmap16::HelpView::moveCursor(state, -1, false, true));
   TEST_ASSERT_EQUAL_INT(19, state.cursor);
-  TEST_ASSERT_FALSE(bitmap16::HelpView::moveCursor(state, 1, false));
-  TEST_ASSERT_TRUE(bitmap16::HelpView::moveCursor(state, -1, false));
-  TEST_ASSERT_EQUAL_INT(18, state.cursor);
 }
 
 void test_help_view_renders_and_scrolls_at_both_target_sizes() {
@@ -230,9 +243,9 @@ void test_help_view_renders_and_scrolls_at_both_target_sizes() {
     bitmap16::Canvas canvas;
     TEST_ASSERT_TRUE(canvas.create(width, height));
     bitmap16::HelpView::State state;
-    state.cursor = bitmap16::HelpView::itemCount(true) - 1;
+    state.cursor = bitmap16::HelpView::itemCount(true, true) - 1;
 
-    bitmap16::HelpView::render(canvas, state, theme, true);
+    bitmap16::HelpView::render(canvas, state, theme, true, true);
 
     TEST_ASSERT_GREATER_THAN_INT(0, state.scrollOffset);
     TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
@@ -245,25 +258,33 @@ void test_help_view_renders_and_scrolls_at_both_target_sizes() {
 void test_settings_view_navigation_and_actions_are_portable() {
   bitmap16::SettingsView::State state;
   bitmap16::Settings settings;
-  TEST_ASSERT_EQUAL_INT(6, bitmap16::SettingsView::itemCount(false));
-  TEST_ASSERT_EQUAL_INT(7, bitmap16::SettingsView::itemCount(true));
+  TEST_ASSERT_EQUAL_INT(
+      6, bitmap16::SettingsView::itemCount(false, true, true));
+  TEST_ASSERT_EQUAL_INT(
+      7, bitmap16::SettingsView::itemCount(true, true, true));
+  TEST_ASSERT_EQUAL_INT(
+      3, bitmap16::SettingsView::itemCount(false, false, false));
 
   TEST_ASSERT_TRUE(
-      bitmap16::SettingsView::activate(state, settings, false) ==
+      bitmap16::SettingsView::activate(
+          state, settings, false, true, true) ==
       bitmap16::SettingsView::Action::ThemeChanged);
   TEST_ASSERT_TRUE(settings.theme == bitmap16::ThemeId::Dark);
 
   state.cursor = 5;
   TEST_ASSERT_TRUE(
-      bitmap16::SettingsView::activate(state, settings, false) ==
+      bitmap16::SettingsView::activate(
+          state, settings, false, true, true) ==
       bitmap16::SettingsView::Action::ShakeUndoChanged);
   TEST_ASSERT_TRUE(settings.shakeUndoEnabled);
   TEST_ASSERT_FALSE(
-      bitmap16::SettingsView::moveCursor(state, 1, false));
+      bitmap16::SettingsView::moveCursor(
+          state, 1, false, true, true));
 
   state.cursor = 6;
   TEST_ASSERT_TRUE(
-      bitmap16::SettingsView::activate(state, settings, true) ==
+      bitmap16::SettingsView::activate(
+          state, settings, true, true, true) ==
       bitmap16::SettingsView::Action::BluetoothRequested);
 }
 
@@ -279,10 +300,19 @@ void test_settings_view_renders_at_both_target_sizes() {
     TEST_ASSERT_TRUE(canvas.create(width, height));
     bitmap16::Settings settings;
     bitmap16::SettingsView::State state;
-    state.cursor = bitmap16::SettingsView::itemCount(false) - 1;
+    state.cursor =
+        bitmap16::SettingsView::itemCount(false, true, true) - 1;
 
     bitmap16::SettingsView::render(
-        canvas, state, settings, theme, false, nullptr, "Saved");
+        canvas,
+        state,
+        settings,
+        theme,
+        false,
+        true,
+        true,
+        nullptr,
+        "Saved");
 
     TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(4, 5));
     TEST_ASSERT_EQUAL_HEX16(

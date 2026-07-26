@@ -26,6 +26,7 @@ InputFrame InputProcessor::process(
   frame.mHeld = containsKey(raw, 'm', 'M');
   frame.bHeld = containsKey(raw, 'b', 'B');
   frame.lHeld = containsKey(raw, 'l', 'L');
+  frame.fHeld = containsKey(raw, 'f', 'F');
   frame.actionHeld = raw.actionButton;
 
   const InputEvent direction = directionEvent(raw);

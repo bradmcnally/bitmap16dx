@@ -34,18 +34,29 @@ void drawIndexedIcon(
     int x,
     int y,
     const Icon& icon,
-    const Theme& theme) {
+    const Theme& theme,
+    bool pressed = false) {
   if (icon.pixels == nullptr) return;
-  for (int row = 0; row < icon.height; ++row) {
-    for (int column = 0; column < icon.width; ++column) {
-      const int pixel = row * icon.width + column;
+  const int drawWidth =
+      pressed ? std::max(1, icon.width * 4 / 5) : icon.width;
+  const int drawHeight =
+      pressed ? std::max(1, icon.height * 4 / 5) : icon.height;
+  const int offsetX = (icon.width - drawWidth) / 2;
+  const int offsetY = (icon.height - drawHeight) / 2;
+  for (int row = 0; row < drawHeight; ++row) {
+    for (int column = 0; column < drawWidth; ++column) {
+      const int sourceRow = row * icon.height / drawHeight;
+      const int sourceColumn = column * icon.width / drawWidth;
+      const int pixel = sourceRow * icon.width + sourceColumn;
       const int shift = (3 - pixel % 4) * 2;
       const uint8_t value =
           (icon.pixels[pixel / 4] >> shift) & 0x03;
       if (value == 1) {
-        canvas.drawPixel(x + column, y + row, theme.iconDark);
+        canvas.drawPixel(
+            x + offsetX + column, y + offsetY + row, theme.iconDark);
       } else if (value == 2) {
-        canvas.drawPixel(x + column, y + row, theme.iconLight);
+        canvas.drawPixel(
+            x + offsetX + column, y + offsetY + row, theme.iconLight);
       }
     }
   }
@@ -77,6 +88,8 @@ void cutGridCorners(
 }  // namespace
 
 Layout layoutFor(int width, int height, uint8_t gridSize) {
+  constexpr int kSideRailGap = 19;
+  constexpr int kToolIconWidth = 24;
   const int logicalSize = gridSize == 16 ? 16 : 8;
   const int available = std::max(8, std::min(128, height - 7));
   const int cellSize = std::max(1, available / logicalSize);
@@ -84,10 +97,11 @@ Layout layoutFor(int width, int height, uint8_t gridSize) {
   const int paletteSwatchSize =
       std::max(8, std::min(16, height / 8));
   const int gridX = (width - gridPixels) / 2;
-  const int toolsX = std::max(3, gridX - 53);
+  const int toolsX =
+      std::max(3, gridX - kSideRailGap - kToolIconWidth);
   const int paletteX = std::min(
       width - paletteSwatchSize * 2 - 5,
-      gridX + gridPixels + 19);
+      gridX + gridPixels + kSideRailGap);
   return {
       gridX,
       (height - gridPixels + 1) / 2,
@@ -173,8 +187,7 @@ void render(
   cutGridCorners(canvas, layout, theme);
 
   const int columns = state.paletteSize > 8 ? 2 : 1;
-  const int paletteStartX =
-      layout.paletteX + (columns == 1 ? layout.paletteSwatchSize : 0);
+  const int paletteStartX = layout.paletteX;
   const int paletteHeight =
       std::min<int>(8, state.paletteSize) * layout.paletteSwatchSize;
   drawShadow(
@@ -275,16 +288,38 @@ void render(
   const int cursorCellY =
       layout.gridY + state.cursorY * layout.cellSize;
   if (assets != nullptr) {
-    drawIndexedIcon(canvas, layout.toolsX, 3, assets->draw, theme);
-    drawIndexedIcon(canvas, layout.toolsX, 30, assets->erase, theme);
-    drawIndexedIcon(canvas, layout.toolsX, 57, assets->fill, theme);
+    drawIndexedIcon(
+        canvas,
+        layout.toolsX,
+        layout.gridY,
+        assets->draw,
+        theme,
+        state.drawPressed);
+    drawIndexedIcon(
+        canvas,
+        layout.toolsX,
+        layout.gridY + 27,
+        assets->erase,
+        theme,
+        state.erasePressed);
+    drawIndexedIcon(
+        canvas,
+        layout.toolsX,
+        layout.gridY + 54,
+        assets->fill,
+        theme,
+        state.fillPressed);
     if (state.batteryPercent >= 0) {
       int batteryStage = 0;
       if (state.batteryPercent >= 90) batteryStage = 3;
       else if (state.batteryPercent >= 50) batteryStage = 2;
       else if (state.batteryPercent >= 10) batteryStage = 1;
       drawIndexedIcon(
-          canvas, layout.toolsX, 85, assets->battery[batteryStage], theme);
+          canvas,
+          layout.toolsX,
+          layout.gridY + 82,
+          assets->battery[batteryStage],
+          theme);
     }
 
     const Icon& cursor =

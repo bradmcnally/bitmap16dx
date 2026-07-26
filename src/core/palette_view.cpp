@@ -136,7 +136,7 @@ void rebuildFilter(State& state, const Catalog& catalog) {
 }
 
 bool moveCursor(State& state, int delta) {
-  if (state.filteredCount <= 0) {
+  if (state.filteredCount <= 0 || state.insertionAnimating) {
     return false;
   }
   const int next = std::max(

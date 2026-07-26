@@ -30,18 +30,28 @@ struct Theme {
   uint16_t textSecondary = 0x7bef;
 };
 
-int itemCount(bool includeBluetooth);
-bool moveCursor(State& state, int delta, bool includeBluetooth);
+int itemCount(
+    bool includeBluetooth, bool includeMatrix, bool includeShakeUndo);
+bool moveCursor(
+    State& state,
+    int delta,
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo);
 Action activate(
     State& state,
     Settings& settings,
-    bool includeBluetooth);
+    bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo);
 void render(
     Canvas& canvas,
     State& state,
     const Settings& settings,
     const Theme& theme,
     bool includeBluetooth,
+    bool includeMatrix,
+    bool includeShakeUndo,
     const char* bluetoothValue = nullptr,
     const char* statusMessage = nullptr);
 

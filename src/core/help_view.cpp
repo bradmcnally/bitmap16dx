@@ -12,39 +12,45 @@ struct Item {
   const char* key;
   int group;
   bool requiresLedMatrix;
+  bool requiresBattery;
 };
 
 constexpr Item kItems[] = {
-    {"Cursor", "Arrows", 0, false},
-    {"Draw", "Ok", 0, false},
-    {"Erase", "Del", 0, false},
-    {"Fill", "F", 0, false},
-    {"Move", "M arrows", 0, false},
-    {"Color 1-8", "1-8", 0, false},
-    {"Color 9-16", "Fn 1-8", 0, false},
-    {"Palette", "P", 0, false},
-    {"Clear", "G0", 0, false},
-    {"Preview", "V", 0, false},
-    {"Grid size", "G", 0, false},
-    {"Grid ruler", "R", 0, false},
-    {"Open", "O", 1, false},
-    {"Undo", "Z", 1, false},
-    {"Save", "S", 1, false},
-    {"Save as", "Fn S", 1, false},
-    {"Settings", "T", 1, false},
-    {"Export", "X", 1, false},
-    {"Brightness", "B +/-", 1, false},
-    {"Charge", "Fn B", 1, false},
-    {"RGB on/off", "L Ok", 2, true},
-    {"RGB Bright", "L +/-", 2, true},
+    {"Cursor", "Arrows", 0, false, false},
+    {"Draw", "Ok", 0, false, false},
+    {"Erase", "Del", 0, false, false},
+    {"Fill", "F", 0, false, false},
+    {"Move", "M arrows", 0, false, false},
+    {"Color 1-8", "1-8", 0, false, false},
+    {"Color 9-16", "Fn 1-8", 0, false, false},
+    {"Palette", "P", 0, false, false},
+    {"Clear", "G0", 0, false, false},
+    {"Preview", "V", 0, false, false},
+    {"Grid size", "G", 0, false, false},
+    {"Grid ruler", "R", 0, false, false},
+    {"Open", "O", 1, false, false},
+    {"Undo", "Z", 1, false, false},
+    {"Redo", "Fn Z", 1, false, false},
+    {"Save", "S", 1, false, false},
+    {"Save as", "Fn S", 1, false, false},
+    {"Settings", "T", 1, false, false},
+    {"Export", "X", 1, false, false},
+    {"Brightness", "B +/-", 1, false, false},
+    {"Charge", "Fn B", 1, false, true},
+    {"RGB on/off", "L Ok", 2, true, false},
+    {"RGB Bright", "L +/-", 2, true, false},
 };
 
-const Item& visibleItem(int index, bool includeLedMatrixControls) {
+const Item& visibleItem(
+    int index,
+    bool includeLedMatrixControls,
+    bool includeBatteryControls) {
   int visibleIndex = 0;
   for (const Item& item : kItems) {
     if (!includeLedMatrixControls && item.requiresLedMatrix) {
       continue;
     }
+    if (!includeBatteryControls && item.requiresBattery) continue;
     if (visibleIndex == index) {
       return item;
     }
@@ -55,10 +61,12 @@ const Item& visibleItem(int index, bool includeLedMatrixControls) {
 
 }  // namespace
 
-int itemCount(bool includeLedMatrixControls) {
+int itemCount(
+    bool includeLedMatrixControls, bool includeBatteryControls) {
   int count = 0;
   for (const Item& item : kItems) {
-    if (includeLedMatrixControls || !item.requiresLedMatrix) {
+    if ((includeLedMatrixControls || !item.requiresLedMatrix) &&
+        (includeBatteryControls || !item.requiresBattery)) {
       ++count;
     }
   }
@@ -68,8 +76,10 @@ int itemCount(bool includeLedMatrixControls) {
 bool moveCursor(
     State& state,
     int delta,
-    bool includeLedMatrixControls) {
-  const int maximum = itemCount(includeLedMatrixControls) - 1;
+    bool includeLedMatrixControls,
+    bool includeBatteryControls) {
+  const int maximum =
+      itemCount(includeLedMatrixControls, includeBatteryControls) - 1;
   const int next = std::max(0, std::min(maximum, state.cursor + delta));
   if (next == state.cursor) {
     return false;
@@ -82,7 +92,8 @@ void render(
     Canvas& canvas,
     State& state,
     const Theme& theme,
-    bool includeLedMatrixControls) {
+    bool includeLedMatrixControls,
+    bool includeBatteryControls) {
   if (!canvas.isValid()) {
     return;
   }
@@ -93,7 +104,8 @@ void render(
   canvas.setTextColor(theme.text);
   canvas.drawString("HELP", 4, 4);
 
-  const int totalItems = itemCount(includeLedMatrixControls);
+  const int totalItems =
+      itemCount(includeLedMatrixControls, includeBatteryControls);
   state.cursor = std::max(0, std::min(totalItems - 1, state.cursor));
   state.scrollOffset =
       std::max(0, std::min(state.cursor, state.scrollOffset));
@@ -111,10 +123,12 @@ void render(
   while (state.scrollOffset < state.cursor) {
     int y = startY;
     for (int i = state.scrollOffset; i <= state.cursor; ++i) {
-      const Item& item = visibleItem(i, includeLedMatrixControls);
+      const Item& item = visibleItem(
+          i, includeLedMatrixControls, includeBatteryControls);
       if (i > state.scrollOffset) {
         const Item& previous =
-            visibleItem(i - 1, includeLedMatrixControls);
+            visibleItem(
+                i - 1, includeLedMatrixControls, includeBatteryControls);
         if (item.group != previous.group) {
           y += groupGap;
         }
@@ -129,10 +143,12 @@ void render(
 
   int y = startY;
   for (int i = state.scrollOffset; i < totalItems; ++i) {
-    const Item& item = visibleItem(i, includeLedMatrixControls);
+    const Item& item = visibleItem(
+        i, includeLedMatrixControls, includeBatteryControls);
     if (i > state.scrollOffset) {
       const Item& previous =
-          visibleItem(i - 1, includeLedMatrixControls);
+          visibleItem(
+              i - 1, includeLedMatrixControls, includeBatteryControls);
       if (item.group != previous.group) {
         y += groupGap;
       }

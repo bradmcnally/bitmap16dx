@@ -27,6 +27,7 @@ void Editor::reset(const Sketch& sketch) {
   cursorY_ = 0;
   selectedColor_ = 1;
   undoAvailable_ = false;
+  redoAvailable_ = false;
 }
 
 void Editor::setCursor(uint8_t x, uint8_t y) {
@@ -176,6 +177,8 @@ bool Editor::undo() {
   if (!undoAvailable_) {
     return false;
   }
+  redoSketch_ = sketch_;
+  redoAvailable_ = true;
   sketch_ = undoSketch_;
   setCursor(cursorX_, cursorY_);
   if (selectedColor_ > sketch_.paletteSize) {
@@ -185,9 +188,25 @@ bool Editor::undo() {
   return true;
 }
 
+bool Editor::redo() {
+  if (!redoAvailable_) {
+    return false;
+  }
+  undoSketch_ = sketch_;
+  undoAvailable_ = true;
+  sketch_ = redoSketch_;
+  setCursor(cursorX_, cursorY_);
+  if (selectedColor_ > sketch_.paletteSize) {
+    selectedColor_ = 1;
+  }
+  redoAvailable_ = false;
+  return true;
+}
+
 void Editor::saveUndo() {
   undoSketch_ = sketch_;
   undoAvailable_ = true;
+  redoAvailable_ = false;
 }
 
 bool Editor::isInBounds(int x, int y) const {
