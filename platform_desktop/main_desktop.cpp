@@ -1052,6 +1052,7 @@ int main(int argc, char** argv) {
   bool controllerMoveHeld = false;
   bool controllerShiftStarted = false;
   bool controllerSaveChordLatched = false;
+  bool focusNewestSketchOnNextMemoryOpen = false;
   bool previewLeftTriggerLatched = false;
   bool previewRightTriggerLatched = false;
   bool running = !smokeTest;
@@ -1670,6 +1671,13 @@ int main(int argc, char** argv) {
         currentView = DesktopView::Canvas;
       } else {
         refreshMemoryCatalog();
+        if (focusNewestSketchOnNextMemoryOpen &&
+            !workspace.sketches().empty()) {
+          memoryState.cursor = 1;
+          memoryState.scrollOffset = 0;
+          memoryState.scrollPosition = 0.0f;
+          focusNewestSketchOnNextMemoryOpen = false;
+        }
         currentView = DesktopView::Memory;
       }
       changed = true;
@@ -1682,6 +1690,7 @@ int main(int argc, char** argv) {
         SDL_Log(altHeld ? "Saved new sketch" : "Saved sketch");
         setDesktopStatus("Saved");
         rumble(0x1000, 0x3800, 75);
+        focusNewestSketchOnNextMemoryOpen = true;
         changed = true;
       } else {
         SDL_Log("Sketch save failed");

@@ -371,6 +371,7 @@ struct DocumentState {
 };
 
 DocumentState documentState;
+bool focusNewestSketchOnNextMemoryOpen = false;
 
 // Dynamic sketch list for memory view
 struct SketchInfo {
@@ -856,6 +857,7 @@ bool saveActiveSketchToSD() {
   documentState.filename = nextFilename;
   documentState.isNew = false;
   documentState.sketch.isEmpty = false;
+  focusNewestSketchOnNextMemoryOpen = true;
 
   setStatusMessage(StatusMsg::SAVED);
   return true;
@@ -1784,6 +1786,12 @@ bitmap16::MemoryView::Catalog currentMemoryCatalog() {
 void enterMemoryView() {
   loadSketchListFromSD();  // Load sketch list (sketch data will be cached on first draw)
   app.setView(bitmap16::ViewId::Memory);
+  if (focusNewestSketchOnNextMemoryOpen && !sketchList.empty()) {
+    viewState.memory.navigation.cursor = 1;
+    viewState.memory.navigation.scrollOffset = 0;
+    viewState.memory.navigation.scrollPosition = 0.0f;
+    focusNewestSketchOnNextMemoryOpen = false;
+  }
   bitmap16::MemoryView::clamp(
       viewState.memory.navigation, sketchList.size());
   viewState.memory.lastAnimationTime = millis();
