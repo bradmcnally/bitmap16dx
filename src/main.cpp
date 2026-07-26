@@ -415,6 +415,8 @@ struct ViewState {
     bool galleryMode = false;
     int galleryIndex = 0;
     unsigned long lastAdvanceTime = 0;
+    unsigned long labelUntil = 0;
+    char label[20] = {};
     bool autoAdvance = false;
   } preview;
   struct {
@@ -2042,9 +2044,8 @@ void drawPreviewImage(
       viewState.preview.display,
       image,
       previewTheme(),
-      statusMessage[0] != '\0' &&
-              millis() - statusMessageTime < STATUS_DISPLAY_DURATION
-          ? statusMessage
+      static_cast<long>(viewState.preview.labelUntil - millis()) > 0
+          ? viewState.preview.label
           : nullptr);
   Display::endFrame();
 }
@@ -2101,7 +2102,12 @@ void enterPreviewView() {
           currentTheme == &THEME_DARK
               ? bitmap16::PreviewView::Background::Dark
               : bitmap16::PreviewView::Background::Gray));
-  setStatusMessage("Preview");
+  viewState.preview.labelUntil = millis() + STATUS_DISPLAY_DURATION;
+  strncpy(
+      viewState.preview.label,
+      "Preview",
+      sizeof(viewState.preview.label) - 1);
+  viewState.preview.label[sizeof(viewState.preview.label) - 1] = '\0';
   app.setView(bitmap16::ViewId::Preview);
   viewState.preview.ownsCanvas = !Display::isReady();
   viewState.preview.canvasAvailable = Display::init();
@@ -2142,6 +2148,7 @@ void enterPreviewView() {
  * Context-aware: returns to Memory View if in gallery mode
  */
 void exitPreviewView() {
+  viewState.preview.labelUntil = 0;
   if (viewState.preview.ownsCanvas) {
     Display::shutdown();
   }
@@ -3591,14 +3598,14 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
  * Handle Preview View input and rendering
  */
 void handlePreviewView(const bitmap16::InputFrame& input) {
-  drawStatusMessage();
-  if (statusMessageJustCleared) {
+  if (viewState.preview.labelUntil != 0 &&
+      static_cast<long>(millis() - viewState.preview.labelUntil) >= 0) {
+    viewState.preview.labelUntil = 0;
     if (viewState.preview.galleryMode) {
       loadGallerySketch(viewState.preview.galleryIndex);
     } else {
       drawCanvasPreview();
     }
-    statusMessageJustCleared = false;
   }
 
   // Auto-advance logic (ONLY in gallery mode)
@@ -3670,23 +3677,17 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
       } else {
         drawCanvasPreview();
       }
-    } else if (input.bHeld &&
-               (input.event == bitmap16::InputEvent::Plus ||
-                input.event == bitmap16::InputEvent::Minus)) {
+    } else if (
+        input.bHeld &&
+        (input.event == bitmap16::InputEvent::Plus ||
+         input.event == bitmap16::InputEvent::Minus)) {
       const int BRIGHTNESS_STEP = 10;
       const int MIN_BRIGHTNESS = 10;
       const int MAX_BRIGHTNESS = 100;
-
-      if (input.event == bitmap16::InputEvent::Plus) {
-        displayBrightness =
-            min(MAX_BRIGHTNESS, displayBrightness + BRIGHTNESS_STEP);
-      } else {
-        displayBrightness =
-            max(MIN_BRIGHTNESS, displayBrightness - BRIGHTNESS_STEP);
-      }
-
+      displayBrightness = input.event == bitmap16::InputEvent::Plus
+          ? min(MAX_BRIGHTNESS, displayBrightness + BRIGHTNESS_STEP)
+          : max(MIN_BRIGHTNESS, displayBrightness - BRIGHTNESS_STEP);
       Display::setBrightness(displayBrightness);
-
       PreferenceStore::writeUInt8("brightness", displayBrightness);
 
       char brightnessMsg[20];
@@ -3696,11 +3697,37 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
           "BRIGHT: %d%%",
           displayBrightness);
       setStatusMessage(brightnessMsg);
-
-      if (viewState.preview.galleryMode) {
-        loadGallerySketch(viewState.preview.galleryIndex);
-      } else {
-        drawCanvasPreview();
+    } else if (
+        !input.bHeld &&
+        (input.event == bitmap16::InputEvent::Plus ||
+         input.event == bitmap16::InputEvent::Minus)) {
+      const uint8_t previewGridSize =
+          viewState.preview.galleryMode &&
+                  viewState.preview.galleryIndex >= 0 &&
+                  viewState.preview.galleryIndex < sketchList.size() &&
+                  sketchList[viewState.preview.galleryIndex].dataLoaded
+              ? sketchList[viewState.preview.galleryIndex].sketchData.gridSize
+              : static_cast<uint8_t>(editorState.gridSize);
+      if (bitmap16::PreviewView::adjustZoom(
+              viewState.preview.display,
+              input.event == bitmap16::InputEvent::Plus ? 1 : -1,
+              previewGridSize,
+              min(Display::canvas().width(), Display::canvas().height()))) {
+        snprintf(
+            viewState.preview.label,
+            sizeof(viewState.preview.label),
+            "Zoom: %dx",
+            bitmap16::PreviewView::resolvedZoom(
+                viewState.preview.display,
+                previewGridSize,
+                min(Display::canvas().width(), Display::canvas().height())));
+        viewState.preview.labelUntil =
+            millis() + STATUS_DISPLAY_DURATION;
+        if (viewState.preview.galleryMode) {
+          loadGallerySketch(viewState.preview.galleryIndex);
+        } else {
+          drawCanvasPreview();
+        }
       }
     }
 #if ENABLE_SCREENSHOTS

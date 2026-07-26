@@ -56,11 +56,19 @@ bool desktopFillPressed = false;
 bitmap16::CanvasView::Viewport desktopCanvasViewport;
 char desktopStatus[32] = {};
 Uint32 desktopStatusUntil = 0;
+Uint32 previewLabelUntil = 0;
+char previewLabel[20] = {};
 
 void setDesktopStatus(const char* message) {
   std::strncpy(desktopStatus, message, sizeof(desktopStatus) - 1);
   desktopStatus[sizeof(desktopStatus) - 1] = '\0';
   desktopStatusUntil = SDL_GetTicks() + 2000u;
+}
+
+void setPreviewLabel(const char* message) {
+  std::strncpy(previewLabel, message, sizeof(previewLabel) - 1);
+  previewLabel[sizeof(previewLabel) - 1] = '\0';
+  previewLabelUntil = SDL_GetTicks() + 2000u;
 }
 
 int platformBatteryPercent() {
@@ -490,7 +498,10 @@ void renderCurrentView(
         previewState,
         previewImage,
         previewTheme(),
-        desktopStatus[0] == '\0' ? nullptr : desktopStatus);
+        previewLabelUntil != 0 &&
+                !SDL_TICKS_PASSED(SDL_GetTicks(), previewLabelUntil)
+            ? previewLabel
+            : nullptr);
   } else if (view == DesktopView::Charging) {
     const bitmap16::Sketch& sketch = editor.sketch();
     const bitmap16::ChargingView::SketchImage chargingSketch = {
@@ -1051,6 +1062,13 @@ int main(int argc, char** argv) {
         renderNow();
       }
     }
+    if (previewLabelUntil != 0 &&
+        SDL_TICKS_PASSED(SDL_GetTicks(), previewLabelUntil)) {
+      previewLabelUntil = 0;
+      if (currentView == DesktopView::Preview) {
+        renderNow();
+      }
+    }
     const Uint8* heldKeys = SDL_GetKeyboardState(nullptr);
     const bool drawPressed =
         heldKeys[SDL_SCANCODE_RETURN] != 0 ||
@@ -1113,6 +1131,15 @@ int main(int argc, char** argv) {
               zoomChanged;
         }
         if (zoomChanged) {
+          std::snprintf(
+              previewLabel,
+              sizeof(previewLabel),
+              "Zoom: %dx",
+              bitmap16::PreviewView::resolvedZoom(
+                  previewState,
+                  previewSketch.gridSize,
+                  std::min(width, height)));
+          previewLabelUntil = SDL_GetTicks() + 2000u;
           renderNow();
         }
       }
@@ -1519,6 +1546,27 @@ int main(int argc, char** argv) {
           editor.cursorX(),
           editor.cursorY());
     } else if (
+        currentView == DesktopView::Preview &&
+        (plusKey || minusKey)) {
+      const bitmap16::Sketch& previewSketch =
+          previewOverride == nullptr ? editor.sketch() : *previewOverride;
+      changed = bitmap16::PreviewView::adjustZoom(
+          previewState,
+          plusKey ? 1 : -1,
+          previewSketch.gridSize,
+          std::min(width, height));
+      if (changed) {
+        std::snprintf(
+            previewLabel,
+            sizeof(previewLabel),
+            "Zoom: %dx",
+            bitmap16::PreviewView::resolvedZoom(
+                previewState,
+                previewSketch.gridSize,
+                std::min(width, height)));
+        previewLabelUntil = SDL_GetTicks() + 2000u;
+      }
+    } else if (
         matrixHeld && (key == SDLK_RETURN || key == SDLK_SPACE) &&
         matrixSimulator != nullptr) {
       matrixSimulator->toggle();
@@ -1540,6 +1588,7 @@ int main(int argc, char** argv) {
       changed = true;
     } else if (key == SDLK_v) {
       if (currentView == DesktopView::Preview) {
+        previewLabelUntil = 0;
         currentView = galleryMode
             ? DesktopView::Memory
             : DesktopView::Canvas;
@@ -1553,7 +1602,7 @@ int main(int argc, char** argv) {
                 settings.theme == bitmap16::ThemeId::Dark
                     ? bitmap16::PreviewView::Background::Dark
                     : bitmap16::PreviewView::Background::Gray));
-        setDesktopStatus("Preview");
+        setPreviewLabel("Preview");
         galleryMode =
             currentView == DesktopView::Memory &&
             !workspace.sketches().empty();
@@ -1565,6 +1614,16 @@ int main(int argc, char** argv) {
           galleryLastAdvance = SDL_GetTicks();
         }
         selectGallerySketch();
+#ifdef BITMAP16_STEAM_DECK
+        {
+          const bitmap16::Sketch& previewSketch =
+              previewOverride == nullptr ? editor.sketch() : *previewOverride;
+          const int logicalPreviewSize =
+              std::min(128, std::min(width, height));
+          previewState.zoom = static_cast<uint8_t>(
+              std::max(1, logicalPreviewSize / previewSketch.gridSize));
+        }
+#endif
         currentView = DesktopView::Preview;
       }
       changed = true;
