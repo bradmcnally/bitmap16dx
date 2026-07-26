@@ -352,7 +352,10 @@ void render(
         state.status, layout.statusX, canvas.height() - 11);
   }
   if (assets == nullptr && state.batteryPercent >= 0) {
-    char battery[8];
+    // Large enough for every possible int value, a percent sign, and NUL.
+    // GCC's -Wformat-truncation checks the type's full range rather than the
+    // platform contract that battery percentages are limited to 0..100.
+    char battery[16];
     std::snprintf(battery, sizeof(battery), "%d%%", state.batteryPercent);
     canvas.setTextAlign(TextAlign::Center);
     canvas.drawString(battery, 14, 91);
