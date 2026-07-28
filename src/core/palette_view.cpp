@@ -15,27 +15,53 @@ constexpr int kCartridgeHeight = 92;
 constexpr int kPaletteGap = 20;
 constexpr int kInsertionOvershoot = 13;
 
-float cubicBezierCoordinate(float t, float first, float second) {
-  const float inverse = 1.0f - t;
-  return 3.0f * inverse * inverse * t * first +
-      3.0f * inverse * t * t * second +
-      t * t * t;
-}
-
 float insertionEasing(float progress) {
-  const float target = std::max(0.0f, std::min(1.0f, progress));
-  float lower = 0.0f;
-  float upper = 1.0f;
-  float parameter = target;
-  for (int iteration = 0; iteration < 8; ++iteration) {
-    parameter = (lower + upper) * 0.5f;
-    if (cubicBezierCoordinate(parameter, 0.4f, 0.0f) < target) {
-      lower = parameter;
-    } else {
-      upper = parameter;
-    }
+  constexpr float kPreloadEnd = 0.08f;
+  constexpr float kWindUpEnd = 0.38f;
+  constexpr float kHoldEnd = 0.58f;
+  constexpr float kImpactAt = 0.90f;
+  constexpr float kPreloadDistance = 0.015f;
+  constexpr float kWindUpDistance = -0.16f;
+  constexpr float kImpactOvershoot = 1.04f;
+  const float clamped = std::max(0.0f, std::min(1.0f, progress));
+
+  const auto smoothStep = [](float value) {
+    return value * value * (3.0f - 2.0f * value);
+  };
+
+  // A tiny downward preload makes the cartridge feel like it first settles
+  // under its own weight before being pulled back.
+  if (clamped < kPreloadEnd) {
+    return kPreloadDistance *
+        smoothStep(clamped / kPreloadEnd);
   }
-  return cubicBezierCoordinate(parameter, 0.0f, 1.04f);
+  if (clamped < kWindUpEnd) {
+    const float phase =
+        (clamped - kPreloadEnd) / (kWindUpEnd - kPreloadEnd);
+    return kPreloadDistance +
+        (kWindUpDistance - kPreloadDistance) * smoothStep(phase);
+  }
+  if (clamped < kHoldEnd) {
+    return kWindUpDistance;
+  }
+
+  if (clamped < kImpactAt) {
+    const float phase =
+        (clamped - kHoldEnd) / (kImpactAt - kHoldEnd);
+    // Wide spacing late in the plunge creates a rapid, weighty impact.
+    const float plunge = phase * phase * phase;
+    return kWindUpDistance +
+        (kImpactOvershoot - kWindUpDistance) * plunge;
+  }
+
+  // Settle only a few pixels after impact; a large bounce would make the
+  // rigid cartridge feel rubbery and light.
+  const float phase =
+      (clamped - kImpactAt) / (1.0f - kImpactAt);
+  const float easeOut =
+      1.0f - (1.0f - phase) * (1.0f - phase);
+  return kImpactOvershoot +
+      (1.0f - kImpactOvershoot) * easeOut;
 }
 
 uint16_t cartridgeColor(uint16_t color, const Theme& theme) {

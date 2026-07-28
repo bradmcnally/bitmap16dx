@@ -11,7 +11,7 @@ namespace MemoryView {
 namespace {
 
 #ifdef BITMAP16_STEAM_DECK
-constexpr int kThumbnailSize = 32;
+constexpr int kThumbnailSize = 48;
 constexpr int kMaximumColumns = 7;
 #elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
 constexpr int kThumbnailSize = 64;

@@ -16,6 +16,27 @@ uint16_t scaleColor(uint16_t color, float scale) {
       static_cast<uint16_t>((color & 0x1f) * scale));
 }
 
+uint16_t neutralizeCursorColor(uint16_t color) {
+  const int red = ((color >> 11) & 0x1f) * 255 / 31;
+  const int green = ((color >> 5) & 0x3f) * 255 / 63;
+  const int blue = (color & 0x1f) * 255 / 31;
+  const int gray = (red * 30 + green * 59 + blue * 11) / 100;
+  // Retain most of the underlying hue while removing the warm cast inherited
+  // from the light-theme checkerboard.
+  constexpr int kColorWeight = 3;
+  constexpr int kTotalWeight = 4;
+  const int neutralRed =
+      (red * kColorWeight + gray) / kTotalWeight;
+  const int neutralGreen =
+      (green * kColorWeight + gray) / kTotalWeight;
+  const int neutralBlue =
+      (blue * kColorWeight + gray) / kTotalWeight;
+  return static_cast<uint16_t>(
+      ((neutralRed * 31 / 255) << 11) |
+      ((neutralGreen * 63 / 255) << 5) |
+      (neutralBlue * 31 / 255));
+}
+
 void drawShadow(
     Canvas& canvas,
     int x,
@@ -232,7 +253,9 @@ void render(
       if (pixel != 0) {
         uint16_t color = Palette::colorForIndex(
             state.paletteColors, state.paletteSize, pixel);
-        if (selected) color = scaleColor(color, 0.8f);
+        if (selected) {
+          color = neutralizeCursorColor(scaleColor(color, 0.8f));
+        }
         canvas.fillRect(
             cellX, cellY, cellSize, cellSize, color);
       } else {
@@ -244,8 +267,8 @@ void render(
                  ((cellY + py) / checkSize)) % 2 == 0;
             uint16_t color = dark ? theme.cellDark : theme.cellLight;
             if (selected) {
-              color = scaleColor(
-                  color, theme.dark ? (dark ? 0.4f : 0.2f) : 0.8f);
+              color = neutralizeCursorColor(scaleColor(
+                  color, theme.dark ? (dark ? 0.4f : 0.2f) : 0.8f));
             }
             canvas.fillRect(
                 cellX + px,

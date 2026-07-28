@@ -449,18 +449,27 @@ bool showBootScreen(
     }
   }
 
+#ifdef BITMAP16_STEAM_DECK
+  const int labelY = canvas.height() - 12;
+  const int labelLeft = 4;
+  const int labelCenter = canvas.width() / 2;
+#else
   const int labelY = imageY + BOOT_IMAGE_HEIGHT - 12;
+  const int labelLeft = imageX + 4;
+  const int labelCenter = imageX + BOOT_IMAGE_WIDTH / 2;
+#endif
   canvas.setTextColor(0xffff);
   canvas.setTextSize(1);
   canvas.setTextAlign(bitmap16::TextAlign::Left);
-  canvas.drawString(kVersion, imageX + 4, labelY);
+  canvas.drawString(kVersion, labelLeft, labelY);
   canvas.setTextAlign(bitmap16::TextAlign::Center);
-  canvas.drawString(
-      "beepbot", imageX + BOOT_IMAGE_WIDTH / 2, labelY);
+  canvas.drawString("beepbot", labelCenter, labelY);
+#ifndef BITMAP16_STEAM_DECK
   const int helpX = imageX + BOOT_IMAGE_WIDTH - 4 - (4 * 6);
   canvas.setTextAlign(bitmap16::TextAlign::Left);
   canvas.drawString("HELP", helpX, labelY);
   canvas.drawFastHLine(helpX, labelY + 9, 6, 0xffff);
+#endif
   present(canvas, texture, renderer, brightness);
 
   const Uint32 startedAt = SDL_GetTicks();
@@ -1478,7 +1487,8 @@ int main(int argc, char** argv) {
           mappedKey = SDLK_BACKSPACE;
           break;
         case SDL_CONTROLLER_BUTTON_Y:
-          mappedKey = SDLK_f;
+          mappedKey =
+              currentView == DesktopView::Memory ? SDLK_y : SDLK_f;
           break;
         case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
           mappedKey = SDLK_p;
@@ -2033,6 +2043,30 @@ int main(int argc, char** argv) {
         refreshMemoryCatalog();
         setDesktopStatus("Loaded");
         changed = true;
+      }
+    } else if (
+        currentView == DesktopView::Memory &&
+        key == SDLK_y &&
+        memoryState.cursor > 0) {
+      const std::size_t sourceIndex =
+          static_cast<std::size_t>(memoryState.cursor - 1);
+      if (sourceIndex < workspace.sketches().size()) {
+        editor.reset(workspace.sketches()[sourceIndex]);
+        if (workspace.saveSketch(editor, true)) {
+          refreshMemoryCatalog();
+          memoryState.cursor = 1;
+          memoryState.scrollOffset = 0;
+          memoryState.scrollPosition = 0.0f;
+          activePalette =
+              findActivePalette(editor.sketch(), paletteEntries);
+          setDesktopStatus("Duplicated");
+          rumble(0x1000, 0x3800, 75);
+          changed = true;
+        } else {
+          setDesktopStatus("Duplicate failed");
+          rumble(0x4800, 0x0800, 180);
+          changed = true;
+        }
       }
     } else if (
         currentView == DesktopView::Memory &&
