@@ -9,7 +9,8 @@ namespace bitmap16 {
 namespace MemoryView {
 
 struct Entry {
-  const uint8_t (*pixels)[kMaxGridSize] = nullptr;
+  const uint8_t* pixels = nullptr;
+  uint8_t pixelStride = 0;
   uint8_t gridSize = 8;
   const uint16_t* paletteColors = nullptr;
   uint8_t paletteSize = 16;
@@ -26,6 +27,11 @@ struct State {
   int scrollOffset = 0;
   float scrollPosition = 0.0f;
   float cursorAnimationPhase = 0.0f;
+};
+
+struct VisibleRange {
+  int first = 0;
+  int last = -1;
 };
 
 struct Theme {
@@ -45,6 +51,11 @@ struct Assets {
 
 int columnCount(int width);
 int thumbnailSize();
+VisibleRange visibleCatalogRange(
+    const State& state,
+    int sketchCount,
+    int width,
+    int height);
 void clamp(State& state, int sketchCount);
 bool moveCursor(
     State& state,

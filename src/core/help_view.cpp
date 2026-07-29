@@ -20,6 +20,7 @@ constexpr Item kItems[] = {
     {"Draw", "Ok", 0, false, false},
     {"Erase", "Del", 0, false, false},
     {"Fill", "F", 0, false, false},
+    {"Erase fill", "Fn F", 0, false, false},
     {"Move", "M arrows", 0, false, false},
     {"Color 1-8", "1-8", 0, false, false},
     {"Color 9-16", "Fn 1-8", 0, false, false},

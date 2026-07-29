@@ -8,14 +8,27 @@
 namespace bitmap16 {
 namespace SettingsView {
 
+enum class Page : uint8_t {
+  Main,
+  RgbMatrix,
+  IndicatorLed,
+};
+
 enum class Action : uint8_t {
   None,
   ThemeChanged,
   DefaultGridChanged,
+  MatrixMenuRequested,
+  MatrixEnabledChanged,
   MatrixUnitsChanged,
   MatrixRotationChanged,
+  MatrixBrightnessChanged,
+  IndicatorMenuRequested,
+  IndicatorPaletteChanged,
+  IndicatorLowBatteryChanged,
   ExportFormatChanged,
   ShakeUndoChanged,
+  SaveWarningsChanged,
   BluetoothRequested,
   QuitRequested,
 };
@@ -23,6 +36,7 @@ enum class Action : uint8_t {
 struct State {
   int cursor = 0;
   int scrollOffset = 0;
+  Page page = Page::Main;
 };
 
 struct Theme {
@@ -35,21 +49,24 @@ int itemCount(
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit = false);
+    bool includeQuit = false,
+    bool includeIndicator = false);
 bool moveCursor(
     State& state,
     int delta,
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit = false);
+    bool includeQuit = false,
+    bool includeIndicator = false);
 Action activate(
     State& state,
     Settings& settings,
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit = false);
+    bool includeQuit = false,
+    bool includeIndicator = false);
 void render(
     Canvas& canvas,
     State& state,
@@ -60,7 +77,8 @@ void render(
     bool includeShakeUndo,
     const char* bluetoothValue = nullptr,
     const char* statusMessage = nullptr,
-    bool includeQuit = false);
+    bool includeQuit = false,
+    bool includeIndicator = false);
 
 }  // namespace SettingsView
 }  // namespace bitmap16

@@ -14,61 +14,121 @@ constexpr int kCartridgeWidth = 80;
 constexpr int kCartridgeHeight = 92;
 constexpr int kPaletteGap = 20;
 constexpr int kInsertionOvershoot = 13;
+constexpr float kInsertionImpactAt = 0.72f;
 
 float insertionEasing(float progress) {
-  constexpr float kPreloadEnd = 0.08f;
-  constexpr float kWindUpEnd = 0.38f;
+  constexpr float kWindUpEnd = 0.23f;
   constexpr float kHoldEnd = 0.58f;
-  constexpr float kImpactAt = 0.90f;
-  constexpr float kPreloadDistance = 0.015f;
-  constexpr float kWindUpDistance = -0.16f;
-  constexpr float kImpactOvershoot = 1.04f;
+  constexpr float kWindUpDistance = -0.32f;
+  constexpr float kImpactOvershoot = 1.025f;
   const float clamped = std::max(0.0f, std::min(1.0f, progress));
 
-  const auto smoothStep = [](float value) {
-    return value * value * (3.0f - 2.0f * value);
+  const auto easeInOutCirc = [](float value) {
+    if (value < 0.5f) {
+      const float doubled = 2.0f * value;
+      return (1.0f - std::sqrt(
+          std::max(0.0f, 1.0f - doubled * doubled))) / 2.0f;
+    }
+    const float inverse = -2.0f * value + 2.0f;
+    return (std::sqrt(
+        std::max(0.0f, 1.0f - inverse * inverse)) + 1.0f) / 2.0f;
   };
 
-  // A tiny downward preload makes the cartridge feel like it first settles
-  // under its own weight before being pulled back.
-  if (clamped < kPreloadEnd) {
-    return kPreloadDistance *
-        smoothStep(clamped / kPreloadEnd);
-  }
+  // Beat 1: a controlled pull-back that eases gently at both ends.
   if (clamped < kWindUpEnd) {
-    const float phase =
-        (clamped - kPreloadEnd) / (kWindUpEnd - kPreloadEnd);
-    return kPreloadDistance +
-        (kWindUpDistance - kPreloadDistance) * smoothStep(phase);
+    return kWindUpDistance *
+        easeInOutCirc(clamped / kWindUpEnd);
   }
+
+  // Beat 2: hold just long enough for the anticipation to register.
   if (clamped < kHoldEnd) {
     return kWindUpDistance;
   }
 
-  if (clamped < kImpactAt) {
+  // Beat 3: accelerate hard into the slot.
+  if (clamped < kInsertionImpactAt) {
     const float phase =
-        (clamped - kHoldEnd) / (kImpactAt - kHoldEnd);
-    // Wide spacing late in the plunge creates a rapid, weighty impact.
-    const float plunge = phase * phase * phase;
+        (clamped - kHoldEnd) /
+        (kInsertionImpactAt - kHoldEnd);
+    // Quadratic acceleration starts traveling sooner than the previous cubic
+    // curve while still gaining speed all the way to impact.
+    const float plunge = phase * phase;
     return kWindUpDistance +
         (kImpactOvershoot - kWindUpDistance) * plunge;
   }
 
-  // Settle only a few pixels after impact; a large bounce would make the
-  // rigid cartridge feel rubbery and light.
+  // A tiny settle keeps the landing crisp rather than bouncy.
   const float phase =
-      (clamped - kImpactAt) / (1.0f - kImpactAt);
+      (clamped - kInsertionImpactAt) /
+      (1.0f - kInsertionImpactAt);
   const float easeOut =
       1.0f - (1.0f - phase) * (1.0f - phase);
   return kImpactOvershoot +
       (1.0f - kImpactOvershoot) * easeOut;
 }
 
-uint16_t cartridgeColor(uint16_t color, const Theme& theme) {
+void drawImpactSparks(
+    Canvas& canvas,
+    int centerX,
+    int slotY,
+    const Entry& entry,
+    const Theme& theme,
+    float insertionProgress) {
+  if (insertionProgress < kInsertionImpactAt ||
+      insertionProgress >= 1.0f) {
+    return;
+  }
+
+  const float phase =
+      (insertionProgress - kInsertionImpactAt) /
+      (1.0f - kInsertionImpactAt);
+  const float travel = phase * (2.0f - phase);
+  constexpr int horizontal[] = {-26, -20, -14, -8, 8, 14, 20, 26};
+  constexpr int vertical[] = {-10, -22, -30, -18, -18, -30, -22, -10};
+  // Emit from both cartridge edges so particles rendered behind it remain
+  // visible instead of being fully occluded by its 80px body.
+  constexpr int startX[] = {-38, -36, -34, -32, 32, 34, 36, 38};
+
+  for (int index = 0; index < 8; ++index) {
+    // Outer sparks disappear first, producing a crisp stepped breakup rather
+    // than an alpha fade.
+    const float lifetime = 0.72f + 0.04f * (index % 4);
+    if (phase >= lifetime) {
+      continue;
+    }
+    const int x =
+        centerX + startX[index] +
+        static_cast<int>(horizontal[index] * travel);
+    const int y =
+        slotY +
+        static_cast<int>(vertical[index] * travel) +
+        static_cast<int>(7.0f * phase * phase);
+    uint16_t color = theme.text;
+    if (entry.colors != nullptr && entry.size > 0 && index % 4 != 0) {
+      color = entry.colors[index % entry.size];
+    }
+    canvas.fillRect(x, y, 2, 2, color);
+  }
+}
+
+uint16_t cartridgeColor(
+    uint16_t color,
+    const Theme& theme,
+    int column,
+    int row) {
   if (!theme.dark) {
     return color;
   }
   if (color == 0xd69b) {
+    // The downward registration mark shares the source image's background-key
+    // color, but it is printed cartridge artwork and should not change with
+    // the application theme.
+    const bool registrationMark =
+        column >= 35 && column <= 44 &&
+        row >= 74 && row <= 79;
+    if (registrationMark) {
+      return color;
+    }
     return theme.background;
   }
   if (color == 0xc63a) {
@@ -96,7 +156,10 @@ void drawCartridge(
           x + column,
           y + row,
           cartridgeColor(
-              graphic[row * kCartridgeWidth + column], theme));
+              graphic[row * kCartridgeWidth + column],
+              theme,
+              column,
+              row));
     }
   }
 }
@@ -347,6 +410,15 @@ void render(
       canvas.drawString(
           label, centerX, centerY + kCartridgeHeight / 2 + 6);
     }
+    if (selected && state.insertionAnimating) {
+      drawImpactSparks(
+          canvas,
+          paletteX,
+          canvas.height() - 10,
+          entry,
+          theme,
+          state.insertionProgress);
+    }
     drawCartridge(
         canvas,
         paletteX - kCartridgeWidth / 2,
@@ -365,6 +437,7 @@ void render(
 
   if (statusMessage != nullptr && statusMessage[0] != '\0') {
     canvas.setTextAlign(TextAlign::Left);
+    canvas.setTextSize(1);
     canvas.setTextColor(theme.text);
     canvas.drawString(statusMessage, 3, canvas.height() - 11);
   }

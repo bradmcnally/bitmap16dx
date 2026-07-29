@@ -74,8 +74,12 @@ bool Editor::erase() {
 }
 
 bool Editor::floodFill() {
+  return floodFill(selectedColor_);
+}
+
+bool Editor::floodFill(uint8_t replacementColor) {
   const uint8_t originalColor = sketch_.pixels[cursorY_][cursorX_];
-  if (originalColor == selectedColor_) {
+  if (originalColor == replacementColor) {
     return false;
   }
 
@@ -93,7 +97,7 @@ bool Editor::floodFill() {
       continue;
     }
 
-    sketch_.pixels[point.y][point.x] = selectedColor_;
+    sketch_.pixels[point.y][point.x] = replacementColor;
 
     if (point.y > 0 && !visited[point.y - 1][point.x]) {
       stack[stackSize++] = {point.x, static_cast<uint8_t>(point.y - 1)};
@@ -113,7 +117,7 @@ bool Editor::floodFill() {
     }
   }
 
-  sketch_.isEmpty = false;
+  sketch_.isEmpty = !containsArtwork();
   return true;
 }
 

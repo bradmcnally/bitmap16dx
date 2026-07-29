@@ -1,7 +1,6 @@
 #include "platform/led_matrix.h"
 
 #include <FastLED.h>
-#include <new>
 
 #include "core/led_mapping.h"
 
@@ -10,7 +9,8 @@ namespace {
 constexpr uint8_t kDataPin = 2;
 constexpr uint16_t kMaxLedCount = 256;
 
-CRGB* leds = nullptr;
+CRGB leds[kMaxLedCount];
+bool initialized = false;
 uint8_t configuredUnits = 1;
 uint8_t configuredRotation = 2;
 bool enabled = false;
@@ -22,16 +22,13 @@ uint8_t gridSize() {
 }  // namespace
 
 bool LEDMatrix::init() {
-  if (leds != nullptr) {
+  if (initialized) {
     return true;
-  }
-  leds = new (std::nothrow) CRGB[kMaxLedCount];
-  if (leds == nullptr) {
-    return false;
   }
   FastLED.addLeds<WS2812, kDataPin, GRB>(leds, kMaxLedCount);
   FastLED.clear();
   FastLED.show();
+  initialized = true;
   return true;
 }
 
@@ -42,7 +39,7 @@ void LEDMatrix::setConfiguration(uint8_t matrixUnits, uint8_t rotation) {
 
 void LEDMatrix::setEnabled(bool shouldEnable) {
   enabled = shouldEnable;
-  if (!enabled && leds != nullptr) {
+  if (!enabled && initialized) {
     FastLED.clear();
     FastLED.show();
   }
@@ -61,7 +58,7 @@ void LEDMatrix::setBrightness(uint8_t percent) {
 }
 
 void LEDMatrix::clear() {
-  if (leds != nullptr) {
+  if (initialized) {
     FastLED.clear();
   }
 }
@@ -77,9 +74,9 @@ bool LEDMatrix::setPixelRgb888(
     uint8_t y,
     uint8_t red,
     uint8_t green,
-    uint8_t blue) {
+  uint8_t blue) {
   const uint8_t size = gridSize();
-  if (leds == nullptr || !enabled || x >= size || y >= size) {
+  if (!initialized || !enabled || x >= size || y >= size) {
     return false;
   }
 
@@ -94,7 +91,7 @@ bool LEDMatrix::setPixelRgb888(
 }
 
 void LEDMatrix::show() {
-  if (leds != nullptr && enabled) {
+  if (initialized && enabled) {
     FastLED.show();
   }
 }

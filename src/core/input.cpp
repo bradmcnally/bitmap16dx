@@ -37,9 +37,11 @@ InputFrame InputProcessor::process(
 
   frame.enterPressed = raw.enter && !previousEnter_;
   frame.deletePressed = raw.deleteKey && !previousDelete_;
+  frame.ctrlPressed = raw.ctrl && !previousCtrl_;
   frame.actionPressed = raw.actionButton && !previousAction_;
   previousEnter_ = raw.enter;
   previousDelete_ = raw.deleteKey;
+  previousCtrl_ = raw.ctrl;
   previousAction_ = raw.actionButton;
 
   if (direction != InputEvent::None) {
@@ -93,6 +95,7 @@ void InputProcessor::reset() {
   directionRepeating_ = false;
   previousEnter_ = false;
   previousDelete_ = false;
+  previousCtrl_ = false;
   previousAction_ = false;
 }
 
@@ -100,12 +103,16 @@ InputEvent InputProcessor::directionEvent(const RawInputState& raw) {
   for (uint8_t i = 0; i < raw.keyCount; ++i) {
     switch (raw.keys[i]) {
       case ';':
+      case ':':
         return InputEvent::Up;
       case '.':
+      case '>':
         return InputEvent::Down;
       case ',':
+      case '<':
         return InputEvent::Left;
       case '/':
+      case '?':
         return InputEvent::Right;
       default:
         break;
@@ -168,7 +175,10 @@ bool InputProcessor::containsKey(
 }
 
 bool InputProcessor::isDirectionKey(char key) {
-  return key == ';' || key == '.' || key == ',' || key == '/';
+  return key == ';' || key == ':' ||
+      key == '.' || key == '>' ||
+      key == ',' || key == '<' ||
+      key == '/' || key == '?';
 }
 
 bool InputProcessor::isChordModifier(char key) {

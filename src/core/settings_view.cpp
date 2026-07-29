@@ -17,12 +17,25 @@ struct Item {
 constexpr Item kItems[] = {
     {"UI theme", Action::ThemeChanged},
     {"Grid default", Action::DefaultGridChanged},
-    {"RGB matrix", Action::MatrixUnitsChanged},
-    {"Rotate matrix", Action::MatrixRotationChanged},
+    {"RGB matrix", Action::MatrixMenuRequested},
     {"Export", Action::ExportFormatChanged},
     {"Shake undo", Action::ShakeUndoChanged},
+    {"Save warnings", Action::SaveWarningsChanged},
+    {"Indicator LED", Action::IndicatorMenuRequested},
     {"Bluetooth", Action::BluetoothRequested},
     {"Quit", Action::QuitRequested},
+};
+
+constexpr Item kMatrixItems[] = {
+    {"Enabled", Action::MatrixEnabledChanged},
+    {"Layout", Action::MatrixUnitsChanged},
+    {"Rotation", Action::MatrixRotationChanged},
+    {"Brightness", Action::MatrixBrightnessChanged},
+};
+
+constexpr Item kIndicatorItems[] = {
+    {"Palette color", Action::IndicatorPaletteChanged},
+    {"Low battery", Action::IndicatorLowBatteryChanged},
 };
 
 bool itemVisible(
@@ -30,23 +43,48 @@ bool itemVisible(
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit) {
+    bool includeQuit,
+    bool includeIndicator) {
   if (item.action == Action::BluetoothRequested) return includeBluetooth;
   if (item.action == Action::QuitRequested) return includeQuit;
-  if (item.action == Action::MatrixUnitsChanged ||
-      item.action == Action::MatrixRotationChanged) {
+  if (item.action == Action::MatrixMenuRequested) {
     return includeMatrix;
+  }
+  if (item.action == Action::IndicatorMenuRequested) {
+    return includeIndicator;
   }
   if (item.action == Action::ShakeUndoChanged) return includeShakeUndo;
   return true;
 }
 
 const Item& visibleItem(
+    Page page,
     int index,
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit) {
+    bool includeQuit,
+    bool includeIndicator) {
+  if (page == Page::RgbMatrix) {
+    const int clamped = std::max(
+        0,
+        std::min(
+            static_cast<int>(
+                sizeof(kMatrixItems) / sizeof(kMatrixItems[0])) -
+                1,
+            index));
+    return kMatrixItems[clamped];
+  }
+  if (page == Page::IndicatorLed) {
+    const int clamped = std::max(
+        0,
+        std::min(
+            static_cast<int>(
+                sizeof(kIndicatorItems) / sizeof(kIndicatorItems[0])) -
+                1,
+            index));
+    return kIndicatorItems[clamped];
+  }
   int visibleIndex = 0;
   for (const Item& item : kItems) {
     if (!itemVisible(
@@ -54,7 +92,8 @@ const Item& visibleItem(
             includeBluetooth,
             includeMatrix,
             includeShakeUndo,
-            includeQuit)) {
+            includeQuit,
+            includeIndicator)) {
       continue;
     }
     if (visibleIndex == index) {
@@ -78,8 +117,12 @@ const char* valueFor(
       return settings.defaultGridSize == 8
           ? "8"
           : settings.defaultGridSize == 16 ? "16" : "32";
+    case Action::MatrixMenuRequested:
+      return settings.matrixEnabled ? "ON" : "OFF";
+    case Action::MatrixEnabledChanged:
+      return settings.matrixEnabled ? "ON" : "OFF";
     case Action::MatrixUnitsChanged:
-      return settings.matrixUnits == 1 ? "1" : "4";
+      return settings.matrixUnits == 1 ? "1 UNIT" : "4 UNITS";
     case Action::MatrixRotationChanged:
       std::snprintf(
           buffer,
@@ -87,12 +130,27 @@ const char* valueFor(
           "%u",
           static_cast<unsigned>(settings.matrixRotation) * 90);
       return buffer;
+    case Action::MatrixBrightnessChanged:
+      std::snprintf(
+          buffer,
+          bufferSize,
+          "%u",
+          static_cast<unsigned>(settings.matrixBrightness));
+      return buffer;
+    case Action::IndicatorMenuRequested:
+      return settings.indicatorPaletteColor ? "ON" : "OFF";
+    case Action::IndicatorPaletteChanged:
+      return settings.indicatorPaletteColor ? "ON" : "OFF";
+    case Action::IndicatorLowBatteryChanged:
+      return settings.indicatorLowBattery ? "ON" : "OFF";
     case Action::ExportFormatChanged:
       return settings.exportFormat == ExportFormat::Rgb565
           ? "RGB565"
           : "RGB888";
     case Action::ShakeUndoChanged:
       return settings.shakeUndoEnabled ? "ON" : "OFF";
+    case Action::SaveWarningsChanged:
+      return settings.saveWarnings ? "ON" : "OFF";
     case Action::BluetoothRequested:
       return bluetoothValue == nullptr ? "OFF" : bluetoothValue;
     case Action::QuitRequested:
@@ -108,7 +166,8 @@ int itemCount(
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit) {
+    bool includeQuit,
+    bool includeIndicator) {
   int count = 0;
   for (const Item& item : kItems) {
     if (itemVisible(
@@ -116,7 +175,8 @@ int itemCount(
             includeBluetooth,
             includeMatrix,
             includeShakeUndo,
-            includeQuit)) {
+            includeQuit,
+            includeIndicator)) {
       ++count;
     }
   }
@@ -129,10 +189,23 @@ bool moveCursor(
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit) {
-  const int maximum =
-      itemCount(
-          includeBluetooth, includeMatrix, includeShakeUndo, includeQuit) - 1;
+    bool includeQuit,
+    bool includeIndicator) {
+  const int maximum = state.page == Page::RgbMatrix
+      ? static_cast<int>(
+            sizeof(kMatrixItems) / sizeof(kMatrixItems[0])) -
+            1
+      : state.page == Page::IndicatorLed
+          ? static_cast<int>(
+                sizeof(kIndicatorItems) / sizeof(kIndicatorItems[0])) -
+                1
+      : itemCount(
+            includeBluetooth,
+            includeMatrix,
+            includeShakeUndo,
+            includeQuit,
+            includeIndicator) -
+            1;
   const int next = std::max(0, std::min(maximum, state.cursor + delta));
   if (next == state.cursor) {
     return false;
@@ -147,25 +220,33 @@ Action activate(
     bool includeBluetooth,
     bool includeMatrix,
     bool includeShakeUndo,
-    bool includeQuit) {
+    bool includeQuit,
+    bool includeIndicator) {
+  const int count = state.page == Page::RgbMatrix
+      ? static_cast<int>(
+            sizeof(kMatrixItems) / sizeof(kMatrixItems[0]))
+      : state.page == Page::IndicatorLed
+          ? static_cast<int>(
+                sizeof(kIndicatorItems) / sizeof(kIndicatorItems[0]))
+      : itemCount(
+            includeBluetooth,
+            includeMatrix,
+            includeShakeUndo,
+            includeQuit,
+            includeIndicator);
   state.cursor =
       std::max(
           0,
-          std::min(
-              itemCount(
-                  includeBluetooth,
-                  includeMatrix,
-                  includeShakeUndo,
-                  includeQuit) -
-                  1,
-              state.cursor));
+          std::min(count - 1, state.cursor));
   const Action action =
       visibleItem(
+          state.page,
           state.cursor,
           includeBluetooth,
           includeMatrix,
           includeShakeUndo,
-          includeQuit)
+          includeQuit,
+          includeIndicator)
           .action;
   switch (action) {
     case Action::ThemeChanged:
@@ -179,6 +260,14 @@ Action activate(
               ? 16
               : settings.defaultGridSize == 16 ? 32 : 8;
       return Action::DefaultGridChanged;
+    case Action::MatrixMenuRequested:
+      state.page = Page::RgbMatrix;
+      state.cursor = 0;
+      state.scrollOffset = 0;
+      return Action::MatrixMenuRequested;
+    case Action::MatrixEnabledChanged:
+      settings.matrixEnabled = !settings.matrixEnabled;
+      return Action::MatrixEnabledChanged;
     case Action::MatrixUnitsChanged:
       settings.matrixUnits = settings.matrixUnits == 1 ? 4 : 1;
       return Action::MatrixUnitsChanged;
@@ -186,6 +275,23 @@ Action activate(
       settings.matrixRotation =
           static_cast<uint8_t>((settings.matrixRotation + 1) % 4);
       return Action::MatrixRotationChanged;
+    case Action::MatrixBrightnessChanged:
+      settings.matrixBrightness =
+          settings.matrixBrightness >= 20
+              ? 1
+              : static_cast<uint8_t>(settings.matrixBrightness + 1);
+      return Action::MatrixBrightnessChanged;
+    case Action::IndicatorMenuRequested:
+      state.page = Page::IndicatorLed;
+      state.cursor = 0;
+      state.scrollOffset = 0;
+      return Action::IndicatorMenuRequested;
+    case Action::IndicatorPaletteChanged:
+      settings.indicatorPaletteColor = !settings.indicatorPaletteColor;
+      return Action::IndicatorPaletteChanged;
+    case Action::IndicatorLowBatteryChanged:
+      settings.indicatorLowBattery = !settings.indicatorLowBattery;
+      return Action::IndicatorLowBatteryChanged;
     case Action::ExportFormatChanged:
       settings.exportFormat =
           settings.exportFormat == ExportFormat::Rgb888
@@ -195,6 +301,9 @@ Action activate(
     case Action::ShakeUndoChanged:
       settings.shakeUndoEnabled = !settings.shakeUndoEnabled;
       return Action::ShakeUndoChanged;
+    case Action::SaveWarningsChanged:
+      settings.saveWarnings = !settings.saveWarnings;
+      return Action::SaveWarningsChanged;
     case Action::BluetoothRequested:
       return includeBluetooth ? Action::BluetoothRequested : Action::None;
     case Action::QuitRequested:
@@ -214,7 +323,8 @@ void render(
     bool includeShakeUndo,
     const char* bluetoothValue,
     const char* statusMessage,
-    bool includeQuit) {
+    bool includeQuit,
+    bool includeIndicator) {
   if (!canvas.isValid()) {
     return;
   }
@@ -223,11 +333,25 @@ void render(
   canvas.setTextAlign(TextAlign::Left);
   canvas.setTextSize(1);
   canvas.setTextColor(theme.text);
-  canvas.drawString("SETTINGS", 4, 4);
+  canvas.drawString(
+      state.page == Page::RgbMatrix
+          ? "RGB MATRIX"
+          : state.page == Page::IndicatorLed ? "INDICATOR LED" : "SETTINGS",
+      4,
+      4);
 
-  const int totalItems =
-      itemCount(
-          includeBluetooth, includeMatrix, includeShakeUndo, includeQuit);
+  const int totalItems = state.page == Page::RgbMatrix
+      ? static_cast<int>(
+            sizeof(kMatrixItems) / sizeof(kMatrixItems[0]))
+      : state.page == Page::IndicatorLed
+          ? static_cast<int>(
+                sizeof(kIndicatorItems) / sizeof(kIndicatorItems[0]))
+      : itemCount(
+            includeBluetooth,
+            includeMatrix,
+            includeShakeUndo,
+            includeQuit,
+            includeIndicator);
   state.cursor = std::max(0, std::min(totalItems - 1, state.cursor));
   state.scrollOffset =
       std::max(0, std::min(state.cursor, state.scrollOffset));
@@ -237,7 +361,9 @@ void render(
   constexpr int selectedLineHeight = 28;
   const int labelX = std::max(12, canvas.width() / 20);
   const int valueRight = canvas.width() - std::max(12, canvas.width() / 20);
-  const int contentBottom = canvas.height() - 12;
+  // Let the next row extend to the physical screen edge. The canvas clips it
+  // naturally, leaving a visible hint that more settings continue below.
+  const int contentBottom = canvas.height();
 
   while (state.scrollOffset < state.cursor) {
     int y = startY;
@@ -263,30 +389,31 @@ void render(
     canvas.setTextSize(textSize);
     canvas.setTextColor(selected ? theme.text : theme.textSecondary);
     canvas.setTextAlign(TextAlign::Left);
+    const Item item = visibleItem(
+        state.page,
+        i,
+        includeBluetooth,
+        includeMatrix,
+        includeShakeUndo,
+        includeQuit,
+        includeIndicator);
     canvas.drawString(
-        visibleItem(
-            i,
-            includeBluetooth,
-            includeMatrix,
-            includeShakeUndo,
-            includeQuit)
-            .label,
+        item.label,
         labelX,
         textY);
 
     const char* value = valueFor(
-        visibleItem(
-            i,
-            includeBluetooth,
-            includeMatrix,
-            includeShakeUndo,
-            includeQuit)
-            .action,
+        item.action,
         settings,
         bluetoothValue,
         valueBuffer,
         sizeof(valueBuffer));
-    if (selected) {
+    if (item.action == Action::MatrixMenuRequested ||
+        item.action == Action::IndicatorMenuRequested) {
+      std::snprintf(
+          selectedValue, sizeof(selectedValue), "%s >", value);
+      value = selectedValue;
+    } else if (selected) {
       std::snprintf(
           selectedValue, sizeof(selectedValue), "<%s>", value);
       value = selectedValue;

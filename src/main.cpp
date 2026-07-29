@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - v0.7.1
+ * BitMap16 DX - v0.8.0
  *
  * Working pixel sketch station for Cardputer ADV!
  *
@@ -61,6 +61,7 @@
 #include <PNGENC.h>
 #include <vector>
 #include <algorithm>
+#include <utility>
 #include "boot_image.h"
 #include "core/app.h"
 #include "core/canvas_view.h"
@@ -93,7 +94,7 @@ bitmap16::ShakeDetector shakeDetector;
 // ============================================================================
 
 // Enable screenshot feature (Y key) - disable for release builds
-#define ENABLE_SCREENSHOTS 0  // Set to 0 to disable screenshots in release
+#define ENABLE_SCREENSHOTS 1  // Set to 0 to disable screenshots in release
 
 // Enable external 8×8 WS2812 LED matrix support
 // Set to 0 to disable LED matrix features and save memory (~9KB flash, 880 bytes RAM)
@@ -118,7 +119,7 @@ bitmap16::ShakeDetector shakeDetector;
 
 
 // Firmware version displayed on boot screen
-const char* FIRMWARE_VERSION = "v0.7.1";
+const char* FIRMWARE_VERSION = "v0.8.0";
 
 // File format version for sketch files
 // Version 1: gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 290 bytes
@@ -372,16 +373,35 @@ struct DocumentState {
 
 DocumentState documentState;
 bool focusNewestSketchOnNextMemoryOpen = false;
+bool documentDirty = false;
+bool saveWarningsEnabled = true;
+
+enum class PendingDocumentAction : uint8_t {
+  None,
+  NewSketch,
+  OpenSketch,
+};
+
+PendingDocumentAction pendingDocumentAction =
+    PendingDocumentAction::None;
+int pendingSketchIndex = -1;
+bool saveWarningVisible = false;
 
 // Dynamic sketch list for memory view
 struct SketchInfo {
   String filename;                       // e.g., "sketch_1737849600.dat"
   unsigned long timestamp;               // Unix timestamp from filename
-  Sketch sketchData;                     // Cached sketch data (loaded once when entering memory view)
-  bool dataLoaded;                       // Whether sketchData is valid
+  std::vector<uint8_t> thumbnailPixels;  // gridSize² compact indexed pixels
+  uint16_t paletteColors[16] = {};
+  uint8_t gridSize = 8;
+  uint8_t paletteSize = 16;
+  bool dataLoaded;                       // Whether compact thumbnail data is valid
+  bool loadAttempted;                    // Avoid retrying a corrupt file every frame
 };
 
-std::vector<SketchInfo> sketchList;      // Populated when entering memory view
+std::vector<SketchInfo> sketchList;      // Persistent metadata and thumbnail cache
+bool sketchCatalogValid = false;
+Sketch sketchOperationBuffer;            // Reused for file I/O and full-document actions
 
 struct CanvasProofMetrics {
   uint32_t allocationMicros = 0;
@@ -458,9 +478,6 @@ const unsigned long HEAP_CHECK_INTERVAL = 60000;  // Check every 60 seconds
 const int HEAP_WARNING_THRESHOLD = 50000;  // Warn if free heap drops below 50KB
 const int PALETTE_ANIM_FRAME_MS = 16;  // Milliseconds between animation frames (16ms = 60fps)
 
-// The device loop advances about every 10 ms, so 56 steps gives an
-// approximately 560 ms cartridge insertion.
-const float PALETTE_INSERT_SPEED = 0.018f;
 const int CHARGE_FRAME_MS = 33;  // ~30fps
 
 // Settings preferences (loaded from NVS)
@@ -469,6 +486,8 @@ uint8_t rgbMatrixUnits = 1;         // 1 or 4 (64 or 256 LEDs)
 uint8_t matrixRotation = 2;         // 0=0°, 1=90°, 2=180°, 3=270°
 bool exportRGB565 = false;           // false=RGB888, true=RGB565
 bool shakeUndoEnabled = false;       // true=enabled, false=disabled
+bool indicatorPaletteColorEnabled = true;
+bool indicatorLowBatteryEnabled = true;
 
 // Battery display
 int lastBatteryPercent = -1;  // Track last drawn battery % to avoid unnecessary redraws
@@ -731,12 +750,18 @@ bool collectSketchFile(
   info.filename = filename;
   info.timestamp = timestamp;
   info.dataLoaded = false;
+  info.loadAttempted = false;
   sketchList.push_back(info);
   return true;
 }
 
 void loadSketchListFromSD() {
+  // A refresh intentionally releases the old catalog before scanning. Each
+  // entry contains a full 32x32 sketch, so retaining old and new vectors at
+  // once can exhaust or fragment the ADV heap.
+  sketchCatalogValid = false;
   sketchList.clear();
+  sketchList.shrink_to_fit();
 
   if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
@@ -762,6 +787,7 @@ void loadSketchListFromSD() {
             [](const SketchInfo& a, const SketchInfo& b) {
               return a.timestamp > b.timestamp;
             });
+  sketchCatalogValid = true;
 }
 
 bool findHighestSketchCounter(
@@ -858,6 +884,8 @@ bool saveActiveSketchToSD() {
   documentState.isNew = false;
   documentState.sketch.isEmpty = false;
   focusNewestSketchOnNextMemoryOpen = true;
+  sketchCatalogValid = false;
+  documentDirty = false;
 
   setStatusMessage(StatusMsg::SAVED);
   return true;
@@ -906,6 +934,7 @@ bool loadSketchFromSD(String filename) {
   documentState.sketch.isEmpty = false;
   documentState.filename = filename;
   documentState.isNew = false;
+  documentDirty = false;
 
   return true;
 }
@@ -1336,14 +1365,51 @@ void drawBatteryIndicator() {
   // The shared Canvas view draws the icon; this poll only updates indicator
   // state and the cached percentage.
   if (batteryPercent != lastBatteryPercent || forceRedraw) {
-    // Low battery LED indicator (latches red at <= 10%)
+    // Low-battery state latches at <= 10%; the indicator preference decides
+    // whether that state is shown on the RGB LED.
     if (!lowBattery && batteryPercent <= 10) {
       lowBattery = true;
-      Indicator::setColor(255, 0, 0);
     }
 
     lastBatteryPercent = batteryPercent;
   }
+}
+
+void updateIndicatorLED() {
+  static uint16_t lastColor = 0xffff;
+  static bool lastEnabled = false;
+
+  bool enabled = false;
+  uint16_t color = 0;
+  if (indicatorLowBatteryEnabled && lowBattery) {
+    enabled = true;
+    color = 0xf800;
+  } else if (
+      indicatorPaletteColorEnabled &&
+      editorState.selectedColor >= 1 &&
+      editorState.selectedColor <= documentState.sketch.paletteSize) {
+    enabled = true;
+    color = documentState.sketch.paletteColors[
+        editorState.selectedColor - 1];
+  }
+
+  if (enabled == lastEnabled && (!enabled || color == lastColor)) {
+    return;
+  }
+  lastEnabled = enabled;
+  lastColor = color;
+  if (!enabled) {
+    Indicator::off();
+    return;
+  }
+
+  const uint8_t red =
+      static_cast<uint8_t>(((color >> 11) & 0x1f) * 255 / 31);
+  const uint8_t green =
+      static_cast<uint8_t>(((color >> 5) & 0x3f) * 255 / 63);
+  const uint8_t blue =
+      static_cast<uint8_t>((color & 0x1f) * 255 / 31);
+  Indicator::setColor(red, green, blue);
 }
 
 // ============================================================================
@@ -1749,10 +1815,12 @@ void createNewSketch() {
   // Use default grid size from settings instead of hardcoded 16
   editorState.gridSize = defaultGridSize;
   editorState.cellSize = 128 / editorState.gridSize;
+  editorState.viewport = {};
   documentState.sketch.gridSize = editorState.gridSize;
   editorState.cursorX = 0;
   editorState.cursorY = 0;
   editorState.selectedColor = 1;
+  documentDirty = false;
 
   // setStatusMessage("New sketch");  // Removed - no message on boot
 }
@@ -1760,20 +1828,149 @@ void createNewSketch() {
 /**
  * Enter Memory View mode
  */
+bool loadSketchData(int index) {
+  if (index < 0 || index >= sketchList.size()) {
+    return false;
+  }
+  SketchInfo& info = sketchList[index];
+  if (info.dataLoaded) {
+    return true;
+  }
+  if (info.loadAttempted) {
+    return false;
+  }
+  info.loadAttempted = true;
+  const String path = "/bitmap16dx/sketches/" + info.filename;
+  if (!readSketchFile(path.c_str(), sketchOperationBuffer)) {
+    return false;
+  }
+  info.gridSize = sketchOperationBuffer.gridSize;
+  info.paletteSize = sketchOperationBuffer.paletteSize;
+  for (int paletteIndex = 0; paletteIndex < 16; ++paletteIndex) {
+    info.paletteColors[paletteIndex] =
+        sketchOperationBuffer.paletteColors[paletteIndex];
+  }
+  const int pixelCount = info.gridSize * info.gridSize;
+  info.thumbnailPixels.resize(pixelCount);
+  for (int y = 0; y < info.gridSize; ++y) {
+    for (int x = 0; x < info.gridSize; ++x) {
+      info.thumbnailPixels[y * info.gridSize + x] =
+          sketchOperationBuffer.pixels[y][x];
+    }
+  }
+  info.dataLoaded = true;
+  return info.dataLoaded;
+}
+
+bool copyCachedSketch(int index, Sketch& destination) {
+  if (index < 0 || index >= sketchList.size() ||
+      !sketchList[index].dataLoaded) {
+    return false;
+  }
+  const SketchInfo& info = sketchList[index];
+  memset(&destination, 0, sizeof(destination));
+  destination.gridSize = info.gridSize;
+  destination.paletteSize = info.paletteSize;
+  destination.isEmpty = false;
+  for (int paletteIndex = 0; paletteIndex < 16; ++paletteIndex) {
+    destination.paletteColors[paletteIndex] =
+        info.paletteColors[paletteIndex];
+  }
+  for (int y = 0; y < info.gridSize; ++y) {
+    for (int x = 0; x < info.gridSize; ++x) {
+      destination.pixels[y][x] =
+          info.thumbnailPixels[y * info.gridSize + x];
+    }
+  }
+  return true;
+}
+
+bool loadFullSketch(int index, Sketch& destination) {
+  if (!loadSketchData(index)) {
+    return false;
+  }
+  return copyCachedSketch(index, destination);
+}
+
+bool duplicateSketchFromMemory(int index) {
+  if (!loadFullSketch(index, sketchOperationBuffer)) {
+    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
+    return false;
+  }
+  if (!sdCardAvailable && !initSDCard()) {
+    setStatusMessage(StatusMsg::SD_NOT_READY);
+    return false;
+  }
+  if (!Filesystem::createDirectory("/bitmap16dx/sketches")) {
+    setStatusMessage(StatusMsg::SD_NOT_READY);
+    return false;
+  }
+
+  unsigned long counter =
+      PreferenceStore::readUInt32("sketchCounter", 0);
+  Filesystem::listDirectory(
+      "/bitmap16dx/sketches",
+      findHighestSketchCounter,
+      &counter);
+  ++counter;
+  const String filename =
+      "sketch_" + String(counter) + ".dat";
+  const String path =
+      "/bitmap16dx/sketches/" + filename;
+  if (!writeSketchFile(path.c_str(), sketchOperationBuffer)) {
+    setStatusMessage(StatusMsg::FAILED_TO_SAVE);
+    return false;
+  }
+
+  PreferenceStore::writeUInt32("sketchCounter", counter);
+  sketchCatalogValid = false;
+  setStatusMessage("Duplicated");
+  return true;
+}
+
+bool loadNextVisibleSketchThumbnail() {
+  if (sketchList.empty()) {
+    return false;
+  }
+  const bitmap16::MemoryView::VisibleRange range =
+      bitmap16::MemoryView::visibleCatalogRange(
+          viewState.memory.navigation,
+          sketchList.size(),
+          M5Cardputer.Display.width(),
+          M5Cardputer.Display.height());
+  if (range.last < range.first) {
+    return false;
+  }
+
+  // Load the focused tile first so navigation always feels responsive.
+  const int focused = viewState.memory.navigation.cursor - 1;
+  if (focused >= range.first && focused <= range.last &&
+      !sketchList[focused].dataLoaded &&
+      !sketchList[focused].loadAttempted) {
+    loadSketchData(focused);
+    return true;
+  }
+  for (int index = range.first; index <= range.last; ++index) {
+    if (!sketchList[index].dataLoaded &&
+        !sketchList[index].loadAttempted) {
+      loadSketchData(index);
+      return true;
+    }
+  }
+  return false;
+}
+
 bitmap16::MemoryView::Catalog currentMemoryCatalog() {
   static std::vector<bitmap16::MemoryView::Entry> entries;
   entries.resize(sketchList.size());
   for (int index = 0; index < sketchList.size(); ++index) {
     SketchInfo& info = sketchList[index];
-    if (!info.dataLoaded) {
-      const String path = "/bitmap16dx/sketches/" + info.filename;
-      info.dataLoaded = readSketchFile(path.c_str(), info.sketchData);
-    }
     entries[index] = {
-        info.dataLoaded ? info.sketchData.pixels : nullptr,
-        info.dataLoaded ? info.sketchData.gridSize : static_cast<uint8_t>(8),
-        info.dataLoaded ? info.sketchData.paletteColors : nullptr,
-        info.dataLoaded ? info.sketchData.paletteSize : static_cast<uint8_t>(16),
+        info.dataLoaded ? info.thumbnailPixels.data() : nullptr,
+        info.dataLoaded ? info.gridSize : static_cast<uint8_t>(0),
+        info.dataLoaded ? info.gridSize : static_cast<uint8_t>(8),
+        info.dataLoaded ? info.paletteColors : nullptr,
+        info.dataLoaded ? info.paletteSize : static_cast<uint8_t>(16),
         info.filename == documentState.filename && !documentState.isNew,
     };
   }
@@ -1784,7 +1981,9 @@ bitmap16::MemoryView::Catalog currentMemoryCatalog() {
 }
 
 void enterMemoryView() {
-  loadSketchListFromSD();  // Load sketch list (sketch data will be cached on first draw)
+  if (!sketchCatalogValid) {
+    loadSketchListFromSD();
+  }
   app.setView(bitmap16::ViewId::Memory);
   if (focusNewestSketchOnNextMemoryOpen && !sketchList.empty()) {
     viewState.memory.navigation.cursor = 1;
@@ -1811,8 +2010,6 @@ void exitMemoryView() {
   }
   viewState.memory.canvasAvailable = false;
   viewState.memory.ownsCanvas = false;
-  sketchList.clear();
-  sketchList.shrink_to_fit();
 
   drawSharedCanvasView();
 
@@ -2077,20 +2274,13 @@ void loadGallerySketch(int index) {
     return;
   }
 
-  SketchInfo& info = sketchList[index];
-
-  // Load data from SD if not already cached
-  if (!info.dataLoaded) {
-    String fullPath = "/bitmap16dx/sketches/" + info.filename;
-    if (!readSketchFile(fullPath.c_str(), info.sketchData)) {
-      setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
-      return;
-    }
-    info.dataLoaded = true;  // Mark as cached
+  if (!loadFullSketch(index, sketchOperationBuffer)) {
+    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
+    return;
   }
 
   // Render cached sketch through the shared preview view.
-  Sketch& sketch = info.sketchData;
+  Sketch& sketch = sketchOperationBuffer;
   drawPreviewImage(
       sketch.pixels,
       sketch.gridSize,
@@ -2184,9 +2374,9 @@ void exitPreviewView() {
 #if ENABLE_LED_MATRIX
     // Keep displaying the currently viewed sketch on LED matrix
     if (viewState.preview.galleryIndex >= 0 && viewState.preview.galleryIndex < sketchList.size()) {
-      SketchInfo& info = sketchList[viewState.preview.galleryIndex];
-      if (info.dataLoaded) {
-        updateLEDMatrixFromSketch(info.sketchData);
+      if (loadFullSketch(
+              viewState.preview.galleryIndex, sketchOperationBuffer)) {
+        updateLEDMatrixFromSketch(sketchOperationBuffer);
       } else {
         // If data not loaded, clear LED matrix
         LEDMatrix::clear();
@@ -2287,9 +2477,13 @@ bitmap16::Settings currentSettingsValues() {
       ? bitmap16::ExportFormat::Rgb565
       : bitmap16::ExportFormat::Rgb888;
   settings.shakeUndoEnabled = shakeUndoEnabled;
+  settings.saveWarnings = saveWarningsEnabled;
+  settings.indicatorPaletteColor = indicatorPaletteColorEnabled;
+  settings.indicatorLowBattery = indicatorLowBatteryEnabled;
   settings.displayBrightness = displayBrightness;
 #if ENABLE_LED_MATRIX
   settings.matrixBrightness = ledBrightness;
+  settings.matrixEnabled = LEDMatrix::isEnabled();
 #endif
   return settings;
 }
@@ -2372,7 +2566,9 @@ void drawSettingsView() {
 #else
       nullptr,
 #endif
-      showStatus ? statusMessage : nullptr);
+      showStatus ? statusMessage : nullptr,
+      false,
+      true);
   Display::endFrame();
 }
 
@@ -2408,8 +2604,109 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
         input.event == bitmap16::InputEvent::Space;
 
     if (activateSelected) {
-
-      switch(viewState.settings.navigation.cursor) {
+      if (viewState.settings.navigation.page ==
+          bitmap16::SettingsView::Page::RgbMatrix) {
+        switch (viewState.settings.navigation.cursor) {
+          case 0: {  // Enabled
+#if ENABLE_LED_MATRIX
+            const bool enabled = !LEDMatrix::isEnabled();
+            LEDMatrix::setEnabled(enabled);
+            PreferenceStore::writeBool("ledEnabled", enabled);
+            if (enabled) {
+              updateLEDMatrix(false);
+            }
+            setStatusMessage(
+                enabled ? "Matrix: ON" : "Matrix: OFF");
+#endif
+            break;
+          }
+          case 1:  // Layout
+            rgbMatrixUnits = rgbMatrixUnits == 1 ? 4 : 1;
+            PreferenceStore::writeUInt8(
+                "puzzleUnits", rgbMatrixUnits);
+#if ENABLE_LED_MATRIX
+            LEDMatrix::setConfiguration(
+                rgbMatrixUnits, matrixRotation);
+            LEDMatrix::clear();
+            LEDMatrix::show();
+            if (LEDMatrix::isEnabled()) {
+              updateLEDMatrix(false);
+            }
+#endif
+            setStatusMessage(
+                rgbMatrixUnits == 1 ? "1 Unit" : "4 Units");
+            break;
+          case 2: {  // Rotation
+            matrixRotation = (matrixRotation + 1) % 4;
+            PreferenceStore::writeUInt8(
+                "matrixRot", matrixRotation);
+#if ENABLE_LED_MATRIX
+            LEDMatrix::setConfiguration(
+                rgbMatrixUnits, matrixRotation);
+            if (LEDMatrix::isEnabled()) {
+              updateLEDMatrix(false);
+            }
+#endif
+            char rotationMessage[20] = {};
+            snprintf(
+                rotationMessage,
+                sizeof(rotationMessage),
+                "Rotation: %d",
+                matrixRotation * 90);
+            setStatusMessage(rotationMessage);
+            break;
+          }
+          case 3:  // Brightness
+#if ENABLE_LED_MATRIX
+            ledBrightness =
+                ledBrightness >= 20 ? 1 : ledBrightness + 1;
+            LEDMatrix::setBrightness(ledBrightness);
+            PreferenceStore::writeUInt8(
+                "ledBright", ledBrightness);
+            if (LEDMatrix::isEnabled()) {
+              LEDMatrix::show();
+            }
+            {
+              char brightnessMessage[20] = {};
+              snprintf(
+                  brightnessMessage,
+                  sizeof(brightnessMessage),
+                  "LED: %d",
+                  ledBrightness);
+              setStatusMessage(brightnessMessage);
+            }
+#endif
+            break;
+        }
+      } else if (
+          viewState.settings.navigation.page ==
+          bitmap16::SettingsView::Page::IndicatorLed) {
+        switch (viewState.settings.navigation.cursor) {
+          case 0:
+            indicatorPaletteColorEnabled =
+                !indicatorPaletteColorEnabled;
+            PreferenceStore::writeBool(
+                "indPalette", indicatorPaletteColorEnabled);
+            setStatusMessage(
+                indicatorPaletteColorEnabled
+                    ? "Palette LED: ON"
+                    : "Palette LED: OFF");
+            updateIndicatorLED();
+            break;
+          case 1:
+            indicatorLowBatteryEnabled =
+                !indicatorLowBatteryEnabled;
+            PreferenceStore::writeBool(
+                "indBattery", indicatorLowBatteryEnabled);
+            setStatusMessage(
+                indicatorLowBatteryEnabled
+                    ? "Battery LED: ON"
+                    : "Battery LED: OFF");
+            updateIndicatorLED();
+            break;
+        }
+      } else {
+        switch(viewState.settings.navigation.cursor) {
         case 0:  // Theme
           // Toggle theme
           if (currentTheme == &THEME_LIGHT) {
@@ -2444,49 +2741,14 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
                       : "Default: 32x32");
           break;
 
-        case 2:  // RGB Matrix Units
-          // Toggle between 1 and 4 units
-          rgbMatrixUnits = (rgbMatrixUnits == 1) ? 4 : 1;
-
-          // Save preference
-          PreferenceStore::writeUInt8("puzzleUnits", rgbMatrixUnits);
-
-#if ENABLE_LED_MATRIX
-          LEDMatrix::setConfiguration(rgbMatrixUnits, matrixRotation);
-          // Clear all LEDs first (in case going from 4 to 1 unit)
-          LEDMatrix::clear();
-          LEDMatrix::show();
-
-          // Update LED matrix immediately with current canvas
-          if (LEDMatrix::isEnabled()) {
-            updateLEDMatrix(false);  // Show editorState.canvas without cursor while in settings
-          }
-#endif
-
-          setStatusMessage(rgbMatrixUnits == 1 ? "1 Unit" : "4 Units");
+        case 2:  // RGB Matrix submenu
+          viewState.settings.navigation.page =
+              bitmap16::SettingsView::Page::RgbMatrix;
+          viewState.settings.navigation.cursor = 0;
+          viewState.settings.navigation.scrollOffset = 0;
           break;
 
-        case 3:  // Matrix Rotation
-          matrixRotation = (matrixRotation + 1) % 4;
-
-          // Save preference
-          PreferenceStore::writeUInt8("matrixRot", matrixRotation);
-
-#if ENABLE_LED_MATRIX
-          LEDMatrix::setConfiguration(rgbMatrixUnits, matrixRotation);
-          if (LEDMatrix::isEnabled()) {
-            updateLEDMatrix(false);
-          }
-#endif
-
-          {
-            char rotMsg[16];
-            snprintf(rotMsg, sizeof(rotMsg), "Rotation: %d", matrixRotation * 90);
-            setStatusMessage(rotMsg);
-          }
-          break;
-
-        case 4:  // Export Format
+        case 3:  // Export Format
           // Toggle between RGB888 and RGB565
           exportRGB565 = !exportRGB565;
 
@@ -2496,7 +2758,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           setStatusMessage(exportRGB565 ? "Export: RGB565" : "Export: RGB888");
           break;
 
-        case 5:  // Shake Undo
+        case 4:  // Shake Undo
           // Toggle shake-to-undo
           shakeUndoEnabled = !shakeUndoEnabled;
 
@@ -2506,8 +2768,25 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           setStatusMessage(shakeUndoEnabled ? "Shake: ON" : "Shake: OFF");
           break;
 
+        case 5:  // Save warnings
+          saveWarningsEnabled = !saveWarningsEnabled;
+          PreferenceStore::writeBool(
+              "saveWarnings", saveWarningsEnabled);
+          setStatusMessage(
+              saveWarningsEnabled
+                  ? "Save warnings: ON"
+                  : "Save warnings: OFF");
+          break;
+
+        case 6:  // Indicator LED submenu
+          viewState.settings.navigation.page =
+              bitmap16::SettingsView::Page::IndicatorLed;
+          viewState.settings.navigation.cursor = 0;
+          viewState.settings.navigation.scrollOffset = 0;
+          break;
+
 #if ENABLE_BLUETOOTH
-        case 6:  // Bluetooth
+        case 7:  // Bluetooth
           if (btConnected) {
             // Disconnect if connected (Fn+Enter forgets pairing too)
             btDisconnect();
@@ -2563,6 +2842,7 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           }
           break;
 #endif
+        }
       }
 
       // Force redraw (especially important for theme changes)
@@ -2571,7 +2851,18 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
     }
 
     if (input.event == bitmap16::InputEvent::Escape) {
-      exitSettingsView();
+      if (viewState.settings.navigation.page !=
+          bitmap16::SettingsView::Page::Main) {
+        const bool wasIndicator =
+            viewState.settings.navigation.page ==
+            bitmap16::SettingsView::Page::IndicatorLed;
+        viewState.settings.navigation.page =
+            bitmap16::SettingsView::Page::Main;
+        viewState.settings.navigation.cursor = wasIndicator ? 6 : 2;
+        viewState.settings.navigation.scrollOffset = 0;
+      } else {
+        exitSettingsView();
+      }
       settingsViewNeedsRedraw = true;
       lastSettingsViewCursor = -1;
       return;
@@ -2588,6 +2879,8 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
             settingsMovement,
             ENABLE_BLUETOOTH != 0,
             true,
+            true,
+            false,
             true)) {
       settingsViewNeedsRedraw = true;
     }
@@ -2608,16 +2901,39 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
 
   if (btArrowUp && !btPrevUpSettings &&
       bitmap16::SettingsView::moveCursor(
-          viewState.settings.navigation, -1, true, true, true)) {
+          viewState.settings.navigation,
+          -1,
+          true,
+          true,
+          true,
+          false,
+          true)) {
     settingsViewNeedsRedraw = true;
   }
   if (btArrowDown && !btPrevDownSettings &&
       bitmap16::SettingsView::moveCursor(
-          viewState.settings.navigation, 1, true, true, true)) {
+          viewState.settings.navigation,
+          1,
+          true,
+          true,
+          true,
+          false,
+          true)) {
     settingsViewNeedsRedraw = true;
   }
   if (btEscape && !btPrevEscSettings) {
-    exitSettingsView();
+    if (viewState.settings.navigation.page !=
+        bitmap16::SettingsView::Page::Main) {
+      const bool wasIndicator =
+          viewState.settings.navigation.page ==
+          bitmap16::SettingsView::Page::IndicatorLed;
+      viewState.settings.navigation.page =
+          bitmap16::SettingsView::Page::Main;
+      viewState.settings.navigation.cursor = wasIndicator ? 6 : 2;
+      viewState.settings.navigation.scrollOffset = 0;
+    } else {
+      exitSettingsView();
+    }
     settingsViewNeedsRedraw = true;
     lastSettingsViewCursor = -1;
   }
@@ -2687,6 +3003,90 @@ void drawMemoryView(bool) {
       theme,
       showStatus ? statusMessage : nullptr,
       &assets);
+  if (saveWarningVisible) {
+    bitmap16::Canvas& canvas = Display::canvas();
+    const int panelWidth = 192;
+    const int panelHeight = 60;
+    const int panelX = (canvas.width() - panelWidth) / 2;
+    const int panelY = (canvas.height() - panelHeight) / 2;
+
+    canvas.fillRect(
+        panelX + 2,
+        panelY + 2,
+        panelWidth - 4,
+        panelHeight - 4,
+        currentTheme->background);
+    canvas.fillRect(
+        panelX + 2, panelY, panelWidth - 4, 2, currentTheme->text);
+    canvas.fillRect(
+        panelX, panelY + 2, 2, panelHeight - 4, currentTheme->text);
+    canvas.fillRect(
+        panelX + panelWidth - 2,
+        panelY + 2,
+        2,
+        panelHeight - 4,
+        currentTheme->text);
+    canvas.fillRect(
+        panelX + 2,
+        panelY + panelHeight - 2,
+        panelWidth - 4,
+        2,
+        currentTheme->text);
+
+    canvas.setTextAlign(bitmap16::TextAlign::Center);
+    canvas.setTextSize(1);
+    canvas.setTextColor(currentTheme->text);
+    canvas.drawString(
+        "KEEP CHANGES?",
+        canvas.width() / 2,
+        panelY + 13);
+
+    constexpr int discardLabelWidth = 7 * 6;
+    constexpr int saveLabelWidth = 4 * 6;
+    constexpr int cancelLabelWidth = 10 * 6;
+    constexpr int optionGap = 18;
+    constexpr int optionsWidth =
+        discardLabelWidth + optionGap +
+        saveLabelWidth + optionGap +
+        cancelLabelWidth;
+    const int discardLabelX =
+        panelX + (panelWidth - optionsWidth) / 2;
+    const int saveLabelX =
+        discardLabelX + discardLabelWidth + optionGap;
+    const int cancelLabelX =
+        saveLabelX + saveLabelWidth + optionGap;
+    const int optionLabelY = panelY + 34;
+    canvas.setTextAlign(bitmap16::TextAlign::Left);
+    canvas.drawString(
+        "DISCARD",
+        discardLabelX,
+        optionLabelY);
+    canvas.drawString(
+        "SAVE",
+        saveLabelX,
+        optionLabelY);
+    canvas.drawLine(
+        discardLabelX,
+        optionLabelY + 9,
+        discardLabelX + 5,
+        optionLabelY + 9,
+        currentTheme->text);
+    canvas.drawLine(
+        saveLabelX,
+        optionLabelY + 9,
+        saveLabelX + 5,
+        optionLabelY + 9,
+        currentTheme->text);
+
+    canvas.setTextColor(currentTheme->text);
+    canvas.drawString("ESC CANCEL", cancelLabelX, optionLabelY);
+    canvas.drawLine(
+        cancelLabelX,
+        optionLabelY + 9,
+        cancelLabelX + 17,
+        optionLabelY + 9,
+        currentTheme->text);
+  }
   Display::endFrame();
 }
 
@@ -2957,15 +3357,14 @@ void setLEDCell(
 }
 
 /**
- * Update the LED matrix to mirror the current canvas.
- * Supports three display modes:
- *   1. 8×8 canvas + 1 unit → 1:1 mapping (8×8 LEDs)
- *   2. 8×8 canvas + 4 units → scaled 2× (16×16 LEDs, each pixel = 2×2 block)
- *   3. 16×16 canvas + 4 units → 1:1 mapping (16×16 LEDs)
+ * Update the LED matrix to mirror the visible canvas viewport.
+ * Supports 8×8 at 1:1 or scaled 2×, and 16×16 at 1:1 on four units.
+ * Zooming a larger document therefore previews the exact 8×8 or 16×16
+ * region visible on screen rather than rejecting the full document.
  *
  * LED matrix is disabled when:
  *   - LED matrix setting is OFF
- *   - 16×16 canvas with only 1 unit (can't fit)
+ *   - The visible viewport is larger than the configured matrix
  *
  * @param showCursor If true, highlights cursor position (default). If false, shows clean canvas.
  */
@@ -2974,15 +3373,43 @@ void updateLEDMatrix(bool showCursor) {
     return;
   }
   const uint8_t matrixSize = rgbMatrixUnits == 4 ? 16 : 8;
-  if (editorState.gridSize > matrixSize) {
+  const bitmap16::CanvasView::Layout layout =
+      bitmap16::CanvasView::layoutFor(
+          Display::canvas().width(),
+          Display::canvas().height(),
+          static_cast<uint8_t>(editorState.gridSize));
+  const int cellSize =
+      editorState.viewport.cellSize == 0
+          ? layout.cellSize
+          : editorState.viewport.cellSize;
+  const uint8_t visibleSize = static_cast<uint8_t>(
+      min(
+          editorState.gridSize,
+          layout.gridPixels / cellSize));
+  if (visibleSize > matrixSize) {
     clearLEDMatrix();
     return;
   }
 
-  for (uint8_t y = 0; y < editorState.gridSize; ++y) {
-    for (uint8_t x = 0; x < editorState.gridSize; ++x) {
-      const uint8_t pixelValue = editorState.canvas[y][x];
-      const bool isCursor = showCursor && x == editorState.cursorX && y == editorState.cursorY;
+  const uint8_t viewportX = static_cast<uint8_t>(
+      min(
+          max(0, editorState.gridSize - visibleSize),
+          static_cast<int>(editorState.viewport.x)));
+  const uint8_t viewportY = static_cast<uint8_t>(
+      min(
+          max(0, editorState.gridSize - visibleSize),
+          static_cast<int>(editorState.viewport.y)));
+  LEDMatrix::clear();
+  for (uint8_t y = 0; y < visibleSize; ++y) {
+    for (uint8_t x = 0; x < visibleSize; ++x) {
+      const uint8_t sourceX = viewportX + x;
+      const uint8_t sourceY = viewportY + y;
+      const uint8_t pixelValue =
+          editorState.canvas[sourceY][sourceX];
+      const bool isCursor =
+          showCursor &&
+          sourceX == editorState.cursorX &&
+          sourceY == editorState.cursorY;
       bitmap16::LedMapping::Rgb888 color = {};
       if (pixelValue == 0) {
         if (isCursor) {
@@ -2997,7 +3424,7 @@ void updateLEDMatrix(bool showCursor) {
           color.blue = min(255, color.blue + 80);
         }
       }
-      setLEDCell(editorState.gridSize, x, y, color);
+      setLEDCell(visibleSize, x, y, color);
     }
   }
   LEDMatrix::show();
@@ -3170,6 +3597,12 @@ void setup() {
           : bitmap16::ExportFormat::Rgb888;
   storedSettings.shakeUndoEnabled =
       PreferenceStore::readBool("shakeUndo", false);
+  storedSettings.saveWarnings =
+      PreferenceStore::readBool("saveWarnings", true);
+  storedSettings.indicatorPaletteColor =
+      PreferenceStore::readBool("indPalette", true);
+  storedSettings.indicatorLowBattery =
+      PreferenceStore::readBool("indBattery", true);
   storedSettings.matrixBrightness =
       PreferenceStore::readUInt8("ledBright", DEFAULT_LED_BRIGHTNESS);
   storedSettings = bitmap16::normalizeSettings(storedSettings);
@@ -3184,6 +3617,11 @@ void setup() {
   exportRGB565 =
       storedSettings.exportFormat == bitmap16::ExportFormat::Rgb565;
   shakeUndoEnabled = storedSettings.shakeUndoEnabled;
+  saveWarningsEnabled = storedSettings.saveWarnings;
+  indicatorPaletteColorEnabled =
+      storedSettings.indicatorPaletteColor;
+  indicatorLowBatteryEnabled =
+      storedSettings.indicatorLowBattery;
 
   Display::setBrightness(displayBrightness);
 
@@ -3364,10 +3802,76 @@ void handleHelpView(const bitmap16::InputFrame& input) {
 /**
  * Handle Memory View input and rendering
  */
+void finishPendingDocumentAction() {
+  const PendingDocumentAction action = pendingDocumentAction;
+  const int sketchIndex = pendingSketchIndex;
+  pendingDocumentAction = PendingDocumentAction::None;
+  pendingSketchIndex = -1;
+  saveWarningVisible = false;
+
+  if (action == PendingDocumentAction::NewSketch) {
+    createNewSketch();
+  } else if (
+      action == PendingDocumentAction::OpenSketch &&
+      sketchIndex >= 0 &&
+      sketchIndex < sketchList.size()) {
+    openSketch(sketchList[sketchIndex].filename);
+  } else {
+    return;
+  }
+  exitMemoryView();
+}
+
+bool requestDocumentAction(
+    PendingDocumentAction action,
+    int sketchIndex = -1) {
+  if (saveWarningsEnabled && documentDirty) {
+    pendingDocumentAction = action;
+    pendingSketchIndex = sketchIndex;
+    saveWarningVisible = true;
+    drawMemoryView(true);
+    return false;
+  }
+  pendingDocumentAction = action;
+  pendingSketchIndex = sketchIndex;
+  finishPendingDocumentAction();
+  return true;
+}
+
 void handleMemoryView(const bitmap16::InputFrame& input) {
   // Handle memory view controls
   static bool memoryViewNeedsRedraw = true;
   static int lastMemoryViewCursor = -1;
+
+  if (saveWarningVisible) {
+    const char command =
+        input.event == bitmap16::InputEvent::Character
+            ? input.character
+            : '\0';
+    if (command == 's' || command == 'S') {
+      for (int y = 0; y < MAX_currentGridSize; ++y) {
+        for (int x = 0; x < MAX_currentGridSize; ++x) {
+          documentState.sketch.pixels[y][x] =
+              editorState.canvas[y][x];
+        }
+      }
+      documentState.sketch.gridSize = editorState.gridSize;
+      if (saveActiveSketchToSD()) {
+        finishPendingDocumentAction();
+      }
+    } else if (command == 'd' || command == 'D') {
+      documentDirty = false;
+      finishPendingDocumentAction();
+    } else if (input.event == bitmap16::InputEvent::Escape) {
+      pendingDocumentAction = PendingDocumentAction::None;
+      pendingSketchIndex = -1;
+      saveWarningVisible = false;
+      memoryViewNeedsRedraw = true;
+      drawMemoryView(true);
+    }
+    delay(10);
+    return;
+  }
 
   {
     unsigned long now = millis();
@@ -3382,6 +3886,9 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
           M5Cardputer.Display.height(),
           static_cast<float>(deltaTime) / 1000.0f,
           MEMORY_SCROLL_SPEED);
+      if (loadNextVisibleSketchThumbnail()) {
+        memoryViewNeedsRedraw = true;
+      }
       drawMemoryView(memoryViewNeedsRedraw);
       memoryViewNeedsRedraw = false;
       lastMemoryViewCursor = viewState.memory.navigation.cursor;
@@ -3393,8 +3900,13 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
   if (input.actionPressed && viewState.memory.navigation.cursor > 0) {
     int sketchIndex = viewState.memory.navigation.cursor - 1;
     if (sketchIndex < sketchList.size()) {
+      if (!loadFullSketch(sketchIndex, sketchOperationBuffer)) {
+        setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
+        memoryViewNeedsRedraw = true;
+        return;
+      }
       // Save sketch to undo buffer before deleting (so we can restore with Z)
-      Sketch& sketchData = sketchList[sketchIndex].sketchData;
+      Sketch& sketchData = sketchOperationBuffer;
 
       // Copy pixel data to undo buffer
       for (int y = 0; y < MAX_currentGridSize; y++) {
@@ -3428,16 +3940,16 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
 
   if (input.enterPressed) {
     if (viewState.memory.navigation.cursor == 0) {
-      // Create new blank sketch
-      createNewSketch();
+      requestDocumentAction(
+          PendingDocumentAction::NewSketch);
     } else {
-      // Open selected sketch
       int sketchIndex = viewState.memory.navigation.cursor - 1;
       if (sketchIndex < sketchList.size()) {
-        openSketch(sketchList[sketchIndex].filename);
+        requestDocumentAction(
+            PendingDocumentAction::OpenSketch,
+            sketchIndex);
       }
     }
-    exitMemoryView();
     memoryViewNeedsRedraw = true;
     lastMemoryViewCursor = -1;
     return;
@@ -3448,8 +3960,26 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
         input.event == bitmap16::InputEvent::Character
             ? input.character
             : '\0';
+    // Fn+S duplicates the focused sketch without replacing the active
+    // canvas document.
+    if ((command == 's' || command == 'S') &&
+        input.fnHeld &&
+        viewState.memory.navigation.cursor > 0) {
+      const int sketchIndex =
+          viewState.memory.navigation.cursor - 1;
+      if (duplicateSketchFromMemory(sketchIndex)) {
+        loadSketchListFromSD();
+        viewState.memory.navigation.cursor =
+            sketchList.empty() ? 0 : 1;
+        viewState.memory.navigation.scrollOffset = 0;
+        viewState.memory.navigation.scrollPosition = 0.0f;
+        focusNewestSketchOnNextMemoryOpen = false;
+      }
+      memoryViewNeedsRedraw = true;
+      lastMemoryViewCursor = -1;
+    }
     // Z key - Undo (restore last cleared sketch from memory view)
-    if (command == 'z' || command == 'Z') {
+    else if (command == 'z' || command == 'Z') {
         if (editorState.undoAvailable) {
           // Restore the undo buffer to active sketch
           // (This restores canvas-level undo, not sketch deletion)
@@ -3720,7 +4250,7 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
                   viewState.preview.galleryIndex >= 0 &&
                   viewState.preview.galleryIndex < sketchList.size() &&
                   sketchList[viewState.preview.galleryIndex].dataLoaded
-              ? sketchList[viewState.preview.galleryIndex].sketchData.gridSize
+              ? sketchList[viewState.preview.galleryIndex].gridSize
               : static_cast<uint8_t>(editorState.gridSize);
       if (bitmap16::PreviewView::adjustZoom(
               viewState.preview.display,
@@ -3793,15 +4323,32 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
 void handlePaletteView(const bitmap16::InputFrame& input) {
   static bool paletteViewNeedsRedraw = true;
   static int lastPaletteViewCursor = -1;
+  static unsigned long insertionAdvanceAt = 0;
+
+  const unsigned long advanceNow = millis();
+  float insertionStep = 0.0f;
+  if (viewState.palette.navigation.insertionAnimating) {
+    if (insertionAdvanceAt == 0) {
+      insertionAdvanceAt = advanceNow;
+    }
+    const unsigned long elapsed =
+        std::min<unsigned long>(advanceNow - insertionAdvanceAt, 50);
+    insertionAdvanceAt = advanceNow;
+    insertionStep =
+        static_cast<float>(elapsed) /
+        bitmap16::PaletteView::kInsertionDurationMs;
+  } else {
+    insertionAdvanceAt = 0;
+  }
 
   const bitmap16::PaletteView::AnimationResult animation =
       bitmap16::PaletteView::advance(
           viewState.palette.navigation,
           PALETTE_SCROLL_SPEED,
-          PALETTE_INSERT_SPEED);
+          insertionStep);
   if (animation == bitmap16::PaletteView::AnimationResult::SelectionComplete) {
     drawPaletteView(false);
-    delay(500);
+    delay(200);
     viewState.palette.navigation.insertionAnimating = false;
     exitPaletteView();
     paletteViewNeedsRedraw = true;
@@ -3846,6 +4393,7 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
       documentState.sketch.paletteColors[i] =
           pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
     }
+    documentDirty = true;
     LED_CANVAS_UPDATED();
   } else if (input.event == bitmap16::InputEvent::Number0) {
     bitmap16::PaletteView::reset(viewState.palette.navigation, catalog);
@@ -3904,6 +4452,7 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
     for (int i = 0; i < 16; i++) {
       documentState.sketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
     }
+    documentDirty = true;
     LED_CANVAS_UPDATED();
   }
   if (btEscape && !btPrevEscPal) {
@@ -4520,7 +5069,8 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   bool zoomChanged = false;
   static bool moveUndoSaved = false;
   // Check if enter or delete is currently being held (for drawing while moving)
-  bool enterHeld = input.enterHeld;
+  bool enterHeld =
+      (input.enterHeld && !input.lHeld) || input.ctrlHeld;
   bool deleteHeld = input.deleteHeld;
 
   if (input.actionPressed) {
@@ -4538,7 +5088,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
 #if ENABLE_BLUETOOTH
   // Merge BT input with keyboard input
   // btSpace also acts as draw (BT only feature)
-  enterHeld = enterHeld || btEnter || btSpace;
+  enterHeld = (enterHeld || btEnter || btSpace) && !input.lHeld;
   deleteHeld = deleteHeld || btBackspace;
 
   // Check for BT Fn modifier (Alt key)
@@ -4578,7 +5128,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
 
   // Process BT Enter/Space/Backspace for pixel operations
   // Space on BT keyboard also draws (BT-only feature)
-  if ((btEnter || btSpace) && !input.enterHeld) {
+  if ((btEnter || btSpace) && !input.enterHeld && !input.lHeld) {
     saveUndo();
     editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
     pixelPlaced = true;
@@ -4683,10 +5233,13 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     // F key - Flood fill
     else if (btChar == 'f' || btChar == 'F') {
       saveUndo();
-      floodFill(editorState.cursorX, editorState.cursorY, editorState.selectedColor);
+      floodFill(
+          editorState.cursorX,
+          editorState.cursorY,
+          fnHeld ? 0 : editorState.selectedColor);
       floodFilled = true;
       LED_CANVAS_UPDATED();
-      setStatusMessage(StatusMsg::FILL);
+      setStatusMessage(fnHeld ? "Erase Fill" : StatusMsg::FILL);
     }
     // B key (with Fn/Alt) - Charging mode
     else if ((btChar == 'b' || btChar == 'B') && fnHeld) {
@@ -4718,7 +5271,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   editorState.erasePressed = erasePressed;
   editorState.fillPressed = fillPressed;
 
-  if (input.enterPressed) {
+  if ((input.enterPressed && !input.lHeld) || input.ctrlPressed) {
     saveUndo();
     editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
     pixelPlaced = true;
@@ -4806,10 +5359,13 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     }
   } else if (command == 'f' || command == 'F') {
     saveUndo();
-    floodFill(editorState.cursorX, editorState.cursorY, editorState.selectedColor);
+    floodFill(
+        editorState.cursorX,
+        editorState.cursorY,
+        fnHeld ? 0 : editorState.selectedColor);
     floodFilled = true;
     LED_CANVAS_UPDATED();
-    setStatusMessage(StatusMsg::FILL);
+    setStatusMessage(fnHeld ? "Erase Fill" : StatusMsg::FILL);
   } else if (command == 'h' || command == 'H') {
     enterHelpView();
   } else if (command == 't' || command == 'T') {
@@ -4862,6 +5418,25 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
         static_cast<uint8_t>(editorState.gridSize),
         static_cast<uint8_t>(editorState.cursorX),
         static_cast<uint8_t>(editorState.cursorY));
+    if (zoomChanged) {
+      const bitmap16::CanvasView::Layout zoomLayout =
+          bitmap16::CanvasView::layoutFor(
+              Display::canvas().width(),
+              Display::canvas().height(),
+              static_cast<uint8_t>(editorState.gridSize));
+      const int zoomCellSize =
+          editorState.viewport.cellSize == 0
+              ? zoomLayout.cellSize
+              : editorState.viewport.cellSize;
+      char zoomMessage[16] = {};
+      snprintf(
+          zoomMessage,
+          sizeof(zoomMessage),
+          "ZOOM: %dX",
+          zoomCellSize / zoomLayout.cellSize);
+      setStatusMessage(zoomMessage);
+      LED_CANVAS_UPDATED();
+    }
   }
 
 #if ENABLE_LED_MATRIX
@@ -4895,7 +5470,32 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       input.event == bitmap16::InputEvent::Left ||
       input.event == bitmap16::InputEvent::Right;
   if (directionEvent) {
-    if (mHeld) {
+    const bitmap16::CanvasView::Layout currentLayout =
+        bitmap16::CanvasView::layoutFor(
+            Display::canvas().width(),
+            Display::canvas().height(),
+            static_cast<uint8_t>(editorState.gridSize));
+    const int currentCellSize =
+        editorState.viewport.cellSize == 0
+            ? currentLayout.cellSize
+            : editorState.viewport.cellSize;
+    const bool zoomed = currentCellSize > currentLayout.cellSize;
+    if (fnHeld && zoomed) {
+      const int previousX = editorState.cursorX;
+      const int previousY = editorState.cursorY;
+      if (input.event == bitmap16::InputEvent::Up) {
+        editorState.cursorY = 0;
+      } else if (input.event == bitmap16::InputEvent::Down) {
+        editorState.cursorY = editorState.gridSize - 1;
+      } else if (input.event == bitmap16::InputEvent::Left) {
+        editorState.cursorX = 0;
+      } else {
+        editorState.cursorX = editorState.gridSize - 1;
+      }
+      moved =
+          previousX != editorState.cursorX ||
+          previousY != editorState.cursorY;
+    } else if (mHeld) {
       if (!moveUndoSaved) {
         saveUndo();
         moveUndoSaved = true;
@@ -5015,6 +5615,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   // Update status expiry before the shared full-frame renderer runs.
   drawStatusMessage();
   drawBatteryIndicator();
+  updateIndicatorLED();
 
   const bool canvasViewChanged =
       moved || pixelPlaced || colorChanged || canvasCleared ||
@@ -5023,6 +5624,10 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       zoomChanged ||
       toolStateChanged ||
       statusMessage[0] != '\0' || statusMessageJustCleared;
+  if (pixelPlaced || canvasCleared || undoPerformed || gridToggled ||
+      floodFilled || canvasMoved) {
+    documentDirty = true;
+  }
   if (canvasViewChanged) {
     drawSharedCanvasView();
     statusMessageJustCleared = false;

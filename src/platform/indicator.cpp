@@ -6,6 +6,12 @@ namespace {
 
 constexpr uint8_t kRgbPin = 21;
 constexpr uint8_t kEnablePin = 38;
+constexpr uint8_t kBrightness = 64;
+
+uint8_t applyBrightness(uint8_t component) {
+  return static_cast<uint8_t>(
+      (static_cast<uint16_t>(component) * kBrightness + 127) / 255);
+}
 
 }  // namespace
 
@@ -16,7 +22,11 @@ void Indicator::init() {
 }
 
 void Indicator::setColor(uint8_t red, uint8_t green, uint8_t blue) {
-  rgbLedWrite(kRgbPin, red, green, blue);
+  rgbLedWrite(
+      kRgbPin,
+      applyBrightness(red),
+      applyBrightness(green),
+      applyBrightness(blue));
 }
 
 void Indicator::off() {

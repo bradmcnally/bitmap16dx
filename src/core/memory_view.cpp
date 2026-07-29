@@ -72,7 +72,8 @@ void drawThumbnail(
     const int artworkY = y + (kThumbnailSize - artworkSize) / 2;
     for (int sourceY = 0; sourceY < entry.gridSize; ++sourceY) {
       for (int sourceX = 0; sourceX < entry.gridSize; ++sourceX) {
-        const uint8_t index = entry.pixels[sourceY][sourceX];
+        const uint8_t index =
+            entry.pixels[sourceY * entry.pixelStride + sourceX];
         if (index == 0) {
           continue;
         }
@@ -218,6 +219,30 @@ int columnCount(int width) {
 
 int thumbnailSize() {
   return kThumbnailSize;
+}
+
+VisibleRange visibleCatalogRange(
+    const State& state,
+    int sketchCount,
+    int width,
+    int height) {
+  VisibleRange range;
+  const int columns = columnCount(width);
+  const int baseY =
+      kTitleHeight + kTopMargin - static_cast<int>(state.scrollPosition);
+  for (int item = 1; item <= sketchCount; ++item) {
+    const int y =
+        baseY + (item / columns) * (kThumbnailSize + kGap);
+    if (y < -kThumbnailSize - kGap || y > height + kGap) {
+      continue;
+    }
+    const int catalogIndex = item - 1;
+    range.first = range.last < 0
+        ? catalogIndex
+        : std::min(range.first, catalogIndex);
+    range.last = std::max(range.last, catalogIndex);
+  }
+  return range;
 }
 
 void clamp(State& state, int sketchCount) {

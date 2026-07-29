@@ -28,6 +28,7 @@ class Editor {
   bool draw();
   bool erase();
   bool floodFill();
+  bool floodFill(uint8_t replacementColor);
   bool clear();
   bool shift(int dx, int dy, bool saveUndoState = true);
   bool toggleGridSize();

@@ -338,7 +338,8 @@ void rebuildMemoryEntries(
        ++index) {
     const bitmap16::Sketch& sketch = workspace.sketches()[index];
     entries.push_back({
-        sketch.pixels,
+        &sketch.pixels[0][0],
+        static_cast<uint8_t>(bitmap16::kMaxGridSize),
         sketch.gridSize,
         sketch.paletteColors,
         sketch.paletteSize,
@@ -848,6 +849,7 @@ int main(int argc, char** argv) {
   int galleryIndex = 0;
   Uint32 galleryLastAdvance = SDL_GetTicks();
   Uint32 paletteCompletionAt = 0;
+  Uint32 paletteInsertionAdvanceAt = 0;
   bool rulersVisible = false;
   renderCurrentView(
       currentView,
@@ -1068,14 +1070,30 @@ int main(int argc, char** argv) {
   };
   const auto advancePaletteAnimation = [&]() {
     if (currentView != DesktopView::Palette) return;
+    float insertionStep = 0.0f;
+    if (paletteState.insertionAnimating) {
+      const Uint32 now = SDL_GetTicks();
+      if (paletteInsertionAdvanceAt == 0) {
+        paletteInsertionAdvanceAt = now;
+      }
+      const Uint32 elapsed = std::min<Uint32>(
+          now - paletteInsertionAdvanceAt, 50u);
+      paletteInsertionAdvanceAt = now;
+      insertionStep =
+          static_cast<float>(elapsed) /
+          bitmap16::PaletteView::kInsertionDurationMs;
+    } else {
+      paletteInsertionAdvanceAt = 0;
+    }
     const bitmap16::PaletteView::AnimationResult result =
-        bitmap16::PaletteView::advance(paletteState);
+        bitmap16::PaletteView::advance(
+            paletteState, 0.25f, insertionStep);
     if (result ==
         bitmap16::PaletteView::AnimationResult::SelectionComplete) {
       if (paletteCompletionAt == 0) {
         paletteCompletionAt = SDL_GetTicks();
         renderNow();
-      } else if (SDL_GetTicks() - paletteCompletionAt >= 500u) {
+      } else if (SDL_GetTicks() - paletteCompletionAt >= 200u) {
         paletteState.insertionAnimating = false;
         paletteCompletionAt = 0;
         currentView = DesktopView::Canvas;
@@ -1139,11 +1157,64 @@ int main(int argc, char** argv) {
   AxisRepeat dpadY;
   bool controllerMoveHeld = false;
   bool controllerShiftStarted = false;
+  bool keyboardShiftStarted = false;
   bool controllerSaveChordLatched = false;
   bool focusNewestSketchOnNextMemoryOpen = false;
   bool previewLeftTriggerLatched = false;
   bool previewRightTriggerLatched = false;
   bool quitRequested = false;
+  bitmap16::Sketch savedDocumentState = editor.sketch();
+  bool documentDirty = false;
+  const auto documentsMatch =
+      [](const bitmap16::Sketch& left, const bitmap16::Sketch& right) {
+        return left.gridSize == right.gridSize &&
+            left.paletteSize == right.paletteSize &&
+            left.isEmpty == right.isEmpty &&
+            std::memcmp(
+                left.paletteColors,
+                right.paletteColors,
+                sizeof(left.paletteColors)) == 0 &&
+            std::memcmp(
+                left.pixels,
+                right.pixels,
+                sizeof(left.pixels)) == 0;
+      };
+  const auto confirmUnsavedChanges = [&]() {
+    if (!settings.saveWarnings || !documentDirty) {
+      return true;
+    }
+    const SDL_MessageBoxButtonData buttons[] = {
+        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Save"},
+        {0, 2, "Discard"},
+        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
+    };
+    const SDL_MessageBoxData message = {
+        SDL_MESSAGEBOX_WARNING,
+        window,
+        "Unsaved changes",
+        "Save changes before continuing?",
+        3,
+        buttons,
+        nullptr,
+    };
+    int selected = 0;
+    if (SDL_ShowMessageBox(&message, &selected) < 0 || selected == 0) {
+      return false;
+    }
+    if (selected == 1) {
+      if (!workspace.saveSketch(editor, false)) {
+        setDesktopStatus("Failed to save");
+        return false;
+      }
+      refreshMemoryCatalog();
+      savedDocumentState = editor.sketch();
+      documentDirty = false;
+      setDesktopStatus("Saved");
+      return true;
+    }
+    documentDirty = false;
+    return true;
+  };
   bool running = !smokeTest;
   while (running) {
     SDL_PumpEvents();
@@ -1387,13 +1458,13 @@ int main(int argc, char** argv) {
     }
 
     if (event.type == SDL_QUIT) {
-      running = false;
+      if (confirmUnsavedChanges()) running = false;
       continue;
     }
     if (event.type == SDL_WINDOWEVENT &&
         event.window.event == SDL_WINDOWEVENT_CLOSE &&
         event.window.windowID == SDL_GetWindowID(window)) {
-      running = false;
+      if (confirmUnsavedChanges()) running = false;
       continue;
     }
 #ifdef BITMAP16_STEAM_DECK
@@ -1579,6 +1650,7 @@ int main(int argc, char** argv) {
         event.key.keysym.sym == SDLK_m &&
         desktopMoveModeActive) {
       desktopMoveModeActive = false;
+      keyboardShiftStarted = false;
       renderNow();
       continue;
     }
@@ -1587,6 +1659,7 @@ int main(int argc, char** argv) {
         event.window.event == SDL_WINDOWEVENT_FOCUS_LOST &&
         desktopMoveModeActive) {
       desktopMoveModeActive = false;
+      keyboardShiftStarted = false;
       renderNow();
       continue;
     }
@@ -1624,10 +1697,12 @@ int main(int argc, char** argv) {
         const bool saveUndo =
             controllerMoveHeld
                 ? !controllerShiftStarted
-                : event.key.repeat == 0;
+                : !keyboardShiftStarted;
         const bool shifted = editor.shift(dx, dy, saveUndo);
         if (shifted && controllerMoveHeld) {
           controllerShiftStarted = true;
+        } else if (shifted) {
+          keyboardShiftStarted = true;
         }
         return shifted;
       }
@@ -1687,13 +1762,20 @@ int main(int argc, char** argv) {
       } else if (currentView == DesktopView::Help) {
         currentView = returnView;
         previewOverride = nullptr;
+      } else if (
+          currentView == DesktopView::Settings &&
+          settingsState.page ==
+              bitmap16::SettingsView::Page::RgbMatrix) {
+        settingsState.page = bitmap16::SettingsView::Page::Main;
+        settingsState.cursor = 2;
+        settingsState.scrollOffset = 0;
       } else if (currentView != DesktopView::Canvas) {
         currentView = DesktopView::Canvas;
         previewOverride = nullptr;
       }
       changed = true;
     } else if (key == SDLK_q) {
-      running = false;
+      if (confirmUnsavedChanges()) running = false;
     } else if (currentView == DesktopView::Charging) {
       currentView = DesktopView::Canvas;
       changed = true;
@@ -1721,6 +1803,22 @@ int main(int argc, char** argv) {
           editor.sketch().gridSize,
           editor.cursorX(),
           editor.cursorY());
+      if (changed) {
+        const bitmap16::CanvasView::Layout zoomLayout =
+            bitmap16::CanvasView::layoutFor(
+                width, height, editor.sketch().gridSize);
+        const int zoomCellSize =
+            desktopCanvasViewport.cellSize == 0
+                ? zoomLayout.cellSize
+                : desktopCanvasViewport.cellSize;
+        char zoomStatus[16] = {};
+        std::snprintf(
+            zoomStatus,
+            sizeof(zoomStatus),
+            "Zoom: %dx",
+            zoomCellSize / zoomLayout.cellSize);
+        setDesktopStatus(zoomStatus);
+      }
     } else if (
         currentView == DesktopView::Preview &&
         (plusKey || minusKey)) {
@@ -1839,6 +1937,8 @@ int main(int argc, char** argv) {
     } else if (currentView == DesktopView::Canvas && key == SDLK_s) {
       if (workspace.saveSketch(editor, altHeld)) {
         refreshMemoryCatalog();
+        savedDocumentState = editor.sketch();
+        documentDirty = false;
         SDL_Log(altHeld ? "Saved new sketch" : "Saved sketch");
         setDesktopStatus("Saved");
         rumble(0x1000, 0x3800, 75);
@@ -1865,19 +1965,25 @@ int main(int argc, char** argv) {
       }
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_n) {
+      if (!confirmUnsavedChanges()) {
+        changed = true;
+      } else {
       workspace.newSketch(editor);
+      savedDocumentState = editor.sketch();
+      documentDirty = false;
       desktopCanvasViewport = {};
       activePalette = findActivePalette(editor.sketch(), paletteEntries);
       setDesktopStatus("New sketch");
       changed = true;
+      }
     } else if (currentView == DesktopView::Canvas && key == SDLK_c) {
       const uint8_t next = static_cast<uint8_t>(
           editor.selectedColor() % editor.sketch().paletteSize + 1);
       editor.setSelectedColor(next);
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_f) {
-      editor.floodFill();
-      setDesktopStatus("Fill");
+      editor.floodFill(altHeld ? 0 : editor.selectedColor());
+      setDesktopStatus(altHeld ? "Erase Fill" : "Fill");
       changed = true;
     } else if (currentView == DesktopView::Canvas && key == SDLK_z) {
       const bool performed = altHeld ? editor.redo() : editor.undo();
@@ -2003,7 +2109,13 @@ int main(int argc, char** argv) {
               platformHasQuitSetting());
       changed = action != bitmap16::SettingsView::Action::None;
       if (action == bitmap16::SettingsView::Action::QuitRequested) {
-        quitRequested = true;
+        if (confirmUnsavedChanges()) quitRequested = true;
+      } else if (
+          action ==
+              bitmap16::SettingsView::Action::MatrixEnabledChanged &&
+          matrixSimulator != nullptr) {
+        matrixSimulator->setEnabled(settings.matrixEnabled);
+        workspace.saveSettings();
       } else if (changed) {
         workspace.saveSettings();
       }
@@ -2027,16 +2139,25 @@ int main(int argc, char** argv) {
     } else if (
         currentView == DesktopView::Memory && key == SDLK_RETURN) {
       if (memoryState.cursor == 0) {
+        if (!confirmUnsavedChanges()) {
+          changed = true;
+        } else {
         workspace.newSketch(editor);
+        savedDocumentState = editor.sketch();
+        documentDirty = false;
         desktopCanvasViewport = {};
         activePalette = findActivePalette(editor.sketch(), paletteEntries);
         currentView = DesktopView::Canvas;
         refreshMemoryCatalog();
         setDesktopStatus("New sketch");
         changed = true;
-      } else if (workspace.openSketch(
+        }
+      } else if (confirmUnsavedChanges() &&
+                 workspace.openSketch(
                      static_cast<std::size_t>(memoryState.cursor - 1),
                      editor)) {
+        savedDocumentState = editor.sketch();
+        documentDirty = false;
         desktopCanvasViewport = {};
         activePalette = findActivePalette(editor.sketch(), paletteEntries);
         currentView = DesktopView::Canvas;
@@ -2053,6 +2174,8 @@ int main(int argc, char** argv) {
       if (sourceIndex < workspace.sketches().size()) {
         editor.reset(workspace.sketches()[sourceIndex]);
         if (workspace.saveSketch(editor, true)) {
+          savedDocumentState = editor.sketch();
+          documentDirty = false;
           refreshMemoryCatalog();
           memoryState.cursor = 1;
           memoryState.scrollOffset = 0;
@@ -2132,6 +2255,8 @@ int main(int argc, char** argv) {
       galleryLastAdvance = SDL_GetTicks();
       changed = true;
     }
+    documentDirty =
+        !documentsMatch(editor.sketch(), savedDocumentState);
     if (changed) renderNow();
   }
 

@@ -50,6 +50,24 @@ void drawShadow(
   canvas.fillRect(x + width, y + height, 2, 2, theme.background);
 }
 
+void cutPanelCorners(
+    Canvas& canvas,
+    int x,
+    int y,
+    int width,
+    int height,
+    const Theme& theme) {
+  canvas.fillRect(x, y, 2, 2, theme.background);
+  canvas.fillRect(x + width - 2, y, 2, 2, theme.background);
+  canvas.fillRect(x, y + height - 2, 2, 2, theme.background);
+  canvas.fillRect(
+      x + width - 2,
+      y + height - 2,
+      2,
+      2,
+      theme.shadow);
+}
+
 void drawIndexedIcon(
     Canvas& canvas,
     int x,
@@ -81,25 +99,13 @@ void drawIndexedIcon(
 
 void cutGridCorners(
     Canvas& canvas, const Layout& layout, const Theme& theme) {
-  canvas.fillRect(layout.gridX, layout.gridY, 2, 2, theme.background);
-  canvas.fillRect(
-      layout.gridX + layout.gridPixels - 2,
-      layout.gridY,
-      2,
-      2,
-      theme.background);
-  canvas.fillRect(
+  cutPanelCorners(
+      canvas,
       layout.gridX,
-      layout.gridY + layout.gridPixels - 2,
-      2,
-      2,
-      theme.background);
-  canvas.fillRect(
-      layout.gridX + layout.gridPixels - 2,
-      layout.gridY + layout.gridPixels - 2,
-      2,
-      2,
-      theme.shadow);
+      layout.gridY,
+      layout.gridPixels,
+      layout.gridPixels,
+      theme);
 }
 
 }  // namespace
@@ -249,13 +255,9 @@ void render(
           layout.gridX + (x - viewportX) * cellSize;
       const int cellY =
           layout.gridY + (y - viewportY) * cellSize;
-      const bool selected = x == state.cursorX && y == state.cursorY;
       if (pixel != 0) {
-        uint16_t color = Palette::colorForIndex(
+        const uint16_t color = Palette::colorForIndex(
             state.paletteColors, state.paletteSize, pixel);
-        if (selected) {
-          color = neutralizeCursorColor(scaleColor(color, 0.8f));
-        }
         canvas.fillRect(
             cellX, cellY, cellSize, cellSize, color);
       } else {
@@ -265,11 +267,8 @@ void render(
             const bool dark =
                 (((cellX + px) / checkSize) +
                  ((cellY + py) / checkSize)) % 2 == 0;
-            uint16_t color = dark ? theme.cellDark : theme.cellLight;
-            if (selected) {
-              color = neutralizeCursorColor(scaleColor(
-                  color, theme.dark ? (dark ? 0.4f : 0.2f) : 0.8f));
-            }
+            const uint16_t color =
+                dark ? theme.cellDark : theme.cellLight;
             canvas.fillRect(
                 cellX + px,
                 cellY + py,
@@ -278,24 +277,61 @@ void render(
                 color);
           }
         }
-        if (state.rulersVisible) {
-          const int centerX =
-              layout.gridX +
-              (logicalSize / 2 - viewportX) * cellSize;
-          const int centerY =
-              layout.gridY +
-              (logicalSize / 2 - viewportY) * cellSize;
-          if (centerX >= cellX &&
-              centerX < cellX + cellSize) {
-            canvas.drawFastVLine(
-                centerX, cellY, cellSize, theme.centerLine);
-          }
-          if (centerY >= cellY &&
-              centerY < cellY + cellSize) {
-            canvas.drawFastHLine(
-                cellX, centerY, cellSize, theme.centerLine);
-          }
+      }
+    }
+  }
+
+  // Rulers use the same neutral darkening as the cursor and sit above both
+  // painted artwork and the empty-cell checkerboard.
+  if (state.rulersVisible) {
+    // The ruler belongs to the visible canvas frame, not the full document.
+    // Keeping it at the viewport center means it remains visible while a
+    // zoomed document pans underneath it.
+    const int centerX =
+        layout.gridX + layout.gridPixels / 2;
+    const int centerY =
+        layout.gridY + layout.gridPixels / 2;
+    for (int pixelY = layout.gridY;
+         pixelY < layout.gridY + layout.gridPixels;
+         ++pixelY) {
+      for (int pixelX = layout.gridX;
+           pixelX < layout.gridX + layout.gridPixels;
+           ++pixelX) {
+        if (pixelX == centerX || pixelY == centerY) {
+          canvas.drawPixel(
+              pixelX,
+              pixelY,
+              neutralizeCursorColor(
+                  scaleColor(canvas.readPixel(pixelX, pixelY), 0.8f)));
         }
+      }
+    }
+  }
+
+  // Apply the cursor last so a ruler passing through the focused cell remains
+  // beneath the cursor treatment.
+  if (!state.moveMode &&
+      state.cursorX >= viewportX && state.cursorX < viewportRight &&
+      state.cursorY >= viewportY && state.cursorY < viewportBottom) {
+    const int selectedCellX =
+        layout.gridX + (state.cursorX - viewportX) * cellSize;
+    const int selectedCellY =
+        layout.gridY + (state.cursorY - viewportY) * cellSize;
+    const bool selectedEmpty =
+        state.pixels[state.cursorY][state.cursorX] == 0;
+    for (int py = 0; py < cellSize; ++py) {
+      for (int px = 0; px < cellSize; ++px) {
+        // Use one transform across an empty dark-theme cell. Alternating the
+        // strength per checker tile compounds the underlying checkerboard and
+        // creates a distracting secondary pattern.
+        const float shade = selectedEmpty && theme.dark ? 0.5f : 0.8f;
+        const int pixelX = selectedCellX + px;
+        const int pixelY = selectedCellY + py;
+        canvas.drawPixel(
+            pixelX,
+            pixelY,
+            neutralizeCursorColor(
+                scaleColor(canvas.readPixel(pixelX, pixelY), shade)));
       }
     }
   }
@@ -303,7 +339,12 @@ void render(
   cutGridCorners(canvas, layout, theme);
 
   const int columns = state.paletteSize > 8 ? 2 : 1;
+#ifdef BITMAP16_STEAM_DECK
   const int paletteStartX = layout.paletteX;
+#else
+  const int paletteStartX =
+      canvas.width() - columns * layout.paletteSwatchSize - 5;
+#endif
   const int paletteHeight =
       std::min<int>(8, state.paletteSize) * layout.paletteSwatchSize;
   drawShadow(
@@ -441,29 +482,46 @@ void render(
     }
 
     if (zoomed) {
-      constexpr int minimapSize = 24;
+      // Only 16x16 and 32x32 canvases can enter the zoomed state. A fixed
+      // 32px panel renders them at integer 2x and 1x scales respectively.
+      constexpr int minimapSize = 32;
+      const int minimapScale = minimapSize / logicalSize;
       const int minimapX = layout.toolsX;
       const int minimapY = toolsY + 82;
+      drawShadow(
+          canvas,
+          minimapX,
+          minimapY,
+          minimapSize,
+          minimapSize,
+          theme);
       canvas.fillRect(
           minimapX,
           minimapY,
           minimapSize,
           minimapSize,
           theme.cellDark);
-      for (int mapY = 0; mapY < minimapSize; ++mapY) {
-        const int sourceY = mapY * logicalSize / minimapSize;
-        for (int mapX = 0; mapX < minimapSize; ++mapX) {
-          const int sourceX = mapX * logicalSize / minimapSize;
+      for (int sourceY = 0; sourceY < logicalSize; ++sourceY) {
+        for (int sourceX = 0; sourceX < logicalSize; ++sourceX) {
           const uint8_t index = state.pixels[sourceY][sourceX];
           if (index > 0) {
-            canvas.drawPixel(
-                minimapX + mapX,
-                minimapY + mapY,
+            canvas.fillRect(
+                minimapX + sourceX * minimapScale,
+                minimapY + sourceY * minimapScale,
+                minimapScale,
+                minimapScale,
                 Palette::colorForIndex(
                     state.paletteColors, state.paletteSize, index));
           }
         }
       }
+      cutPanelCorners(
+          canvas,
+          minimapX,
+          minimapY,
+          minimapSize,
+          minimapSize,
+          theme);
       const int keyX =
           minimapX + viewportX * minimapSize / logicalSize;
       const int keyY =
@@ -511,6 +569,7 @@ void render(
   if (state.status != nullptr && state.status[0] != '\0') {
     canvas.setTextAlign(
         state.statusCentered ? TextAlign::Center : TextAlign::Left);
+    canvas.setTextSize(1);
     canvas.drawString(
         state.status,
         state.statusCentered ? canvas.width() / 2 : layout.statusX,
@@ -523,6 +582,7 @@ void render(
     char battery[16];
     std::snprintf(battery, sizeof(battery), "%d%%", state.batteryPercent);
     canvas.setTextAlign(TextAlign::Center);
+    canvas.setTextSize(1);
     canvas.drawString(battery, 14, 91);
   }
 }

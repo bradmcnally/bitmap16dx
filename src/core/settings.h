@@ -22,6 +22,9 @@ struct Settings {
   ExportFormat exportFormat = ExportFormat::Rgb888;
   bool shakeUndoEnabled = false;
   bool matrixEnabled = false;
+  bool saveWarnings = true;
+  bool indicatorPaletteColor = true;
+  bool indicatorLowBattery = true;
   uint8_t displayBrightness = 80;
   uint8_t matrixBrightness = 5;
 };

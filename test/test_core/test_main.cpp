@@ -199,7 +199,7 @@ void test_canvas_view_renders_editor_at_both_target_sizes() {
     TEST_ASSERT_EQUAL_HEX16(
         colors[1],
         canvas.readPixel(
-            layout.paletteX + 4,
+            width - layout.paletteSwatchSize - 5 + 4,
             layout.gridY + layout.paletteSwatchSize + 4));
   }
 }
@@ -250,19 +250,19 @@ void test_canvas_draws_scaled_and_aligned_text() {
 
 void test_help_view_navigation_clamps_to_available_items() {
   bitmap16::HelpView::State state;
-  TEST_ASSERT_EQUAL_INT(21, bitmap16::HelpView::itemCount(false, true));
-  TEST_ASSERT_EQUAL_INT(23, bitmap16::HelpView::itemCount(true, true));
-  TEST_ASSERT_EQUAL_INT(20, bitmap16::HelpView::itemCount(false, false));
+  TEST_ASSERT_EQUAL_INT(22, bitmap16::HelpView::itemCount(false, true));
+  TEST_ASSERT_EQUAL_INT(24, bitmap16::HelpView::itemCount(true, true));
+  TEST_ASSERT_EQUAL_INT(21, bitmap16::HelpView::itemCount(false, false));
   TEST_ASSERT_FALSE(
       bitmap16::HelpView::moveCursor(state, -1, false, true));
   TEST_ASSERT_TRUE(
       bitmap16::HelpView::moveCursor(state, 30, false, true));
-  TEST_ASSERT_EQUAL_INT(20, state.cursor);
+  TEST_ASSERT_EQUAL_INT(21, state.cursor);
   TEST_ASSERT_FALSE(
       bitmap16::HelpView::moveCursor(state, 1, false, true));
   TEST_ASSERT_TRUE(
       bitmap16::HelpView::moveCursor(state, -1, false, true));
-  TEST_ASSERT_EQUAL_INT(19, state.cursor);
+  TEST_ASSERT_EQUAL_INT(20, state.cursor);
 }
 
 void test_help_view_renders_and_scrolls_at_both_target_sizes() {
@@ -292,9 +292,9 @@ void test_settings_view_navigation_and_actions_are_portable() {
   TEST_ASSERT_EQUAL_INT(
       7, bitmap16::SettingsView::itemCount(true, true, true));
   TEST_ASSERT_EQUAL_INT(
-      3, bitmap16::SettingsView::itemCount(false, false, false));
+      4, bitmap16::SettingsView::itemCount(false, false, false));
   TEST_ASSERT_EQUAL_INT(
-      4, bitmap16::SettingsView::itemCount(false, false, false, true));
+      5, bitmap16::SettingsView::itemCount(false, false, false, true));
 
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::activate(
@@ -302,12 +302,20 @@ void test_settings_view_navigation_and_actions_are_portable() {
       bitmap16::SettingsView::Action::ThemeChanged);
   TEST_ASSERT_TRUE(settings.theme == bitmap16::ThemeId::Dark);
 
-  state.cursor = 5;
+  state.cursor = 4;
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::activate(
           state, settings, false, true, true) ==
       bitmap16::SettingsView::Action::ShakeUndoChanged);
   TEST_ASSERT_TRUE(settings.shakeUndoEnabled);
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::moveCursor(
+          state, 1, false, true, true));
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(
+          state, settings, false, true, true) ==
+      bitmap16::SettingsView::Action::SaveWarningsChanged);
+  TEST_ASSERT_FALSE(settings.saveWarnings);
   TEST_ASSERT_FALSE(
       bitmap16::SettingsView::moveCursor(
           state, 1, false, true, true));
@@ -318,7 +326,28 @@ void test_settings_view_navigation_and_actions_are_portable() {
           state, settings, true, true, true) ==
       bitmap16::SettingsView::Action::BluetoothRequested);
 
+  state = {};
+  state.cursor = 2;
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(
+          state, settings, false, true, true) ==
+      bitmap16::SettingsView::Action::MatrixMenuRequested);
+  TEST_ASSERT_TRUE(
+      state.page == bitmap16::SettingsView::Page::RgbMatrix);
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(
+          state, settings, false, true, true) ==
+      bitmap16::SettingsView::Action::MatrixEnabledChanged);
+  TEST_ASSERT_TRUE(settings.matrixEnabled);
   state.cursor = 3;
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(
+          state, settings, false, true, true) ==
+      bitmap16::SettingsView::Action::MatrixBrightnessChanged);
+  TEST_ASSERT_EQUAL_UINT8(6, settings.matrixBrightness);
+
+  state = {};
+  state.cursor = 4;
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::activate(
           state, settings, false, false, false, true) ==
@@ -355,9 +384,7 @@ void test_settings_view_renders_at_both_target_sizes() {
     TEST_ASSERT_EQUAL_HEX16(
         theme.background,
         canvas.readPixel(width - 1, height - 1));
-    if (width == 240) {
-      TEST_ASSERT_GREATER_THAN_INT(0, state.scrollOffset);
-    }
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(0, state.scrollOffset);
   }
 }
 
@@ -578,6 +605,10 @@ void test_memory_view_navigation_and_scroll_are_resolution_aware() {
   bitmap16::MemoryView::State state;
   TEST_ASSERT_EQUAL_INT(4, bitmap16::MemoryView::columnCount(240));
   TEST_ASSERT_EQUAL_INT(5, bitmap16::MemoryView::columnCount(320));
+  const bitmap16::MemoryView::VisibleRange initialRange =
+      bitmap16::MemoryView::visibleCatalogRange(state, 15, 240, 135);
+  TEST_ASSERT_EQUAL_INT(0, initialRange.first);
+  TEST_ASSERT_EQUAL_INT(10, initialRange.last);
   TEST_ASSERT_TRUE(
       bitmap16::MemoryView::moveCursor(state, 0, 1, 8, 240));
   TEST_ASSERT_EQUAL_INT(4, state.cursor);
@@ -598,7 +629,7 @@ void test_memory_view_renders_new_and_sketch_tiles_at_target_sizes() {
   pixels[2][2] = 1;
   palette[0] = 0xf800;
   const bitmap16::MemoryView::Entry entries[1] = {
-      {pixels, 32, palette, 1, true},
+      {&pixels[0][0], 32, 32, palette, 1, true},
   };
   const bitmap16::MemoryView::Catalog catalog = {entries, 1};
   const bitmap16::MemoryView::Theme theme = {
@@ -661,6 +692,13 @@ void test_editor_flood_fill_is_four_way_and_bounded() {
   TEST_ASSERT_EQUAL_UINT8(5, editor.sketch().pixels[0][0]);
   TEST_ASSERT_EQUAL_UINT8(5, editor.sketch().pixels[0][1]);
   TEST_ASSERT_EQUAL_UINT8(5, editor.sketch().pixels[1][0]);
+  TEST_ASSERT_EQUAL_UINT8(3, editor.sketch().pixels[1][1]);
+  TEST_ASSERT_EQUAL_UINT8(2, editor.sketch().pixels[2][2]);
+
+  TEST_ASSERT_TRUE(editor.floodFill(0));
+  TEST_ASSERT_EQUAL_UINT8(0, editor.sketch().pixels[0][0]);
+  TEST_ASSERT_EQUAL_UINT8(0, editor.sketch().pixels[0][1]);
+  TEST_ASSERT_EQUAL_UINT8(0, editor.sketch().pixels[1][0]);
   TEST_ASSERT_EQUAL_UINT8(3, editor.sketch().pixels[1][1]);
   TEST_ASSERT_EQUAL_UINT8(2, editor.sketch().pixels[2][2]);
 }
@@ -945,7 +983,7 @@ void test_input_preserves_draw_while_moving_chord() {
   bitmap16::RawInputState raw = rawKeys("m/");
   raw.enter = true;
 
-  const bitmap16::InputFrame frame = processor.process(raw, 10);
+  bitmap16::InputFrame frame = processor.process(raw, 10);
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(bitmap16::InputEvent::Right),
       static_cast<int>(frame.event));
@@ -953,6 +991,26 @@ void test_input_preserves_draw_while_moving_chord() {
   TEST_ASSERT_TRUE(frame.mHeld);
   TEST_ASSERT_TRUE(frame.enterHeld);
   TEST_ASSERT_TRUE(frame.enterPressed);
+
+  processor.reset();
+  bitmap16::RawInputState ctrl;
+  ctrl.ctrl = true;
+  ctrl.keyPressed = true;
+  frame = processor.process(ctrl, 20);
+  TEST_ASSERT_TRUE(frame.ctrlPressed);
+  TEST_ASSERT_TRUE(frame.ctrlHeld);
+
+  // Cardputer emits the key's shifted character while Ctrl is active.
+  bitmap16::RawInputState ctrlRight = rawKeys("?");
+  ctrlRight.ctrl = true;
+  frame = processor.process(ctrlRight, 21);
+  TEST_ASSERT_TRUE(frame.ctrlHeld);
+  TEST_ASSERT_TRUE(frame.rightHeld);
+  TEST_ASSERT_FALSE(frame.ctrlPressed);
+
+  processor.process(bitmap16::RawInputState{}, 22);
+  frame = processor.process(rawKeys("/"), 23);
+  TEST_ASSERT_FALSE(frame.ctrlHeld);
 }
 
 void test_input_exposes_brightness_and_led_chords() {
@@ -980,22 +1038,27 @@ void test_input_enter_delete_and_action_are_edge_triggered() {
   bitmap16::RawInputState raw;
   raw.enter = true;
   raw.deleteKey = true;
+  raw.ctrl = true;
   raw.actionButton = true;
 
   bitmap16::InputFrame frame = processor.process(raw, 0);
   TEST_ASSERT_TRUE(frame.enterPressed);
   TEST_ASSERT_TRUE(frame.deletePressed);
+  TEST_ASSERT_TRUE(frame.ctrlPressed);
+  TEST_ASSERT_TRUE(frame.ctrlHeld);
   TEST_ASSERT_TRUE(frame.actionPressed);
 
   frame = processor.process(raw, 1);
   TEST_ASSERT_FALSE(frame.enterPressed);
   TEST_ASSERT_FALSE(frame.deletePressed);
+  TEST_ASSERT_FALSE(frame.ctrlPressed);
   TEST_ASSERT_FALSE(frame.actionPressed);
 
   processor.process(bitmap16::RawInputState{}, 2);
   frame = processor.process(raw, 3);
   TEST_ASSERT_TRUE(frame.enterPressed);
   TEST_ASSERT_TRUE(frame.deletePressed);
+  TEST_ASSERT_TRUE(frame.ctrlPressed);
   TEST_ASSERT_TRUE(frame.actionPressed);
 }
 

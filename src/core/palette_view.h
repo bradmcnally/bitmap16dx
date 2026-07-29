@@ -7,6 +7,7 @@
 namespace bitmap16 {
 namespace PaletteView {
 
+constexpr float kInsertionDurationMs = 520.0f;
 constexpr int kMaximumEntries = 32;
 
 struct Entry {
@@ -57,7 +58,7 @@ bool beginSelection(State& state);
 AnimationResult advance(
     State& state,
     float scrollSpeed = 0.25f,
-    float insertionSpeed = 0.03f);
+    float insertionSpeed = 0.028f);
 void render(
     Canvas& canvas,
     const State& state,

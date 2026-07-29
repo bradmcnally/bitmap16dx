@@ -67,6 +67,7 @@ struct InputFrame {
 
   bool enterPressed = false;
   bool deletePressed = false;
+  bool ctrlPressed = false;
   bool actionPressed = false;
 };
 
@@ -87,6 +88,7 @@ class InputProcessor {
   bool directionRepeating_ = false;
   bool previousEnter_ = false;
   bool previousDelete_ = false;
+  bool previousCtrl_ = false;
   bool previousAction_ = false;
 };
 
