@@ -97,7 +97,12 @@ void drawThumbnail(
       2,
       theme.background);
   if (entry.active) {
-    canvas.drawRect(x - 1, y - 1, kThumbnailSize + 2, kThumbnailSize + 2, theme.active);
+    canvas.drawRect(
+        x - 1,
+        y - 1,
+        kThumbnailSize + 2,
+        kThumbnailSize + 2,
+        theme.active);
   }
 }
 

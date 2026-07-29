@@ -282,6 +282,68 @@ bitmap16::CanvasView::Theme canvasTheme(
       0x0000, 0xffff, false};
 }
 
+void drawUnsavedChangesModal(
+    bitmap16::Canvas& canvas,
+    const bitmap16::Settings& settings) {
+  const bitmap16::HelpView::Theme theme = helpTheme(settings);
+  const int panelWidth = std::min(192, canvas.width() - 16);
+  constexpr int panelHeight = 60;
+  const int panelX = (canvas.width() - panelWidth) / 2;
+  const int panelY = (canvas.height() - panelHeight) / 2;
+
+  canvas.fillRect(
+      panelX + 2,
+      panelY + 2,
+      panelWidth - 4,
+      panelHeight - 4,
+      theme.background);
+  canvas.fillRect(
+      panelX + 2, panelY, panelWidth - 4, 2, theme.text);
+  canvas.fillRect(
+      panelX, panelY + 2, 2, panelHeight - 4, theme.text);
+  canvas.fillRect(
+      panelX + panelWidth - 2,
+      panelY + 2,
+      2,
+      panelHeight - 4,
+      theme.text);
+  canvas.fillRect(
+      panelX + 2,
+      panelY + panelHeight - 2,
+      panelWidth - 4,
+      2,
+      theme.text);
+
+  canvas.setTextSize(1);
+  canvas.setTextColor(theme.text);
+  canvas.setTextAlign(bitmap16::TextAlign::Center);
+  canvas.drawString(
+      "KEEP CHANGES?", canvas.width() / 2, panelY + 13);
+
+  constexpr int discardWidth = 7 * 6;
+  constexpr int saveWidth = 4 * 6;
+  constexpr int cancelWidth = 10 * 6;
+  constexpr int optionGap = 18;
+  constexpr int optionsWidth =
+      discardWidth + optionGap + saveWidth + optionGap + cancelWidth;
+  const int discardX =
+      panelX + (panelWidth - optionsWidth) / 2;
+  const int saveX = discardX + discardWidth + optionGap;
+  const int cancelX = saveX + saveWidth + optionGap;
+  const int optionsY = panelY + 34;
+
+  canvas.setTextAlign(bitmap16::TextAlign::Left);
+  canvas.drawString("DISCARD", discardX, optionsY);
+  canvas.drawString("SAVE", saveX, optionsY);
+  canvas.drawString("ESC CANCEL", cancelX, optionsY);
+  canvas.drawLine(
+      discardX, optionsY + 9, discardX + 5, optionsY + 9, theme.text);
+  canvas.drawLine(
+      saveX, optionsY + 9, saveX + 5, optionsY + 9, theme.text);
+  canvas.drawLine(
+      cancelX, optionsY + 9, cancelX + 17, optionsY + 9, theme.text);
+}
+
 const bitmap16::CanvasView::Assets& canvasAssets() {
   static const bitmap16::CanvasView::Assets assets = {
       {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
@@ -1183,36 +1245,73 @@ int main(int argc, char** argv) {
     if (!settings.saveWarnings || !documentDirty) {
       return true;
     }
-    const SDL_MessageBoxButtonData buttons[] = {
-        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Save"},
-        {0, 2, "Discard"},
-        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
+
+    renderNow();
+    drawUnsavedChangesModal(canvas, settings);
+    present(canvas, texture, renderer, settings.displayBrightness);
+
+    enum class Choice {
+      Cancel,
+      Save,
+      Discard,
     };
-    const SDL_MessageBoxData message = {
-        SDL_MESSAGEBOX_WARNING,
-        window,
-        "Unsaved changes",
-        "Save changes before continuing?",
-        3,
-        buttons,
-        nullptr,
-    };
-    int selected = 0;
-    if (SDL_ShowMessageBox(&message, &selected) < 0 || selected == 0) {
+    Choice choice = Choice::Cancel;
+    bool choiceMade = false;
+    while (!choiceMade) {
+      SDL_Event modalEvent;
+      if (SDL_WaitEvent(&modalEvent) == 0) {
+        continue;
+      }
+      if (modalEvent.type == SDL_KEYDOWN && modalEvent.key.repeat == 0) {
+        const SDL_Keycode key = modalEvent.key.keysym.sym;
+        if (key == SDLK_s || key == SDLK_RETURN) {
+          choice = Choice::Save;
+          choiceMade = true;
+        } else if (key == SDLK_d) {
+          choice = Choice::Discard;
+          choiceMade = true;
+        } else if (key == SDLK_ESCAPE) {
+          choiceMade = true;
+        }
+      } else if (modalEvent.type == SDL_CONTROLLERBUTTONDOWN) {
+        if (modalEvent.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
+          choice = Choice::Save;
+          choiceMade = true;
+        } else if (
+            modalEvent.cbutton.button == SDL_CONTROLLER_BUTTON_X) {
+          choice = Choice::Discard;
+          choiceMade = true;
+        } else if (
+            modalEvent.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+          choiceMade = true;
+        }
+      } else if (
+          modalEvent.type == SDL_QUIT ||
+          (modalEvent.type == SDL_WINDOWEVENT &&
+           modalEvent.window.event == SDL_WINDOWEVENT_CLOSE)) {
+        choiceMade = true;
+      }
+    }
+
+    if (choice == Choice::Cancel) {
+      renderNow();
       return false;
     }
-    if (selected == 1) {
+    if (choice == Choice::Save) {
       if (!workspace.saveSketch(editor, false)) {
         setDesktopStatus("Failed to save");
+        renderNow();
         return false;
       }
       refreshMemoryCatalog();
       savedDocumentState = editor.sketch();
       documentDirty = false;
       setDesktopStatus("Saved");
+      renderNow();
       return true;
     }
     documentDirty = false;
+    renderNow();
     return true;
   };
   bool running = !smokeTest;
