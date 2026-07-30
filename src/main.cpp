@@ -94,14 +94,11 @@ bitmap16::ShakeDetector shakeDetector;
 // ============================================================================
 
 // Enable screenshot feature (Y key) - disable for release builds
-#define ENABLE_SCREENSHOTS 1  // Set to 0 to disable screenshots in release
+#define ENABLE_SCREENSHOTS 0  // Set to 0 to disable screenshots in release
 
 // Enable external 8×8 WS2812 LED matrix support
 // Set to 0 to disable LED matrix features and save memory (~9KB flash, 880 bytes RAM)
 #define ENABLE_LED_MATRIX 1  // Set to 0 to disable
-
-// Phase 4 Help-view framebuffer benchmark output on the serial monitor.
-#define ENABLE_CANVAS_PROOF_TELEMETRY 1
 
 // Macro for LED matrix canvas updates (no-op when feature disabled)
 #if ENABLE_LED_MATRIX
@@ -403,18 +400,6 @@ std::vector<SketchInfo> sketchList;      // Persistent metadata and thumbnail ca
 bool sketchCatalogValid = false;
 Sketch sketchOperationBuffer;            // Reused for file I/O and full-document actions
 
-struct CanvasProofMetrics {
-  uint32_t allocationMicros = 0;
-  uint32_t heapBeforeAllocation = 0;
-  uint32_t heapAfterAllocation = 0;
-  uint32_t lastRenderMicros = 0;
-  uint32_t maxRenderMicros = 0;
-  uint32_t lastBlitMicros = 0;
-  uint32_t maxBlitMicros = 0;
-  uint32_t minimumFreeHeap = UINT32_MAX;
-  uint32_t frameCount = 0;
-};
-
 struct ViewState {
   struct {
     bitmap16::MemoryView::State navigation;
@@ -427,7 +412,6 @@ struct ViewState {
     bool canvasAvailable = false;
     bool softwareCanvas = false;
     bool ownsCanvas = false;
-    CanvasProofMetrics metrics;
   } help;
   struct {
     bitmap16::PreviewView::State display;
@@ -2144,33 +2128,10 @@ void exitChargingMode() {
 void enterHelpView() {
   app.setView(bitmap16::ViewId::Help);
   viewState.help.navigation = {};
-  viewState.help.metrics = {};
-  viewState.help.metrics.minimumFreeHeap = UINT32_MAX;
-  viewState.help.metrics.heapBeforeAllocation = ESP.getFreeHeap();
-  const uint32_t allocationStart = micros();
   viewState.help.ownsCanvas = !Display::isReady();
   viewState.help.softwareCanvas = Display::init();
-  viewState.help.metrics.allocationMicros = micros() - allocationStart;
-  viewState.help.metrics.heapAfterAllocation = ESP.getFreeHeap();
-  viewState.help.metrics.minimumFreeHeap =
-      viewState.help.metrics.heapAfterAllocation;
 
   viewState.help.canvasAvailable = viewState.help.softwareCanvas;
-
-#if ENABLE_CANVAS_PROOF_TELEMETRY
-  Serial.printf(
-      "[canvas-proof] allocation=%luus heap_before=%lu heap_after=%lu "
-      "heap_delta=%ld backend=%s success=%d\n",
-      static_cast<unsigned long>(viewState.help.metrics.allocationMicros),
-      static_cast<unsigned long>(
-          viewState.help.metrics.heapBeforeAllocation),
-      static_cast<unsigned long>(
-          viewState.help.metrics.heapAfterAllocation),
-      static_cast<long>(viewState.help.metrics.heapAfterAllocation) -
-          static_cast<long>(viewState.help.metrics.heapBeforeAllocation),
-      viewState.help.softwareCanvas ? "software" : "unavailable",
-      viewState.help.canvasAvailable);
-#endif
 
   if (!viewState.help.canvasAvailable) {
     M5Cardputer.Display.fillScreen(TFT_BLACK);
@@ -2198,16 +2159,6 @@ void exitHelpView() {
           ? bitmap16::ViewId::Memory
           : bitmap16::ViewId::Canvas;
   app.setView(returnView);
-
-#if ENABLE_CANVAS_PROOF_TELEMETRY
-  Serial.printf(
-      "[canvas-proof] summary frames=%lu max_render=%luus "
-      "max_blit=%luus min_heap=%lu\n",
-      static_cast<unsigned long>(viewState.help.metrics.frameCount),
-      static_cast<unsigned long>(viewState.help.metrics.maxRenderMicros),
-      static_cast<unsigned long>(viewState.help.metrics.maxBlitMicros),
-      static_cast<unsigned long>(viewState.help.metrics.minimumFreeHeap));
-#endif
 
   if (viewState.help.softwareCanvas && viewState.help.ownsCanvas) {
     Display::shutdown();
@@ -3106,7 +3057,6 @@ void drawMemoryView(bool) {
 void drawHelpView() {
   if (!viewState.help.canvasAvailable) return;
 
-  const uint32_t renderStart = micros();
   bitmap16::HelpView::Theme theme;
   theme.background = currentTheme->background;
   theme.text = currentTheme->text;
@@ -3119,30 +3069,7 @@ void drawHelpView() {
       true,
       true);
 
-  CanvasProofMetrics& metrics = viewState.help.metrics;
-  metrics.lastRenderMicros = micros() - renderStart;
-  metrics.maxRenderMicros =
-      max(metrics.maxRenderMicros, metrics.lastRenderMicros);
-
-  const uint32_t blitStart = micros();
   Display::endFrame();
-  metrics.lastBlitMicros = micros() - blitStart;
-  metrics.maxBlitMicros = max(metrics.maxBlitMicros, metrics.lastBlitMicros);
-  metrics.frameCount++;
-  metrics.minimumFreeHeap =
-      min(metrics.minimumFreeHeap, static_cast<uint32_t>(ESP.getFreeHeap()));
-
-#if ENABLE_CANVAS_PROOF_TELEMETRY
-  Serial.printf(
-      "[canvas-proof] frame=%lu render=%luus blit=%luus "
-      "max_render=%luus max_blit=%luus min_heap=%lu\n",
-      static_cast<unsigned long>(metrics.frameCount),
-      static_cast<unsigned long>(metrics.lastRenderMicros),
-      static_cast<unsigned long>(metrics.lastBlitMicros),
-      static_cast<unsigned long>(metrics.maxRenderMicros),
-      static_cast<unsigned long>(metrics.maxBlitMicros),
-      static_cast<unsigned long>(metrics.minimumFreeHeap));
-#endif
 }
 
 // ============================================================================
@@ -3573,9 +3500,6 @@ void setup() {
   M5Cardputer.begin(cfg);
 
   // Initialize hardware through the new platform adapters.
-#if ENABLE_CANVAS_PROOF_TELEMETRY
-  Serial.begin(115200);
-#endif
   IMU::init();
   Indicator::init();
   Input::init();

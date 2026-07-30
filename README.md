@@ -56,8 +56,9 @@ palettes total (12 built-in and up to 20 custom).
 ### Drawing Mode
 
 ![Drawing Interface Link](img/drawing_link.png)
+![32x](img/32x.png)
 ![Drawing Interface Zoom](img/zoom.png)
-![Drawing Interface pattern](img/artdark.png)
+
 
 | Key | Function |
 |-----|----------|
