@@ -32,6 +32,7 @@ class Editor {
   bool clear();
   bool shift(int dx, int dy, bool saveUndoState = true);
   bool toggleGridSize();
+  bool applyPalette(const uint16_t* colors, uint8_t paletteSize);
   bool undo();
   bool redo();
 

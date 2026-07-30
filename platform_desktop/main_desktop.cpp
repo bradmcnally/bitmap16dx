@@ -413,16 +413,7 @@ void rebuildMemoryEntries(
 void applyPalette(
     bitmap16::Editor& editor,
     const bitmap16::PaletteView::Entry& entry) {
-  if (entry.colors == nullptr ||
-      (entry.size != 4 && entry.size != 8 && entry.size != 16)) {
-    return;
-  }
-  editor.saveUndo();
-  bitmap16::Sketch& sketch = editor.sketch();
-  sketch.paletteSize = entry.size;
-  for (int index = 0; index < 16; ++index) {
-    sketch.paletteColors[index] = entry.colors[index];
-  }
+  editor.applyPalette(entry.colors, entry.size);
 }
 
 int findActivePalette(

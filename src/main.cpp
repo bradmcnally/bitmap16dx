@@ -1526,6 +1526,16 @@ void saveUndo() {
   editorState.redoAvailable = false;
 }
 
+void savePaletteUndo() {
+  saveUndo();
+  editorState.undoGridSize = editorState.gridSize;
+  editorState.undoPaletteSize = documentState.sketch.paletteSize;
+  for (int index = 0; index < 16; ++index) {
+    editorState.undoPaletteColors[index] =
+        documentState.sketch.paletteColors[index];
+  }
+}
+
 /**
  * Restore canvas from undo buffer
  */
@@ -4388,6 +4398,7 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
     const int selectedPaletteIdx =
         bitmap16::PaletteView::selectedCatalogIndex(
             viewState.palette.navigation);
+    savePaletteUndo();
     documentState.sketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
     for (int i = 0; i < 16; ++i) {
       documentState.sketch.paletteColors[i] =
@@ -4448,6 +4459,7 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
     const int selectedPaletteIdx =
         bitmap16::PaletteView::selectedCatalogIndex(
             viewState.palette.navigation);
+    savePaletteUndo();
     documentState.sketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
     for (int i = 0; i < 16; i++) {
       documentState.sketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);

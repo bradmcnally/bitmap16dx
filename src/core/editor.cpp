@@ -178,6 +178,28 @@ bool Editor::toggleGridSize() {
   return true;
 }
 
+bool Editor::applyPalette(const uint16_t* colors, uint8_t paletteSize) {
+  if (colors == nullptr || !isSupportedPaletteSize(paletteSize)) {
+    return false;
+  }
+  bool changed = sketch_.paletteSize != paletteSize;
+  for (std::size_t index = 0;
+       index < kMaxPaletteColors && !changed;
+       ++index) {
+    changed = sketch_.paletteColors[index] != colors[index];
+  }
+  if (!changed) {
+    return false;
+  }
+
+  saveUndo();
+  sketch_.paletteSize = paletteSize;
+  for (std::size_t index = 0; index < kMaxPaletteColors; ++index) {
+    sketch_.paletteColors[index] = colors[index];
+  }
+  return true;
+}
+
 bool Editor::undo() {
   if (!undoAvailable_) {
     return false;

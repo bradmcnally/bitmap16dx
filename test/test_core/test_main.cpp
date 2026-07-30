@@ -87,6 +87,35 @@ void test_editor_draw_erase_and_undo() {
   TEST_ASSERT_EQUAL_UINT8(4, editor.sketch().pixels[3][2]);
 }
 
+void test_editor_palette_application_is_undoable_and_non_destructive() {
+  Sketch sketch = makeSketch(16);
+  sketch.pixels[2][3] = 15;
+  Editor editor;
+  editor.reset(sketch);
+
+  uint16_t replacement[bitmap16::kMaxPaletteColors] = {};
+  for (std::size_t index = 0;
+       index < bitmap16::kMaxPaletteColors;
+       ++index) {
+    replacement[index] = static_cast<uint16_t>(0x2000 + index);
+  }
+
+  TEST_ASSERT_TRUE(editor.applyPalette(replacement, 4));
+  TEST_ASSERT_EQUAL_UINT8(4, editor.sketch().paletteSize);
+  TEST_ASSERT_EQUAL_HEX16(0x2000, editor.sketch().paletteColors[0]);
+  TEST_ASSERT_EQUAL_UINT8(15, editor.sketch().pixels[2][3]);
+
+  TEST_ASSERT_TRUE(editor.undo());
+  TEST_ASSERT_EQUAL_UINT8(16, editor.sketch().paletteSize);
+  TEST_ASSERT_EQUAL_HEX16(0x1000, editor.sketch().paletteColors[0]);
+  TEST_ASSERT_EQUAL_UINT8(15, editor.sketch().pixels[2][3]);
+
+  TEST_ASSERT_TRUE(editor.redo());
+  TEST_ASSERT_EQUAL_UINT8(4, editor.sketch().paletteSize);
+  TEST_ASSERT_EQUAL_HEX16(0x2000, editor.sketch().paletteColors[0]);
+  TEST_ASSERT_EQUAL_UINT8(15, editor.sketch().pixels[2][3]);
+}
+
 void test_canvas_allocation_fill_and_release() {
   bitmap16::Canvas canvas;
   TEST_ASSERT_FALSE(canvas.create(0, 10));
@@ -1324,6 +1353,7 @@ void tearDown() {}
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_editor_draw_erase_and_undo);
+  RUN_TEST(test_editor_palette_application_is_undoable_and_non_destructive);
   RUN_TEST(test_canvas_allocation_fill_and_release);
   RUN_TEST(test_canvas_clips_rectangles_and_pixels);
   RUN_TEST(test_canvas_view_layout_is_resolution_and_grid_aware);

@@ -9,14 +9,24 @@ namespace {
 constexpr uint8_t kDataPin = 2;
 constexpr uint16_t kMaxLedCount = 256;
 
-CRGB leds[kMaxLedCount];
+CRGB sourceLeds[kMaxLedCount];
+CRGB outputLeds[kMaxLedCount];
 bool initialized = false;
 uint8_t configuredUnits = 1;
 uint8_t configuredRotation = 2;
+uint8_t brightnessPercent = 100;
 bool enabled = false;
 
 uint8_t gridSize() {
   return configuredUnits == 4 ? 16 : 8;
+}
+
+void transmitAndWait() {
+  FastLED.show();
+  // The IDF5 RMT backend is asynchronous. A 256-pixel WS2812 frame takes
+  // about 7.7 ms, so keep the source/output buffers and adjacent peripherals
+  // untouched until the transmission has completed.
+  delay(9);
 }
 
 }  // namespace
@@ -25,9 +35,11 @@ bool LEDMatrix::init() {
   if (initialized) {
     return true;
   }
-  FastLED.addLeds<WS2812, kDataPin, GRB>(leds, kMaxLedCount);
+  FastLED.addLeds<WS2812, kDataPin, GRB>(outputLeds, kMaxLedCount);
+  FastLED.setBrightness(255);
+  FastLED.setDither(DISABLE_DITHER);
   FastLED.clear();
-  FastLED.show();
+  transmitAndWait();
   initialized = true;
   return true;
 }
@@ -40,8 +52,9 @@ void LEDMatrix::setConfiguration(uint8_t matrixUnits, uint8_t rotation) {
 void LEDMatrix::setEnabled(bool shouldEnable) {
   enabled = shouldEnable;
   if (!enabled && initialized) {
+    fill_solid(sourceLeds, kMaxLedCount, CRGB::Black);
     FastLED.clear();
-    FastLED.show();
+    transmitAndWait();
   }
 }
 
@@ -50,15 +63,12 @@ bool LEDMatrix::isEnabled() {
 }
 
 void LEDMatrix::setBrightness(uint8_t percent) {
-  if (percent > 100) {
-    percent = 100;
-  }
-  FastLED.setBrightness(
-      static_cast<uint8_t>((static_cast<uint16_t>(percent) * 255) / 100));
+  brightnessPercent = percent > 100 ? 100 : percent;
 }
 
 void LEDMatrix::clear() {
   if (initialized) {
+    fill_solid(sourceLeds, kMaxLedCount, CRGB::Black);
     FastLED.clear();
   }
 }
@@ -84,14 +94,32 @@ bool LEDMatrix::setPixelRgb888(
       bitmap16::LedMapping::indexFor(
           x,
           y,
-          configuredUnits,
-          configuredRotation);
-  leds[index] = CRGB(red, green, blue);
+      configuredUnits,
+      configuredRotation);
+  sourceLeds[index] = CRGB(red, green, blue);
   return true;
 }
 
 void LEDMatrix::show() {
   if (initialized && enabled) {
-    FastLED.show();
+    for (uint16_t index = 0; index < kMaxLedCount; ++index) {
+      outputLeds[index] = CRGB(
+          static_cast<uint8_t>(
+              (static_cast<uint16_t>(sourceLeds[index].r) *
+                   brightnessPercent +
+               50) /
+              100),
+          static_cast<uint8_t>(
+              (static_cast<uint16_t>(sourceLeds[index].g) *
+                   brightnessPercent +
+               50) /
+              100),
+          static_cast<uint8_t>(
+              (static_cast<uint16_t>(sourceLeds[index].b) *
+                   brightnessPercent +
+               50) /
+              100));
+    }
+    transmitAndWait();
   }
 }
