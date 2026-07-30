@@ -94,7 +94,8 @@ void render(
     State& state,
     const Theme& theme,
     bool includeLedMatrixControls,
-    bool includeBatteryControls) {
+    bool includeBatteryControls,
+    bool includeCtrlDraw) {
   if (!canvas.isValid()) {
     return;
   }
@@ -164,7 +165,12 @@ void render(
     canvas.setTextSize(textSize);
     canvas.setTextColor(selected ? theme.text : theme.textSecondary);
     canvas.drawString(item.label, labelX, textY);
-    canvas.drawString(item.key, keyX, textY);
+    canvas.drawString(
+        includeCtrlDraw && &item == &kItems[1]
+            ? "Ok/Ctrl"
+            : item.key,
+        keyX,
+        textY);
     y += selected ? selectedLineHeight : lineHeight;
   }
 }

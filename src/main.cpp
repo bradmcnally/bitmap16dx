@@ -3116,6 +3116,7 @@ void drawHelpView() {
       viewState.help.navigation,
       theme,
       ENABLE_LED_MATRIX != 0,
+      true,
       true);
 
   CanvasProofMetrics& metrics = viewState.help.metrics;

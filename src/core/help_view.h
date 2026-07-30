@@ -29,7 +29,8 @@ void render(
     State& state,
     const Theme& theme,
     bool includeLedMatrixControls,
-    bool includeBatteryControls);
+    bool includeBatteryControls,
+    bool includeCtrlDraw = false);
 
 }  // namespace HelpView
 }  // namespace bitmap16
