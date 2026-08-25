@@ -13,7 +13,8 @@ namespace {
 #ifdef BITMAP16_STEAM_DECK
 constexpr int kThumbnailSize = 48;
 constexpr int kMaximumColumns = 7;
-#elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
+#elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || \
+    defined(BITMAP16_CARDPUTER_ZERO)
 constexpr int kThumbnailSize = 64;
 constexpr int kMaximumColumns = 5;
 #else

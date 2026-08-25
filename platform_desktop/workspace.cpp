@@ -250,8 +250,40 @@ bool Workspace::saveSketch(const Editor& editor, bool saveAsNew) {
   return activeIndex_ >= 0;
 }
 
-bool Workspace::deleteSketch(std::size_t index, Editor& editor) {
+bool Workspace::duplicateSketch(std::size_t index) {
   if (index >= sketchPaths_.size()) return false;
+  const std::filesystem::path activePath =
+      activeIndex_ >= 0 &&
+              activeIndex_ < static_cast<int>(sketchPaths_.size())
+          ? sketchPaths_[activeIndex_]
+          : std::filesystem::path{};
+  uint64_t next = 1;
+  for (const auto& existing : sketchPaths_) {
+    next = std::max(next, sketchSequence(existing) + 1);
+  }
+  std::filesystem::path duplicatePath;
+  do {
+    duplicatePath = root_ / "sketches" /
+        ("sketch_" + std::to_string(next++) + ".dat");
+  } while (std::filesystem::exists(duplicatePath));
+  if (!writeSketch(duplicatePath, sketches_[index]) || !loadSketches()) {
+    return false;
+  }
+  const auto active =
+      std::find(sketchPaths_.begin(), sketchPaths_.end(), activePath);
+  activeIndex_ = active == sketchPaths_.end()
+      ? -1
+      : static_cast<int>(active - sketchPaths_.begin());
+  return true;
+}
+
+bool Workspace::deleteSketch(std::size_t index) {
+  if (index >= sketchPaths_.size()) return false;
+  const std::filesystem::path activePath =
+      activeIndex_ >= 0 &&
+              activeIndex_ < static_cast<int>(sketchPaths_.size())
+          ? sketchPaths_[activeIndex_]
+          : std::filesystem::path{};
   const std::filesystem::path original = sketchPaths_[index];
   std::filesystem::path trash = root_ / "trash" / original.filename();
   int suffix = 1;
@@ -265,22 +297,26 @@ bool Workspace::deleteSketch(std::size_t index, Editor& editor) {
   if (error) return false;
   deletedOriginalPath_ = original;
   deletedTrashPath_ = trash;
-  loadSketches();
-  if (sketches_.empty()) {
-    newSketch(editor);
-  } else {
-    activeIndex_ = std::min<int>(
-        static_cast<int>(index), static_cast<int>(sketches_.size()) - 1);
-    editor.reset(sketches_[activeIndex_]);
-  }
+  deletedWasActive_ = original == activePath;
+  if (!loadSketches()) return false;
+  const auto active =
+      std::find(sketchPaths_.begin(), sketchPaths_.end(), activePath);
+  activeIndex_ = active == sketchPaths_.end()
+      ? -1
+      : static_cast<int>(active - sketchPaths_.begin());
   return true;
 }
 
-bool Workspace::undoDelete(Editor& editor) {
+bool Workspace::undoDelete() {
   if (deletedOriginalPath_.empty() || deletedTrashPath_.empty() ||
       !std::filesystem::exists(deletedTrashPath_)) {
     return false;
   }
+  const std::filesystem::path activePath =
+      activeIndex_ >= 0 &&
+              activeIndex_ < static_cast<int>(sketchPaths_.size())
+          ? sketchPaths_[activeIndex_]
+          : std::filesystem::path{};
   std::filesystem::path restored = deletedOriginalPath_;
   int suffix = 1;
   while (std::filesystem::exists(restored)) {
@@ -292,15 +328,19 @@ bool Workspace::undoDelete(Editor& editor) {
   std::error_code error;
   std::filesystem::rename(deletedTrashPath_, restored, error);
   if (error) return false;
+  const bool restoreActive = deletedWasActive_;
   deletedOriginalPath_.clear();
   deletedTrashPath_.clear();
-  loadSketches();
-  const auto found =
-      std::find(sketchPaths_.begin(), sketchPaths_.end(), restored);
-  if (found == sketchPaths_.end()) return false;
-  activeIndex_ = static_cast<int>(found - sketchPaths_.begin());
-  editor.reset(sketches_[activeIndex_]);
-  return true;
+  deletedWasActive_ = false;
+  if (!loadSketches()) return false;
+  const std::filesystem::path pathToActivate =
+      restoreActive ? restored : activePath;
+  const auto active =
+      std::find(sketchPaths_.begin(), sketchPaths_.end(), pathToActivate);
+  activeIndex_ = active == sketchPaths_.end()
+      ? -1
+      : static_cast<int>(active - sketchPaths_.begin());
+  return restoreActive ? activeIndex_ >= 0 : true;
 }
 
 bool Workspace::exportSketch(

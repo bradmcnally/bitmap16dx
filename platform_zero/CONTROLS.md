@@ -1,6 +1,6 @@
-# BitMap16 DX Cardputer Zero key proposal
+# BitMap16 DX Cardputer Zero controls
 
-This document proposes the physical keyboard mapping for the Cardputer Zero
+This document defines the physical keyboard mapping for the Cardputer Zero
 port of BitMap16 DX. The existing Cardputer ADV controls remain unchanged.
 
 ## Design rules
@@ -29,7 +29,7 @@ port of BitMap16 DX. The existing Cardputer ADV controls remain unchanged.
 | Jump to bottom edge | `Fn+Down` | `Shift+X` |
 | Jump to left edge | `Fn+Left` | `Shift+Z` |
 | Jump to right edge | `Fn+Right` | `Shift+C` |
-| Draw pixel | OK/Enter or Ctrl | Enter or space |
+| Draw pixel | OK/Enter or Ctrl | Enter |
 | Erase pixel | Backspace/Delete | Backspace |
 | Clear canvas | G0 | `Fn+Backspace` |
 | Fill | `F` | `Ctrl+F` |
@@ -39,8 +39,8 @@ port of BitMap16 DX. The existing Cardputer ADV controls remain unchanged.
 | Cycle to next color | `C` | `I` |
 | Select colors 1-8 | `1`-`8` | `1`-`8` |
 | Select colors 9-16 | `Fn+1`-`Fn+8` | `Fn+1`-`Fn+8` |
-| Save | `S` | `S` |
-| Save as a new sketch | `Fn+S` | `Ctrl+S` |
+| Save | `S` | `Ctrl+S` |
+| Save as a new sketch | `Fn+S` | `Shift+S` |
 | Export scaled PNG | `X` | `Ctrl+X` |
 | Export logical-size PNG | `Fn+X` | `Ctrl+L` |
 | Change grid size | `G` | `G` |
@@ -67,7 +67,7 @@ firmware Fn-arrow would require three held keys and is not supported.
 | Navigate | Arrow keys | `F/Z/X/C` or `Fn+F/Z/X/C` |
 | Activate selected slot | OK/Enter | Enter |
 | Delete selected sketch | G0 | `Fn+Backspace` |
-| Restore most recently deleted sketch | `Z` | `Ctrl+Z` |
+| Restore most recently deleted sketch | `Z` | `U` |
 | Duplicate selected sketch | `Fn+S` | `Ctrl+S` |
 | Open slideshow | `V` | `V` |
 | Close Sketches | `O` or Escape | `O` or Escape |

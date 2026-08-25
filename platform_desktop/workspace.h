@@ -33,8 +33,9 @@ class Workspace {
   bool newSketch(Editor& editor);
   bool openSketch(std::size_t index, Editor& editor);
   bool saveSketch(const Editor& editor, bool saveAsNew);
-  bool deleteSketch(std::size_t index, Editor& editor);
-  bool undoDelete(Editor& editor);
+  bool duplicateSketch(std::size_t index);
+  bool deleteSketch(std::size_t index);
+  bool undoDelete();
   bool exportSketch(
       const Sketch& sketch,
       bool scaled,
@@ -57,6 +58,7 @@ class Workspace {
   std::vector<UserPalette> userPalettes_;
   std::filesystem::path deletedOriginalPath_;
   std::filesystem::path deletedTrashPath_;
+  bool deletedWasActive_ = false;
   Settings settings_;
   int activeIndex_ = -1;
 };

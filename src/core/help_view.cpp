@@ -10,36 +10,40 @@ namespace {
 struct Item {
   const char* label;
   const char* key;
+  const char* zeroKey;
   int group;
   bool requiresLedMatrix;
   bool requiresBattery;
 };
 
 constexpr Item kItems[] = {
-    {"Cursor", "Arrows", 0, false, false},
-    {"Draw", "Ok", 0, false, false},
-    {"Erase", "Del", 0, false, false},
-    {"Fill", "F", 0, false, false},
-    {"Erase fill", "Fn F", 0, false, false},
-    {"Move", "M arrows", 0, false, false},
-    {"Color 1-8", "1-8", 0, false, false},
-    {"Color 9-16", "Fn 1-8", 0, false, false},
-    {"Palette", "P", 0, false, false},
-    {"Clear", "G0", 0, false, false},
-    {"Preview", "V", 0, false, false},
-    {"Grid size", "G", 0, false, false},
-    {"Grid ruler", "R", 0, false, false},
-    {"Open", "O", 1, false, false},
-    {"Undo", "Z", 1, false, false},
-    {"Redo", "Fn Z", 1, false, false},
-    {"Save", "S", 1, false, false},
-    {"Save as", "Fn S", 1, false, false},
-    {"Settings", "T", 1, false, false},
-    {"Export", "X", 1, false, false},
-    {"Brightness", "B +/-", 1, false, false},
-    {"Charge", "Fn B", 1, false, true},
-    {"RGB on/off", "L Ok", 2, true, false},
-    {"RGB Bright", "L +/-", 2, true, false},
+    {"Cursor", "Arrows", "F Z X C", 0, false, false},
+    {"Edge jump", "Fn edge", "Shift dir", 0, false, false},
+    {"Draw", "Ok", "Enter", 0, false, false},
+    {"Erase", "Del", "Backspace", 0, false, false},
+    {"Fill", "F", "Ctrl F", 0, false, false},
+    {"Erase fill", "Fn F", "E", 0, false, false},
+    {"Move", "M arrows", "M + FZXC", 0, false, false},
+    {"Color 1-8", "1-8", "1-8", 0, false, false},
+    {"Color 9-16", "Fn 1-8", "Fn 1-8", 0, false, false},
+    {"Next color", "C", "I", 0, false, false},
+    {"Palette", "P", "P", 0, false, false},
+    {"Clear", "G0", "Fn Bksp", 0, false, false},
+    {"Preview", "V", "V", 0, false, false},
+    {"Grid size", "G", "G", 0, false, false},
+    {"Grid ruler", "R", "R", 0, false, false},
+    {"Open", "O", "O", 1, false, false},
+    {"Undo", "Z", "Ctrl Z", 1, false, false},
+    {"Redo", "Fn Z", "Ctrl Y", 1, false, false},
+    {"Save", "S", "Ctrl S", 1, false, false},
+    {"Save as", "Fn S", "Shift S", 1, false, false},
+    {"Settings", "T", "T", 1, false, false},
+    {"Export", "X", "Ctrl X", 1, false, false},
+    {"Logical PNG", "Fn X", "Ctrl L", 1, false, false},
+    {"Brightness", "B +/-", "B +/-", 1, false, false},
+    {"Charge", "Fn B", "Ctrl B", 1, false, true},
+    {"RGB on/off", "L Ok", "L Enter", 2, true, false},
+    {"RGB Bright", "L +/-", "L +/-", 2, true, false},
 };
 
 const Item& visibleItem(
@@ -96,6 +100,9 @@ void render(
     bool includeLedMatrixControls,
     bool includeBatteryControls,
     bool includeCtrlDraw) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+  (void)includeCtrlDraw;
+#endif
   if (!canvas.isValid()) {
     return;
   }
@@ -165,12 +172,13 @@ void render(
     canvas.setTextSize(textSize);
     canvas.setTextColor(selected ? theme.text : theme.textSecondary);
     canvas.drawString(item.label, labelX, textY);
-    canvas.drawString(
-        includeCtrlDraw && &item == &kItems[1]
-            ? "Ok/Ctrl"
-            : item.key,
-        keyX,
-        textY);
+    const char* keyLabel = item.key;
+#ifdef BITMAP16_CARDPUTER_ZERO
+    keyLabel = item.zeroKey;
+#else
+    if (includeCtrlDraw && &item == &kItems[2]) keyLabel = "Ok/Ctrl";
+#endif
+    canvas.drawString(keyLabel, keyX, textY);
     y += selected ? selectedLineHeight : lineHeight;
   }
 }

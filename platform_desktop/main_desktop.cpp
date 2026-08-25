@@ -487,7 +487,7 @@ bool showBootScreen(
     SDL_Renderer* renderer,
     uint8_t brightness) {
   constexpr Uint32 kBootDurationMs = 2500u;
-  constexpr const char* kVersion = "v0.7.1";
+  constexpr const char* kVersion = "v0.8.0";
   const int imageX = (canvas.width() - BOOT_IMAGE_WIDTH) / 2;
   const int imageY = (canvas.height() - BOOT_IMAGE_HEIGHT) / 2;
 
@@ -1755,12 +1755,32 @@ int main(int argc, char** argv) {
     }
     if (event.type != SDL_KEYDOWN) continue;
 
-    const SDL_Keycode key = event.key.keysym.sym;
+    SDL_Keycode key = event.key.keysym.sym;
+    const bool altHeld = (event.key.keysym.mod & KMOD_ALT) != 0;
+#ifdef BITMAP16_CARDPUTER_ZERO
+    const bool ctrlHeld = (event.key.keysym.mod & KMOD_CTRL) != 0;
+    const bool shiftHeld = (event.key.keysym.mod & KMOD_SHIFT) != 0;
+#endif
+    bool zeroEdgeJump = false;
+#ifdef BITMAP16_CARDPUTER_ZERO
+    if (key == SDLK_HELP) key = SDLK_h;
+    if (!ctrlHeld && !altHeld &&
+        (!shiftHeld || currentView == DesktopView::Canvas)) {
+      SDL_Keycode direction = SDLK_UNKNOWN;
+      if (key == SDLK_f) direction = SDLK_UP;
+      if (key == SDLK_x) direction = SDLK_DOWN;
+      if (key == SDLK_z) direction = SDLK_LEFT;
+      if (key == SDLK_c) direction = SDLK_RIGHT;
+      if (direction != SDLK_UNKNOWN) {
+        key = direction;
+        zeroEdgeJump = shiftHeld && currentView == DesktopView::Canvas;
+      }
+    }
+#endif
     const bool arrow =
         key == SDLK_UP || key == SDLK_DOWN ||
         key == SDLK_LEFT || key == SDLK_RIGHT;
     if (event.key.repeat != 0 && !arrow) continue;
-    const bool altHeld = (event.key.keysym.mod & KMOD_ALT) != 0;
     const Uint8* keyboard = SDL_GetKeyboardState(nullptr);
     const bool moveHeld =
         keyboard[SDL_SCANCODE_M] != 0 || controllerMoveHeld;
@@ -1768,13 +1788,17 @@ int main(int argc, char** argv) {
     const bool matrixHeld = keyboard[SDL_SCANCODE_L] != 0;
     const bool drawHeld =
         keyboard[SDL_SCANCODE_RETURN] != 0 ||
+#ifndef BITMAP16_CARDPUTER_ZERO
         keyboard[SDL_SCANCODE_SPACE] != 0 ||
+#endif
         (controller != nullptr &&
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_A) != 0);
     const bool eraseHeld =
         keyboard[SDL_SCANCODE_BACKSPACE] != 0 ||
+#ifndef BITMAP16_CARDPUTER_ZERO
         keyboard[SDL_SCANCODE_DELETE] != 0 ||
+#endif
         (controller != nullptr &&
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_X) != 0);
@@ -1808,6 +1832,29 @@ int main(int argc, char** argv) {
       if (drawHeld) editor.draw();
       if (eraseHeld) editor.erase();
       return true;
+    };
+    const auto jumpCanvasCursor = [&](int dx, int dy) {
+      const bitmap16::CanvasView::Layout layout =
+          bitmap16::CanvasView::layoutFor(
+              width, height, editor.sketch().gridSize);
+      const int cellSize = desktopCanvasViewport.cellSize == 0
+          ? layout.cellSize
+          : desktopCanvasViewport.cellSize;
+      if (cellSize <= layout.cellSize) return false;
+      const uint8_t oldX = editor.cursorX();
+      const uint8_t oldY = editor.cursorY();
+      const uint8_t edge = editor.sketch().gridSize - 1;
+      editor.setCursor(
+          dx < 0 ? 0 : dx > 0 ? edge : oldX,
+          dy < 0 ? 0 : dy > 0 ? edge : oldY);
+      bitmap16::CanvasView::keepCursorVisible(
+          desktopCanvasViewport,
+          width,
+          height,
+          editor.sketch().gridSize,
+          editor.cursorX(),
+          editor.cursorY());
+      return oldX != editor.cursorX() || oldY != editor.cursorY();
     };
 
     if (key == SDLK_F12) {
@@ -1995,7 +2042,13 @@ int main(int argc, char** argv) {
       }
       changed = true;
     } else if (
-        key == SDLK_b && altHeld && platformHasBatteryDisplay()) {
+        key == SDLK_b &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        ctrlHeld &&
+#else
+        altHeld &&
+#endif
+        platformHasBatteryDisplay()) {
       currentView = DesktopView::Charging;
       changed = true;
     } else if (key == SDLK_p) {
@@ -2024,12 +2077,24 @@ int main(int argc, char** argv) {
     } else if (key == SDLK_d) {
       currentView = DesktopView::Canvas;
       changed = true;
-    } else if (currentView == DesktopView::Canvas && key == SDLK_s) {
-      if (workspace.saveSketch(editor, altHeld)) {
+    } else if (
+        currentView == DesktopView::Canvas && key == SDLK_s &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        (ctrlHeld || shiftHeld)
+#else
+        true
+#endif
+        ) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+      const bool saveAsNew = shiftHeld;
+#else
+      const bool saveAsNew = altHeld;
+#endif
+      if (workspace.saveSketch(editor, saveAsNew)) {
         refreshMemoryCatalog();
         savedDocumentState = editor.sketch();
         documentDirty = false;
-        SDL_Log(altHeld ? "Saved new sketch" : "Saved sketch");
+        SDL_Log(saveAsNew ? "Saved new sketch" : "Saved sketch");
         setDesktopStatus("Saved");
         rumble(0x1000, 0x3800, 75);
         focusNewestSketchOnNextMemoryOpen = true;
@@ -2040,9 +2105,22 @@ int main(int argc, char** argv) {
         rumble(0x4800, 0x0800, 180);
         changed = true;
       }
-    } else if (currentView == DesktopView::Canvas && key == SDLK_x) {
+    } else if (
+        currentView == DesktopView::Canvas &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        ctrlHeld && (key == SDLK_x || key == SDLK_l)
+#else
+        key == SDLK_x
+#endif
+        ) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+      const bool scaledExport = key == SDLK_x;
+#else
+      const bool scaledExport = !altHeld;
+#endif
       std::filesystem::path outputPath;
-      if (workspace.exportSketch(editor.sketch(), !altHeld, outputPath)) {
+      if (workspace.exportSketch(
+              editor.sketch(), scaledExport, outputPath)) {
         SDL_Log("Exported %s", outputPath.string().c_str());
         SDL_SetWindowTitle(
             window,
@@ -2054,6 +2132,7 @@ int main(int argc, char** argv) {
         setDesktopStatus("Export failed");
       }
       changed = true;
+#ifndef BITMAP16_CARDPUTER_ZERO
     } else if (currentView == DesktopView::Canvas && key == SDLK_n) {
       if (!confirmUnsavedChanges()) {
         changed = true;
@@ -2066,19 +2145,51 @@ int main(int argc, char** argv) {
       setDesktopStatus("New sketch");
       changed = true;
       }
-    } else if (currentView == DesktopView::Canvas && key == SDLK_c) {
+#endif
+    } else if (
+        currentView == DesktopView::Canvas &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        key == SDLK_i
+#else
+        key == SDLK_c
+#endif
+        ) {
       const uint8_t next = static_cast<uint8_t>(
           editor.selectedColor() % editor.sketch().paletteSize + 1);
       editor.setSelectedColor(next);
       changed = true;
-    } else if (currentView == DesktopView::Canvas && key == SDLK_f) {
-      editor.floodFill(altHeld ? 0 : editor.selectedColor());
-      setDesktopStatus(altHeld ? "Erase Fill" : "Fill");
+    } else if (
+        currentView == DesktopView::Canvas &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        ((key == SDLK_f && ctrlHeld) || key == SDLK_e)
+#else
+        key == SDLK_f
+#endif
+        ) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+      const bool eraseFill = key == SDLK_e;
+#else
+      const bool eraseFill = altHeld;
+#endif
+      editor.floodFill(eraseFill ? 0 : editor.selectedColor());
+      setDesktopStatus(eraseFill ? "Erase Fill" : "Fill");
       changed = true;
-    } else if (currentView == DesktopView::Canvas && key == SDLK_z) {
-      const bool performed = altHeld ? editor.redo() : editor.undo();
+    } else if (
+        currentView == DesktopView::Canvas &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        ctrlHeld && (key == SDLK_z || key == SDLK_y)
+#else
+        key == SDLK_z
+#endif
+        ) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+      const bool redo = key == SDLK_y;
+#else
+      const bool redo = altHeld;
+#endif
+      const bool performed = redo ? editor.redo() : editor.undo();
       setDesktopStatus(
-          altHeld
+          redo
               ? performed ? "Redo" : "No redo"
               : performed ? "Undo" : "No undo");
       changed = true;
@@ -2103,11 +2214,23 @@ int main(int argc, char** argv) {
       changed = true;
     } else if (
         currentView == DesktopView::Canvas &&
-        (key == SDLK_RETURN || key == SDLK_SPACE)) {
+        (key == SDLK_RETURN
+#ifndef BITMAP16_CARDPUTER_ZERO
+         || key == SDLK_SPACE
+#endif
+         )) {
       changed = editor.draw();
-    } else if (
-        currentView == DesktopView::Canvas &&
-        (key == SDLK_BACKSPACE || key == SDLK_DELETE)) {
+    } else if (currentView == DesktopView::Canvas &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+               key == SDLK_DELETE) {
+      editor.clear();
+      setDesktopStatus("Clear");
+      changed = true;
+    } else if (currentView == DesktopView::Canvas &&
+               key == SDLK_BACKSPACE) {
+      changed = editor.erase();
+#else
+               (key == SDLK_BACKSPACE || key == SDLK_DELETE)) {
       if (altHeld) {
         editor.clear();
         setDesktopStatus("Clear");
@@ -2115,19 +2238,38 @@ int main(int argc, char** argv) {
       } else {
         changed = editor.erase();
       }
+#endif
+#ifndef BITMAP16_CARDPUTER_ZERO
     } else if (currentView == DesktopView::Canvas && key == SDLK_k) {
       editor.clear();
       setDesktopStatus("Clear");
       changed = true;
+#endif
     } else if (
         currentView == DesktopView::Canvas &&
         key >= SDLK_1 && key <= SDLK_8) {
       const uint8_t color = static_cast<uint8_t>(
-          key - SDLK_0 + (altHeld ? 8 : 0));
+          key - SDLK_0 +
+#ifdef BITMAP16_CARDPUTER_ZERO
+          0
+#else
+          (altHeld ? 8 : 0)
+#endif
+          );
       if (color <= editor.sketch().paletteSize) {
         editor.setSelectedColor(color);
         changed = true;
       }
+#ifdef BITMAP16_CARDPUTER_ZERO
+    } else if (
+        currentView == DesktopView::Canvas &&
+        key >= SDLK_F1 && key <= SDLK_F8) {
+      const uint8_t color = static_cast<uint8_t>(key - SDLK_F1 + 9);
+      if (color <= editor.sketch().paletteSize) {
+        editor.setSelectedColor(color);
+        changed = true;
+      }
+#endif
     } else if (arrow && currentView == DesktopView::Preview && galleryMode) {
       if ((key == SDLK_LEFT || key == SDLK_RIGHT) &&
           !workspace.sketches().empty()) {
@@ -2140,7 +2282,9 @@ int main(int argc, char** argv) {
       }
     } else if (key == SDLK_UP) {
       if (currentView == DesktopView::Canvas) {
-        changed = moveCanvasCursor(0, -1);
+        changed = zeroEdgeJump
+            ? jumpCanvasCursor(0, -1)
+            : moveCanvasCursor(0, -1);
       } else if (currentView == DesktopView::Help) {
         changed = bitmap16::HelpView::moveCursor(
             helpState,
@@ -2161,7 +2305,9 @@ int main(int argc, char** argv) {
       }
     } else if (key == SDLK_DOWN) {
       if (currentView == DesktopView::Canvas) {
-        changed = moveCanvasCursor(0, 1);
+        changed = zeroEdgeJump
+            ? jumpCanvasCursor(0, 1)
+            : moveCanvasCursor(0, 1);
       } else if (currentView == DesktopView::Help) {
         changed = bitmap16::HelpView::moveCursor(
             helpState,
@@ -2184,7 +2330,9 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Canvas &&
         (key == SDLK_LEFT || key == SDLK_RIGHT)) {
       const int delta = key == SDLK_LEFT ? -1 : 1;
-      changed = moveCanvasCursor(delta, 0);
+      changed = zeroEdgeJump
+          ? jumpCanvasCursor(delta, 0)
+          : moveCanvasCursor(delta, 0);
     } else if (
         currentView == DesktopView::Settings &&
         (key == SDLK_LEFT || key == SDLK_RIGHT ||
@@ -2257,21 +2405,20 @@ int main(int argc, char** argv) {
       }
     } else if (
         currentView == DesktopView::Memory &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        key == SDLK_s && ctrlHeld &&
+#else
         key == SDLK_y &&
+#endif
         memoryState.cursor > 0) {
       const std::size_t sourceIndex =
           static_cast<std::size_t>(memoryState.cursor - 1);
       if (sourceIndex < workspace.sketches().size()) {
-        editor.reset(workspace.sketches()[sourceIndex]);
-        if (workspace.saveSketch(editor, true)) {
-          savedDocumentState = editor.sketch();
-          documentDirty = false;
+        if (workspace.duplicateSketch(sourceIndex)) {
           refreshMemoryCatalog();
           memoryState.cursor = 1;
           memoryState.scrollOffset = 0;
           memoryState.scrollPosition = 0.0f;
-          activePalette =
-              findActivePalette(editor.sketch(), paletteEntries);
           setDesktopStatus("Duplicated");
           rumble(0x1000, 0x3800, 75);
           changed = true;
@@ -2285,19 +2432,28 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Memory &&
         (key == SDLK_BACKSPACE || key == SDLK_DELETE) &&
         memoryState.cursor > 0) {
-      changed = workspace.deleteSketch(
-          static_cast<std::size_t>(memoryState.cursor - 1), editor);
+      const std::size_t deleteIndex =
+          static_cast<std::size_t>(memoryState.cursor - 1);
+      const bool deletedActive =
+          workspace.activeIndex() == static_cast<int>(deleteIndex);
+      changed = workspace.deleteSketch(deleteIndex);
       if (changed) {
+        if (deletedActive) documentDirty = true;
         refreshMemoryCatalog();
-        activePalette = findActivePalette(editor.sketch(), paletteEntries);
-        setDesktopStatus("Restored sketch");
+        setDesktopStatus("Deleted sketch");
       }
     } else if (
-        currentView == DesktopView::Memory && key == SDLK_z) {
-      changed = workspace.undoDelete(editor);
+        currentView == DesktopView::Memory &&
+#ifdef BITMAP16_CARDPUTER_ZERO
+        key == SDLK_u
+#else
+        key == SDLK_z
+#endif
+        ) {
+      changed = workspace.undoDelete();
       if (changed) {
         refreshMemoryCatalog();
-        activePalette = findActivePalette(editor.sketch(), paletteEntries);
+        setDesktopStatus("Restored sketch");
       }
     } else if (
         currentView == DesktopView::Palette &&

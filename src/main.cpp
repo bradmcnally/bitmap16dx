@@ -399,6 +399,8 @@ struct SketchInfo {
 std::vector<SketchInfo> sketchList;      // Persistent metadata and thumbnail cache
 bool sketchCatalogValid = false;
 Sketch sketchOperationBuffer;            // Reused for file I/O and full-document actions
+Sketch deletedSketchBuffer;              // Dedicated Sketches deletion undo buffer
+bool deletedSketchAvailable = false;
 
 struct ViewState {
   struct {
@@ -1329,7 +1331,7 @@ void drawStatusMessage() {
  * Only redraws when percentage changes
  * Checks battery level every 30 seconds to reduce flashing
  */
-void drawBatteryIndicator() {
+bool drawBatteryIndicator() {
   unsigned long currentTime = millis();
 
   // Check if we need to force a redraw (when lastBatteryPercent is -1)
@@ -1337,7 +1339,7 @@ void drawBatteryIndicator() {
 
   // Only check battery every 30 seconds (but always check on first call or forced)
   if (!forceRedraw && !batteryFirstCheck && currentTime - lastBatteryCheckTime < BATTERY_CHECK_INTERVAL) {
-    return;
+    return false;
   }
 
   batteryFirstCheck = false;
@@ -1348,7 +1350,8 @@ void drawBatteryIndicator() {
 
   // The shared Canvas view draws the icon; this poll only updates indicator
   // state and the cached percentage.
-  if (batteryPercent != lastBatteryPercent || forceRedraw) {
+  const bool changed = batteryPercent != lastBatteryPercent || forceRedraw;
+  if (changed) {
     // Low-battery state latches at <= 10%; the indicator preference decides
     // whether that state is shown on the RGB LED.
     if (!lowBattery && batteryPercent <= 10) {
@@ -1357,6 +1360,7 @@ void drawBatteryIndicator() {
 
     lastBatteryPercent = batteryPercent;
   }
+  return changed;
 }
 
 void updateIndicatorLED() {
@@ -1427,7 +1431,7 @@ void drawSharedCanvasView() {
       editorState.rulersVisible,
       editorState.moveModeActive,
       statusMessage,
-      Power::getBatteryPercent(),
+      lastBatteryPercent,
       editorState.drawPressed,
       editorState.erasePressed,
       editorState.fillPressed,
@@ -1886,11 +1890,7 @@ bool loadFullSketch(int index, Sketch& destination) {
   return copyCachedSketch(index, destination);
 }
 
-bool duplicateSketchFromMemory(int index) {
-  if (!loadFullSketch(index, sketchOperationBuffer)) {
-    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
-    return false;
-  }
+bool saveSketchCopyToSD(const Sketch& sketch, const char* successStatus) {
   if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
@@ -1911,15 +1911,23 @@ bool duplicateSketchFromMemory(int index) {
       "sketch_" + String(counter) + ".dat";
   const String path =
       "/bitmap16dx/sketches/" + filename;
-  if (!writeSketchFile(path.c_str(), sketchOperationBuffer)) {
+  if (!writeSketchFile(path.c_str(), sketch)) {
     setStatusMessage(StatusMsg::FAILED_TO_SAVE);
     return false;
   }
 
   PreferenceStore::writeUInt32("sketchCounter", counter);
   sketchCatalogValid = false;
-  setStatusMessage("Duplicated");
+  setStatusMessage(successStatus);
   return true;
+}
+
+bool duplicateSketchFromMemory(int index) {
+  if (!loadFullSketch(index, sketchOperationBuffer)) {
+    setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
+    return false;
+  }
+  return saveSketchCopyToSD(sketchOperationBuffer, "Duplicated");
 }
 
 bool loadNextVisibleSketchThumbnail() {
@@ -2118,8 +2126,8 @@ void exitChargingMode() {
   // Restore brightness
   Display::setBrightness(displayBrightness);
 
-  drawSharedCanvasView();
   drawBatteryIndicator();
+  drawSharedCanvasView();
 }
 
 /**
@@ -2485,8 +2493,8 @@ void exitSettingsView() {
   viewState.settings.canvasAvailable = false;
   viewState.settings.ownsCanvas = false;
 
-  drawSharedCanvasView();
   drawBatteryIndicator();
+  drawSharedCanvasView();
 }
 
 
@@ -3840,28 +3848,16 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
         memoryViewNeedsRedraw = true;
         return;
       }
-      // Save sketch to undo buffer before deleting (so we can restore with Z)
-      Sketch& sketchData = sketchOperationBuffer;
-
-      // Copy pixel data to undo buffer
-      for (int y = 0; y < MAX_currentGridSize; y++) {
-        for (int x = 0; x < MAX_currentGridSize; x++) {
-          editorState.undoCanvas[y][x] = sketchData.pixels[y][x];
-        }
+      const String filename =
+          "/bitmap16dx/sketches/" + sketchList[sketchIndex].filename;
+      if (!Filesystem::remove(filename.c_str())) {
+        setStatusMessage("Delete failed");
+        memoryViewNeedsRedraw = true;
+        return;
       }
-
-      // Copy palette and grid info to undo buffer
-      for (int i = 0; i < 16; i++) {
-        editorState.undoPaletteColors[i] = sketchData.paletteColors[i];
-      }
-      editorState.undoPaletteSize = sketchData.paletteSize;
-      editorState.undoGridSize = sketchData.gridSize;
-      editorState.undoAvailable = true;
-
-      // Now delete the file
-      String filename = "/bitmap16dx/sketches/" + sketchList[sketchIndex].filename;
-      Filesystem::remove(filename.c_str());
-      loadSketchListFromSD();  // Refresh list (clears cached data)
+      deletedSketchBuffer = sketchOperationBuffer;
+      deletedSketchAvailable = true;
+      loadSketchListFromSD();
 
       // Move cursor if we deleted the last item
       int totalItems = 1 + sketchList.size();
@@ -3913,53 +3909,16 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
       memoryViewNeedsRedraw = true;
       lastMemoryViewCursor = -1;
     }
-    // Z key - Undo (restore last cleared sketch from memory view)
+    // Z key - restore the most recently deleted sketch.
     else if (command == 'z' || command == 'Z') {
-        if (editorState.undoAvailable) {
-          // Restore the undo buffer to active sketch
-          // (This restores canvas-level undo, not sketch deletion)
-
-          // If we have saved grid size info, restore it
-          if (editorState.undoGridSize > 0) {
-            editorState.gridSize = editorState.undoGridSize;
-            editorState.cellSize = 128 / editorState.gridSize;
-
-            // Keep cursor in bounds
-            if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
-            if (editorState.cursorY >= editorState.gridSize) editorState.cursorY = editorState.gridSize - 1;
+        if (deletedSketchAvailable) {
+          if (!saveSketchCopyToSD(
+                  deletedSketchBuffer, StatusMsg::RESTORED_SKETCH)) {
+            memoryViewNeedsRedraw = true;
+            return;
           }
-
-          // Restore pixel data to canvas
-          for (int y = 0; y < MAX_currentGridSize; y++) {
-            for (int x = 0; x < MAX_currentGridSize; x++) {
-              editorState.canvas[y][x] = editorState.undoCanvas[y][x];
-            }
-          }
-
-          // Restore palette information to active sketch
-          documentState.sketch.paletteSize = editorState.undoPaletteSize;
-          documentState.sketch.gridSize = editorState.undoGridSize;
-          for (int i = 0; i < 16; i++) {
-            documentState.sketch.paletteColors[i] = editorState.undoPaletteColors[i];
-          }
-
-          documentState.sketch.isEmpty = false;
-          editorState.undoAvailable = false;
-
-          // Save restored sketch to SD card (now uses active sketch system)
-          // Copy canvas to active sketch before saving
-          for (int y = 0; y < MAX_currentGridSize; y++) {
-            for (int x = 0; x < MAX_currentGridSize; x++) {
-              documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
-            }
-          }
-          documentState.sketch.gridSize = editorState.gridSize;
-          saveActiveSketchToSD();
-
-          // Reload sketch list to show the restored sketch
+          deletedSketchAvailable = false;
           loadSketchListFromSD();
-
-          setStatusMessage(StatusMsg::RESTORED_SKETCH);
           memoryViewNeedsRedraw = true;
           lastMemoryViewCursor = -1;
         } else {
@@ -5551,7 +5510,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
 
   // Update status expiry before the shared full-frame renderer runs.
   drawStatusMessage();
-  drawBatteryIndicator();
+  const bool batteryChanged = drawBatteryIndicator();
   updateIndicatorLED();
 
   const bool canvasViewChanged =
@@ -5560,6 +5519,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       floodFilled || canvasMoved || moveModeChanged ||
       zoomChanged ||
       toolStateChanged ||
+      batteryChanged ||
       statusMessage[0] != '\0' || statusMessageJustCleared;
   if (pixelPlaced || canvasCleared || undoPerformed || gridToggled ||
       floodFilled || canvasMoved) {

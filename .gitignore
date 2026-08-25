@@ -47,8 +47,9 @@ claude.md
 tools/
 devlog/
 
-# Documentation and design files
-docs/
+# Local porting notes (the release checklist remains tracked)
+docs/PORTING_PLAN.md
+docs/notes.md
 
 # Folders with source assets (not needed to build)
 assets/

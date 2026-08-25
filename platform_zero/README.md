@@ -37,7 +37,8 @@ Install the generated `arm64.deb` with `sudo dpkg -i`.
 
 The launcher probes Wayland first, then KMSDRM, and finally SDL's offscreen
 backend. Hardware validation is still required for the keyboard mappings,
-battery reporting, IMU, and the Grove RGB matrix signal adapter.
+battery reporting, the BMM150 geomagnetic sensor, and the Grove RGB matrix
+signal adapter.
 
 ## Workspace and controls
 
@@ -56,30 +57,33 @@ Settings and sketches persist between launches in:
 Set `BITMAP16_DATA_DIR` to use a different writable location. If
 `XDG_DATA_HOME` is set, the default is `$XDG_DATA_HOME/bitmap16dx`.
 
-The desktop and Zero simulators use these controls. The Linux device target
-uses the same non-matrix commands; physical matrix output awaits the Grove
-signal adapter.
+The `zero` and `zero-device` presets enable the Cardputer Zero input profile.
+The complete physical-key mapping is documented in
+[`CONTROLS.md`](CONTROLS.md).
 
-- `H`, `T`, `V`, `P`, and `O`: Help, Settings, Preview, Palette, and Memory
-- `Alt+B`: Charging
-- `Esc`: return to Canvas; `Q`: quit
-- Arrow keys: move the cursor or navigate the current view
-- `Enter` or `Space`: draw/activate; `Backspace` or `Delete`: erase
-- `1`-`8`: colors 1-8; `Alt`+`1`-`8`: colors 9-16
-- `S`: save; `Alt`+`S`: save as a new sketch; `N`: new sketch
-- `X`: export at 128×128; `Alt+X`: export at the logical grid size
-- `C`: next color; `F`: fill; `Z`: undo; `G`: grid size; `R`: rulers
-- `+` / `-`: integer canvas zoom in/out; moving at a viewport edge pans
-- Hold `M` with an arrow to move the artwork
-- `K` or `Alt+Backspace`: clear the canvas
+- `F`, `Z`, `X`, and `C`: Up, Left, Down, and Right in every navigable view
+- `Fn+F/Z/X/C`: firmware arrow alternatives; use desktop arrow keys to
+  simulate them
+- `Shift+F/Z/X/C`: jump to an artwork edge while zoomed
+- Enter: draw or activate; Backspace: erase one pixel
+- `Fn+Backspace` (Delete): clear Canvas or delete the selected saved sketch
+- `1`-`8`: colors 1-8; `Fn+1`-`Fn+8` (`F1`-`F8`): colors 9-16
+- `Ctrl+F`: fill; `E`: erase fill; `Ctrl+Z`: undo; `Ctrl+Y`: redo
+- `I`: next color; `G`: grid size; `R`: rulers; `+` / `-`: zoom
+- Hold `M` with `F/Z/X/C` to move the artwork
+- `Ctrl+S`: save; `Shift+S`: save as a new sketch
+- `Ctrl+X`: export at 128×128; `Ctrl+L`: export at logical grid size
+- `H`, `T`, `V`, `P`, and `O`: Help, Settings, Preview, Palette, and Sketches
+- `Ctrl+B`: charging display
 - Hold `B` with `+` or `-`: display brightness
-- Hold `L` with `Enter`: matrix on/off; hold `L` with `+` or `-`: matrix
+- Hold `L` with Enter: matrix on/off; hold `L` with `+` or `-`: matrix
   brightness
-- `Y`: simulate shake-to-undo when Shake Undo is enabled
+- Escape: return to Canvas; `Q`: quit
 
-In Memory, `Delete` removes the selected sketch, `Z` restores the most recent
-deletion, and `V` opens the saved-sketch slideshow. Slideshow arrows move
-between sketches and `Space` toggles three-second auto-advance.
+In Sketches, Delete removes the selected sketch, `U` restores the most recent
+deletion, `Ctrl+S` duplicates the selected sketch, and `V` opens the saved-
+sketch slideshow. Slideshow Left/Right moves between sketches and Space
+toggles three-second auto-advance.
 
 Memory starts with a `+` tile for a new sketch, followed by saved sketches.
 The newest saved sketch opens automatically on the next launch.
@@ -109,17 +113,22 @@ BITMAP16_DATA_DIR=/tmp/bitmap16dx-zero-test \
 
 Recommended all-at-once test:
 
-1. Draw with arrows plus Enter, erase, fill, undo, switch grid size, toggle
-   rulers, move with `M`+arrows, and clear with `K`.
-2. Select colors 1-8 and `Alt`+1-8, cycle colors, apply built-in palettes,
+1. Navigate with both `F/Z/X/C` and desktop arrows. Draw with Enter, erase
+   with Backspace, fill with `Ctrl+F`, erase fill with `E`, undo/redo with
+   `Ctrl+Z`/`Ctrl+Y`, jump with `Shift+F/Z/X/C`, move with `M+F/Z/X/C`, and
+   clear with Delete.
+2. Select colors 1-8 and colors 9-16 with `F1`-`F8`, cycle with `I`, apply
+   built-in palettes,
    then add a `.hex` file and verify the `U` user-palette filter.
-3. Save, save-as, create a new sketch, reopen both sketches, delete one, and
-   restore it with `Z`.
-4. Export scaled and logical PNGs and inspect the `exports/` directory.
+3. Save with `Ctrl+S`, save-as with `Shift+S`, create a sketch through the `+`
+   slot, reopen both sketches, delete one with Delete, restore it with `U`,
+   and duplicate one with `Ctrl+S`.
+4. Export scaled and logical PNGs with `Ctrl+X` and `Ctrl+L`, then inspect the
+   `exports/` directory.
 5. Enter Memory and start the slideshow with `V`; test arrows, backgrounds
    1-4, `Space` autoplay, and return to the same Memory selection.
 6. Change every Settings row and restart to confirm persistence.
 7. Toggle and configure the matrix window; check 8×8, scaled 8×8 on four
    units, 16×16 on four units, all rotations, and brightness.
-8. Test Help return navigation, Preview, Charging, display brightness, both
-   themes, `Y` shake simulation, Escape behavior, and `Q` quit.
+8. Test Help return navigation, Preview, `Ctrl+B` Charging, display
+   brightness, both themes, Escape behavior, and `Q` quit.

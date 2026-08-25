@@ -19,7 +19,8 @@
       "binaryDir": "${sourceDir}/build_zero",
       "cacheVariables": {
         "BITMAP16_DEFAULT_WIDTH": "320",
-        "BITMAP16_DEFAULT_HEIGHT": "170"
+        "BITMAP16_DEFAULT_HEIGHT": "170",
+        "BITMAP16_CARDPUTER_ZERO": "ON"
       }
     },
     {

@@ -279,19 +279,19 @@ void test_canvas_draws_scaled_and_aligned_text() {
 
 void test_help_view_navigation_clamps_to_available_items() {
   bitmap16::HelpView::State state;
-  TEST_ASSERT_EQUAL_INT(22, bitmap16::HelpView::itemCount(false, true));
-  TEST_ASSERT_EQUAL_INT(24, bitmap16::HelpView::itemCount(true, true));
-  TEST_ASSERT_EQUAL_INT(21, bitmap16::HelpView::itemCount(false, false));
+  TEST_ASSERT_EQUAL_INT(25, bitmap16::HelpView::itemCount(false, true));
+  TEST_ASSERT_EQUAL_INT(27, bitmap16::HelpView::itemCount(true, true));
+  TEST_ASSERT_EQUAL_INT(24, bitmap16::HelpView::itemCount(false, false));
   TEST_ASSERT_FALSE(
       bitmap16::HelpView::moveCursor(state, -1, false, true));
   TEST_ASSERT_TRUE(
       bitmap16::HelpView::moveCursor(state, 30, false, true));
-  TEST_ASSERT_EQUAL_INT(21, state.cursor);
+  TEST_ASSERT_EQUAL_INT(24, state.cursor);
   TEST_ASSERT_FALSE(
       bitmap16::HelpView::moveCursor(state, 1, false, true));
   TEST_ASSERT_TRUE(
       bitmap16::HelpView::moveCursor(state, -1, false, true));
-  TEST_ASSERT_EQUAL_INT(20, state.cursor);
+  TEST_ASSERT_EQUAL_INT(23, state.cursor);
 }
 
 void test_help_view_renders_and_scrolls_at_both_target_sizes() {

@@ -2,14 +2,26 @@
 #include <filesystem>
 #include <fstream>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "core/editor.h"
 #include "core/settings.h"
 #include "workspace.h"
 
 int main() {
+#ifdef _WIN32
+  const int processId = _getpid();
+#else
+  const int processId = getpid();
+#endif
   const std::filesystem::path root =
       std::filesystem::temp_directory_path() /
-      "bitmap16dx-workspace-regression";
+      ("bitmap16dx-workspace-regression-" +
+       std::to_string(processId));
   std::error_code error;
   std::filesystem::remove_all(root, error);
 #ifdef _WIN32
@@ -107,10 +119,32 @@ int main() {
     return 9;
   }
 
-  if (!restored.deleteSketch(0, restoredEditor) ||
-      restored.sketches().size() != 1 ||
-      !restored.undoDelete(restoredEditor) ||
-      restored.sketches().size() != 2) {
+  // Catalog operations must never replace or reset the open document.
+  restoredEditor.setCursor(0, 0);
+  restoredEditor.setSelectedColor(2);
+  if (!restoredEditor.draw()) return 10;
+  const uint8_t openPixel = restoredEditor.sketch().pixels[0][0];
+  if (!restored.duplicateSketch(1) ||
+      restored.sketches().size() != 3 ||
+      restoredEditor.sketch().pixels[0][0] != openPixel) {
+    return 10;
+  }
+  if (!restored.deleteSketch(0) ||
+      restored.sketches().size() != 2 ||
+      restoredEditor.sketch().pixels[0][0] != openPixel ||
+      !restored.undoDelete() ||
+      restored.sketches().size() != 3 ||
+      restoredEditor.sketch().pixels[0][0] != openPixel) {
+    return 10;
+  }
+  const int activeBeforeDelete = restored.activeIndex();
+  if (activeBeforeDelete < 0 ||
+      !restored.deleteSketch(static_cast<std::size_t>(activeBeforeDelete)) ||
+      restored.activeIndex() != -1 ||
+      restoredEditor.sketch().pixels[0][0] != openPixel ||
+      !restored.undoDelete() ||
+      restored.activeIndex() < 0 ||
+      restoredEditor.sketch().pixels[0][0] != openPixel) {
     return 10;
   }
 
