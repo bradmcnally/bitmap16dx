@@ -126,6 +126,14 @@ bool platformHasQuitSetting() {
 #endif
 }
 
+bool platformHasHelpSetting() {
+#ifdef BITMAP16_STEAM_DECK
+  return true;
+#else
+  return false;
+#endif
+}
+
 bool platformHasBatteryDisplay() {
 #ifdef BITMAP16_STEAM_DECK
   return false;
@@ -186,6 +194,7 @@ enum DeckControllerEvent : Sint32 {
   kColorUp,
   kColorDown,
   kRedo,
+  kToggleSettings,
 };
 
 void pushControllerEvent(DeckControllerEvent controllerEvent) {
@@ -344,8 +353,9 @@ void drawUnsavedChangesModal(
       cancelX, optionsY + 9, cancelX + 17, optionsY + 9, theme.text);
 }
 
-const bitmap16::CanvasView::Assets& canvasAssets() {
-  static const bitmap16::CanvasView::Assets assets = {
+const bitmap16::CanvasView::Assets& canvasAssets(
+    const bitmap16::Settings& settings) {
+  static const bitmap16::CanvasView::Assets arrowAssets = {
       {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
       {ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT},
       {ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT},
@@ -364,7 +374,26 @@ const bitmap16::CanvasView::Assets& canvasAssets() {
       MOVE_CURSOR_OFFSET_X,
       MOVE_CURSOR_OFFSET_Y,
   };
-  return assets;
+  static const bitmap16::CanvasView::Assets handAssets = {
+      {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
+      {ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT},
+      {ICON_FILL, ICON_FILL_WIDTH, ICON_FILL_HEIGHT},
+      {
+          {ICON_BATTERY_0, 24, 24},
+          {ICON_BATTERY_10, 24, 24},
+          {ICON_BATTERY_50, 24, 24},
+          {ICON_BATTERY_90, 24, 24},
+      },
+      {ICON_HAND_CURSOR, ICON_HAND_CURSOR_WIDTH, ICON_HAND_CURSOR_HEIGHT},
+      {ICON_MOVE_CURSOR, ICON_MOVE_CURSOR_WIDTH, ICON_MOVE_CURSOR_HEIGHT},
+      HAND_CURSOR_OFFSET_X,
+      HAND_CURSOR_OFFSET_Y,
+      MOVE_CURSOR_OFFSET_X,
+      MOVE_CURSOR_OFFSET_Y,
+  };
+  return settings.cursorStyle == bitmap16::CursorStyle::Hand
+      ? handAssets
+      : arrowAssets;
 }
 
 void makePaletteCatalogEntries(
@@ -587,7 +616,7 @@ void renderCurrentView(
 #endif
     };
     bitmap16::CanvasView::render(
-        canvas, state, canvasTheme(settings), &canvasAssets());
+        canvas, state, canvasTheme(settings), &canvasAssets(settings));
   } else if (view == DesktopView::Help) {
     bitmap16::HelpView::render(
         canvas,
@@ -606,7 +635,9 @@ void renderCurrentView(
         platformHasShakeUndo(),
         nullptr,
         nullptr,
-        platformHasQuitSetting());
+        platformHasQuitSetting(),
+        false,
+        platformHasHelpSetting());
   } else if (view == DesktopView::Preview) {
     const bitmap16::Sketch& sketch =
         previewOverride == nullptr ? editor.sketch() : *previewOverride;
@@ -1472,7 +1503,11 @@ int main(int argc, char** argv) {
       const int leftX = stickDirection(SDL_GameControllerGetAxis(
           controller, SDL_CONTROLLER_AXIS_LEFTX));
       if (axisRepeatReady(leftStickX, leftX, now, repeat)) {
-        pushKeyEvent(leftX < 0 ? SDLK_LEFT : SDLK_RIGHT, repeat);
+        if (currentView == DesktopView::Palette) {
+          pushControllerEvent(leftX < 0 ? kColorLeft : kColorRight);
+        } else {
+          pushKeyEvent(leftX < 0 ? SDLK_LEFT : SDLK_RIGHT, repeat);
+        }
       }
       const int leftY = stickDirection(SDL_GameControllerGetAxis(
           controller, SDL_CONTROLLER_AXIS_LEFTY));
@@ -1485,8 +1520,13 @@ int main(int argc, char** argv) {
           (SDL_GameControllerGetButton(
                controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT) != 0 ? 1 : 0);
       if (axisRepeatReady(dpadX, dpadHorizontal, now, repeat)) {
-        pushKeyEvent(
-            dpadHorizontal < 0 ? SDLK_LEFT : SDLK_RIGHT, repeat);
+        if (currentView == DesktopView::Palette) {
+          pushControllerEvent(
+              dpadHorizontal < 0 ? kColorLeft : kColorRight);
+        } else {
+          pushKeyEvent(
+              dpadHorizontal < 0 ? SDLK_LEFT : SDLK_RIGHT, repeat);
+        }
       }
       const int dpadVertical =
           (SDL_GameControllerGetButton(
@@ -1664,7 +1704,7 @@ int main(int argc, char** argv) {
           mappedKey = SDLK_o;
           break;
         case SDL_CONTROLLER_BUTTON_START:
-          mappedKey = SDLK_t;
+          pushControllerEvent(kToggleSettings);
           break;
 #if defined(BITMAP16_STEAM_DECK) && SDL_VERSION_ATLEAST(2, 0, 14)
         // SDL numbers rear paddles while facing the back of the controller:
@@ -1706,6 +1746,14 @@ int main(int argc, char** argv) {
             redone ? 30 : 110);
         renderNow();
       }
+      continue;
+    }
+    if (event.type == SDL_USEREVENT &&
+        event.user.code == kToggleSettings) {
+      currentView = currentView == DesktopView::Settings
+          ? DesktopView::Canvas
+          : DesktopView::Settings;
+      renderNow();
       continue;
     }
     if (event.type == SDL_USEREVENT &&
@@ -1780,6 +1828,15 @@ int main(int argc, char** argv) {
     const bool arrow =
         key == SDLK_UP || key == SDLK_DOWN ||
         key == SDLK_LEFT || key == SDLK_RIGHT;
+    const bool paletteControllerHorizontalHeld =
+        currentView == DesktopView::Palette &&
+        controller != nullptr &&
+        (stickDirection(SDL_GameControllerGetAxis(
+             controller, SDL_CONTROLLER_AXIS_LEFTX)) != 0 ||
+         SDL_GameControllerGetButton(
+             controller, SDL_CONTROLLER_BUTTON_DPAD_LEFT) != 0 ||
+         SDL_GameControllerGetButton(
+             controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) != 0);
     if (event.key.repeat != 0 && !arrow) continue;
     const Uint8* keyboard = SDL_GetKeyboardState(nullptr);
     const bool moveHeld =
@@ -1995,7 +2052,11 @@ int main(int argc, char** argv) {
         currentView = DesktopView::Help;
       }
       changed = true;
-    } else if (key == SDLK_t) {
+    } else if (
+        key == SDLK_t &&
+        !(controller != nullptr &&
+          SDL_GameControllerGetButton(
+              controller, SDL_CONTROLLER_BUTTON_START) != 0)) {
       currentView = currentView == DesktopView::Settings
           ? DesktopView::Canvas
           : DesktopView::Settings;
@@ -2298,7 +2359,9 @@ int main(int argc, char** argv) {
             false,
             platformHasLedMatrixControls(),
             platformHasShakeUndo(),
-            platformHasQuitSetting());
+            platformHasQuitSetting(),
+            false,
+            platformHasHelpSetting());
       } else if (currentView == DesktopView::Memory) {
         changed = bitmap16::MemoryView::moveCursor(
             memoryState, 0, -1, memoryCatalog.count, width);
@@ -2321,7 +2384,9 @@ int main(int argc, char** argv) {
             false,
             platformHasLedMatrixControls(),
             platformHasShakeUndo(),
-            platformHasQuitSetting());
+            platformHasQuitSetting(),
+            false,
+            platformHasHelpSetting());
       } else if (currentView == DesktopView::Memory) {
         changed = bitmap16::MemoryView::moveCursor(
             memoryState, 0, 1, memoryCatalog.count, width);
@@ -2344,10 +2409,15 @@ int main(int argc, char** argv) {
               false,
               platformHasLedMatrixControls(),
               platformHasShakeUndo(),
-              platformHasQuitSetting());
+              platformHasQuitSetting(),
+              false,
+              platformHasHelpSetting());
       changed = action != bitmap16::SettingsView::Action::None;
       if (action == bitmap16::SettingsView::Action::QuitRequested) {
         if (confirmUnsavedChanges()) quitRequested = true;
+      } else if (action == bitmap16::SettingsView::Action::HelpRequested) {
+        returnView = DesktopView::Settings;
+        currentView = DesktopView::Help;
       } else if (
           action ==
               bitmap16::SettingsView::Action::MatrixEnabledChanged &&
@@ -2359,7 +2429,8 @@ int main(int argc, char** argv) {
       }
     } else if (
         currentView == DesktopView::Palette &&
-        (key == SDLK_LEFT || key == SDLK_RIGHT)) {
+        (key == SDLK_LEFT || key == SDLK_RIGHT) &&
+        !paletteControllerHorizontalHeld) {
       changed = bitmap16::PaletteView::moveCursor(
           paletteState, key == SDLK_LEFT ? -1 : 1);
       if (changed) {

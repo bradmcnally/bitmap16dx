@@ -14,12 +14,18 @@ enum class ExportFormat : uint8_t {
   Rgb565 = 1,
 };
 
+enum class CursorStyle : uint8_t {
+  Arrow = 0,
+  Hand = 1,
+};
+
 struct Settings {
   ThemeId theme = ThemeId::Light;
   uint8_t defaultGridSize = 8;
   uint8_t matrixUnits = 1;
   uint8_t matrixRotation = 2;
   ExportFormat exportFormat = ExportFormat::Rgb888;
+  CursorStyle cursorStyle = CursorStyle::Arrow;
   bool shakeUndoEnabled = false;
   bool matrixEnabled = false;
   bool saveWarnings = true;

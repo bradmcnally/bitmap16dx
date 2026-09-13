@@ -42,6 +42,7 @@ int main() {
       error);
   if (error) return 2;
   first.settings().theme = bitmap16::ThemeId::Dark;
+  first.settings().cursorStyle = bitmap16::CursorStyle::Hand;
   first.settings().defaultGridSize = 16;
   first.settings().matrixEnabled = true;
   if (!first.saveSettings()) return 3;
@@ -53,6 +54,7 @@ int main() {
       restored.activeIndex() != -1 ||
       restoredEditor.sketch().pixels[2][3] != 0 ||
       restored.settings().theme != bitmap16::ThemeId::Dark ||
+      restored.settings().cursorStyle != bitmap16::CursorStyle::Hand ||
       restored.settings().defaultGridSize != 16 ||
       !restored.settings().matrixEnabled) {
     return 5;

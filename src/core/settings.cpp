@@ -34,6 +34,10 @@ Settings normalizeSettings(Settings settings) {
       settings.exportFormat != ExportFormat::Rgb565) {
     settings.exportFormat = ExportFormat::Rgb888;
   }
+  if (settings.cursorStyle != CursorStyle::Arrow &&
+      settings.cursorStyle != CursorStyle::Hand) {
+    settings.cursorStyle = CursorStyle::Arrow;
+  }
   settings.displayBrightness =
       clamp(settings.displayBrightness, 10, 100);
   settings.matrixBrightness =

@@ -22,7 +22,9 @@ constexpr Item kItems[] = {
     {"Shake undo", Action::ShakeUndoChanged},
     {"Save warnings", Action::SaveWarningsChanged},
     {"Indicator LED", Action::IndicatorMenuRequested},
+    {"Cursor", Action::CursorStyleChanged},
     {"Bluetooth", Action::BluetoothRequested},
+    {"Help", Action::HelpRequested},
     {"Quit", Action::QuitRequested},
 };
 
@@ -44,8 +46,10 @@ bool itemVisible(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit,
-    bool includeIndicator) {
+    bool includeIndicator,
+    bool includeHelp) {
   if (item.action == Action::BluetoothRequested) return includeBluetooth;
+  if (item.action == Action::HelpRequested) return includeHelp;
   if (item.action == Action::QuitRequested) return includeQuit;
   if (item.action == Action::MatrixMenuRequested) {
     return includeMatrix;
@@ -64,7 +68,8 @@ const Item& visibleItem(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit,
-    bool includeIndicator) {
+    bool includeIndicator,
+    bool includeHelp) {
   if (page == Page::RgbMatrix) {
     const int clamped = std::max(
         0,
@@ -93,7 +98,8 @@ const Item& visibleItem(
             includeMatrix,
             includeShakeUndo,
             includeQuit,
-            includeIndicator)) {
+            includeIndicator,
+            includeHelp)) {
       continue;
     }
     if (visibleIndex == index) {
@@ -151,8 +157,12 @@ const char* valueFor(
       return settings.shakeUndoEnabled ? "ON" : "OFF";
     case Action::SaveWarningsChanged:
       return settings.saveWarnings ? "ON" : "OFF";
+    case Action::CursorStyleChanged:
+      return settings.cursorStyle == CursorStyle::Hand ? "HAND" : "ARROW";
     case Action::BluetoothRequested:
       return bluetoothValue == nullptr ? "OFF" : bluetoothValue;
+    case Action::HelpRequested:
+      return "OPEN";
     case Action::QuitRequested:
       return "EXIT";
     default:
@@ -167,7 +177,8 @@ int itemCount(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit,
-    bool includeIndicator) {
+    bool includeIndicator,
+    bool includeHelp) {
   int count = 0;
   for (const Item& item : kItems) {
     if (itemVisible(
@@ -176,7 +187,8 @@ int itemCount(
             includeMatrix,
             includeShakeUndo,
             includeQuit,
-            includeIndicator)) {
+            includeIndicator,
+            includeHelp)) {
       ++count;
     }
   }
@@ -190,7 +202,8 @@ bool moveCursor(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit,
-    bool includeIndicator) {
+    bool includeIndicator,
+    bool includeHelp) {
   const int maximum = state.page == Page::RgbMatrix
       ? static_cast<int>(
             sizeof(kMatrixItems) / sizeof(kMatrixItems[0])) -
@@ -204,7 +217,8 @@ bool moveCursor(
             includeMatrix,
             includeShakeUndo,
             includeQuit,
-            includeIndicator) -
+            includeIndicator,
+            includeHelp) -
             1;
   const int next = std::max(0, std::min(maximum, state.cursor + delta));
   if (next == state.cursor) {
@@ -221,7 +235,8 @@ Action activate(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit,
-    bool includeIndicator) {
+    bool includeIndicator,
+    bool includeHelp) {
   const int count = state.page == Page::RgbMatrix
       ? static_cast<int>(
             sizeof(kMatrixItems) / sizeof(kMatrixItems[0]))
@@ -233,7 +248,8 @@ Action activate(
             includeMatrix,
             includeShakeUndo,
             includeQuit,
-            includeIndicator);
+            includeIndicator,
+            includeHelp);
   state.cursor =
       std::max(
           0,
@@ -246,7 +262,8 @@ Action activate(
           includeMatrix,
           includeShakeUndo,
           includeQuit,
-          includeIndicator)
+          includeIndicator,
+          includeHelp)
           .action;
   switch (action) {
     case Action::ThemeChanged:
@@ -304,8 +321,15 @@ Action activate(
     case Action::SaveWarningsChanged:
       settings.saveWarnings = !settings.saveWarnings;
       return Action::SaveWarningsChanged;
+    case Action::CursorStyleChanged:
+      settings.cursorStyle = settings.cursorStyle == CursorStyle::Arrow
+          ? CursorStyle::Hand
+          : CursorStyle::Arrow;
+      return Action::CursorStyleChanged;
     case Action::BluetoothRequested:
       return includeBluetooth ? Action::BluetoothRequested : Action::None;
+    case Action::HelpRequested:
+      return includeHelp ? Action::HelpRequested : Action::None;
     case Action::QuitRequested:
       return includeQuit ? Action::QuitRequested : Action::None;
     default:
@@ -324,7 +348,8 @@ void render(
     const char* bluetoothValue,
     const char* statusMessage,
     bool includeQuit,
-    bool includeIndicator) {
+    bool includeIndicator,
+    bool includeHelp) {
   if (!canvas.isValid()) {
     return;
   }
@@ -351,7 +376,8 @@ void render(
             includeMatrix,
             includeShakeUndo,
             includeQuit,
-            includeIndicator);
+            includeIndicator,
+            includeHelp);
   state.cursor = std::max(0, std::min(totalItems - 1, state.cursor));
   state.scrollOffset =
       std::max(0, std::min(state.cursor, state.scrollOffset));
@@ -396,7 +422,8 @@ void render(
         includeMatrix,
         includeShakeUndo,
         includeQuit,
-        includeIndicator);
+        includeIndicator,
+        includeHelp);
     canvas.drawString(
         item.label,
         labelX,
@@ -409,7 +436,8 @@ void render(
         valueBuffer,
         sizeof(valueBuffer));
     if (item.action == Action::MatrixMenuRequested ||
-        item.action == Action::IndicatorMenuRequested) {
+        item.action == Action::IndicatorMenuRequested ||
+        item.action == Action::HelpRequested) {
       std::snprintf(
           selectedValue, sizeof(selectedValue), "%s >", value);
       value = selectedValue;

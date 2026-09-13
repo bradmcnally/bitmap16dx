@@ -92,7 +92,8 @@ rows. Left/right switches columns only for a 16-color palette.
 
 Keyboard controls remain available in this quick build.
 The Steam Deck Settings menu includes a `Quit` row for closing the app
-without using a keyboard or the Steam overlay.
+without using a keyboard or the Steam overlay. It also includes a `Help` row
+that opens the controller reference and returns to Settings when closed.
 
 ## UI-free screenshot export
 

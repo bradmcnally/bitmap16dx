@@ -35,9 +35,9 @@ std::filesystem::path dataRoot() {
   return std::filesystem::temp_directory_path() / "bitmap16dx";
 }
 
-std::array<uint8_t, 15> encodeSettings(const Settings& settings) {
+std::array<uint8_t, 16> encodeSettings(const Settings& settings) {
   return {
-      'B', '1', '6', 'S', 3,
+      'B', '1', '6', 'S', 4,
       static_cast<uint8_t>(settings.theme),
       settings.defaultGridSize,
       settings.matrixUnits,
@@ -48,6 +48,7 @@ std::array<uint8_t, 15> encodeSettings(const Settings& settings) {
       settings.matrixBrightness,
       static_cast<uint8_t>(settings.matrixEnabled ? 1 : 0),
       static_cast<uint8_t>(settings.saveWarnings ? 1 : 0),
+      static_cast<uint8_t>(settings.cursorStyle),
   };
 }
 
@@ -57,7 +58,7 @@ bool decodeSettings(
   if (data.size() < 13 ||
       data[0] != 'B' || data[1] != '1' || data[2] != '6' ||
       data[3] != 'S' ||
-      (data[4] != 1 && data[4] != 2 && data[4] != 3)) {
+      (data[4] < 1 || data[4] > 4)) {
     return false;
   }
   settings.theme = static_cast<ThemeId>(data[5]);
@@ -74,6 +75,9 @@ bool decodeSettings(
   settings.saveWarnings = data[4] >= 3 && data.size() >= 15
       ? data[14] != 0
       : true;
+  settings.cursorStyle = data[4] >= 4 && data.size() >= 16
+      ? static_cast<CursorStyle>(data[15])
+      : CursorStyle::Arrow;
   settings = normalizeSettings(settings);
   return true;
 }

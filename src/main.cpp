@@ -474,6 +474,7 @@ bool exportRGB565 = false;           // false=RGB888, true=RGB565
 bool shakeUndoEnabled = false;       // true=enabled, false=disabled
 bool indicatorPaletteColorEnabled = true;
 bool indicatorLowBatteryEnabled = true;
+bitmap16::CursorStyle cursorStyle = bitmap16::CursorStyle::Arrow;
 
 // Battery display
 int lastBatteryPercent = -1;  // Track last drawn battery % to avoid unnecessary redraws
@@ -1453,6 +1454,7 @@ void drawSharedCanvasView() {
       currentTheme->iconLight,
       currentTheme == &THEME_DARK,
   };
+  const bool useHandCursor = cursorStyle == bitmap16::CursorStyle::Hand;
   const bitmap16::CanvasView::Assets assets = {
       {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
       {ICON_ERASE, ICON_ERASE_WIDTH, ICON_ERASE_HEIGHT},
@@ -1463,12 +1465,12 @@ void drawSharedCanvasView() {
           {ICON_BATTERY_50, 24, 24},
           {ICON_BATTERY_90, 24, 24},
       },
-      {ICON_CANVAS_CURSOR,
-       ICON_CANVAS_CURSOR_WIDTH,
-       ICON_CANVAS_CURSOR_HEIGHT},
+      {useHandCursor ? ICON_HAND_CURSOR : ICON_CANVAS_CURSOR,
+       useHandCursor ? ICON_HAND_CURSOR_WIDTH : ICON_CANVAS_CURSOR_WIDTH,
+       useHandCursor ? ICON_HAND_CURSOR_HEIGHT : ICON_CANVAS_CURSOR_HEIGHT},
       {ICON_MOVE_CURSOR, ICON_MOVE_CURSOR_WIDTH, ICON_MOVE_CURSOR_HEIGHT},
-      CURSOR_OFFSET_X,
-      CURSOR_OFFSET_Y,
+      useHandCursor ? HAND_CURSOR_OFFSET_X : CURSOR_OFFSET_X,
+      useHandCursor ? HAND_CURSOR_OFFSET_Y : CURSOR_OFFSET_Y,
       MOVE_CURSOR_OFFSET_X,
       MOVE_CURSOR_OFFSET_Y,
   };
@@ -2449,6 +2451,7 @@ bitmap16::Settings currentSettingsValues() {
   settings.saveWarnings = saveWarningsEnabled;
   settings.indicatorPaletteColor = indicatorPaletteColorEnabled;
   settings.indicatorLowBattery = indicatorLowBatteryEnabled;
+  settings.cursorStyle = cursorStyle;
   settings.displayBrightness = displayBrightness;
 #if ENABLE_LED_MATRIX
   settings.matrixBrightness = ledBrightness;
@@ -2754,8 +2757,20 @@ void handleSettingsView(const bitmap16::InputFrame& input) {
           viewState.settings.navigation.scrollOffset = 0;
           break;
 
+        case 7:  // Cursor style
+          cursorStyle = cursorStyle == bitmap16::CursorStyle::Arrow
+              ? bitmap16::CursorStyle::Hand
+              : bitmap16::CursorStyle::Arrow;
+          PreferenceStore::writeUInt8(
+              "cursorStyle", static_cast<uint8_t>(cursorStyle));
+          setStatusMessage(
+              cursorStyle == bitmap16::CursorStyle::Hand
+                  ? "Cursor: Hand"
+                  : "Cursor: Arrow");
+          break;
+
 #if ENABLE_BLUETOOTH
-        case 7:  // Bluetooth
+        case 8:  // Bluetooth
           if (btConnected) {
             // Disconnect if connected (Fn+Enter forgets pairing too)
             btDisconnect();
@@ -3546,6 +3561,8 @@ void setup() {
       PreferenceStore::readBool("indPalette", true);
   storedSettings.indicatorLowBattery =
       PreferenceStore::readBool("indBattery", true);
+  storedSettings.cursorStyle = static_cast<bitmap16::CursorStyle>(
+      PreferenceStore::readUInt8("cursorStyle", 0));
   storedSettings.matrixBrightness =
       PreferenceStore::readUInt8("ledBright", DEFAULT_LED_BRIGHTNESS);
   storedSettings = bitmap16::normalizeSettings(storedSettings);
@@ -3565,6 +3582,7 @@ void setup() {
       storedSettings.indicatorPaletteColor;
   indicatorLowBatteryEnabled =
       storedSettings.indicatorLowBattery;
+  cursorStyle = storedSettings.cursorStyle;
 
   Display::setBrightness(displayBrightness);
 

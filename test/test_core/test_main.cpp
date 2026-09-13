@@ -317,13 +317,17 @@ void test_settings_view_navigation_and_actions_are_portable() {
   bitmap16::SettingsView::State state;
   bitmap16::Settings settings;
   TEST_ASSERT_EQUAL_INT(
-      6, bitmap16::SettingsView::itemCount(false, true, true));
+      7, bitmap16::SettingsView::itemCount(false, true, true));
   TEST_ASSERT_EQUAL_INT(
-      7, bitmap16::SettingsView::itemCount(true, true, true));
+      8, bitmap16::SettingsView::itemCount(true, true, true));
   TEST_ASSERT_EQUAL_INT(
-      4, bitmap16::SettingsView::itemCount(false, false, false));
+      5, bitmap16::SettingsView::itemCount(false, false, false));
   TEST_ASSERT_EQUAL_INT(
-      5, bitmap16::SettingsView::itemCount(false, false, false, true));
+      6, bitmap16::SettingsView::itemCount(false, false, false, true));
+  TEST_ASSERT_EQUAL_INT(
+      7,
+      bitmap16::SettingsView::itemCount(
+          false, false, false, true, false, true));
 
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::activate(
@@ -337,6 +341,7 @@ void test_settings_view_navigation_and_actions_are_portable() {
           state, settings, false, true, true) ==
       bitmap16::SettingsView::Action::ShakeUndoChanged);
   TEST_ASSERT_TRUE(settings.shakeUndoEnabled);
+
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::moveCursor(
           state, 1, false, true, true));
@@ -345,11 +350,19 @@ void test_settings_view_navigation_and_actions_are_portable() {
           state, settings, false, true, true) ==
       bitmap16::SettingsView::Action::SaveWarningsChanged);
   TEST_ASSERT_FALSE(settings.saveWarnings);
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::moveCursor(
+          state, 1, false, true, true));
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(
+          state, settings, false, true, true) ==
+      bitmap16::SettingsView::Action::CursorStyleChanged);
+  TEST_ASSERT_TRUE(settings.cursorStyle == bitmap16::CursorStyle::Hand);
   TEST_ASSERT_FALSE(
       bitmap16::SettingsView::moveCursor(
           state, 1, false, true, true));
 
-  state.cursor = 6;
+  state.cursor = 7;
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::activate(
           state, settings, true, true, true) ==
@@ -376,11 +389,18 @@ void test_settings_view_navigation_and_actions_are_portable() {
   TEST_ASSERT_EQUAL_UINT8(6, settings.matrixBrightness);
 
   state = {};
-  state.cursor = 4;
+  state.cursor = 5;
   TEST_ASSERT_TRUE(
       bitmap16::SettingsView::activate(
           state, settings, false, false, false, true) ==
       bitmap16::SettingsView::Action::QuitRequested);
+
+  state = {};
+  state.cursor = 5;
+  TEST_ASSERT_TRUE(
+      bitmap16::SettingsView::activate(
+          state, settings, false, false, false, true, false, true) ==
+      bitmap16::SettingsView::Action::HelpRequested);
 }
 
 void test_settings_view_renders_at_both_target_sizes() {
@@ -1302,6 +1322,7 @@ void test_settings_normalization_preserves_valid_values() {
   settings.matrixUnits = 4;
   settings.matrixRotation = 3;
   settings.exportFormat = bitmap16::ExportFormat::Rgb565;
+  settings.cursorStyle = bitmap16::CursorStyle::Hand;
   settings.shakeUndoEnabled = true;
   settings.matrixEnabled = true;
   settings.displayBrightness = 70;
@@ -1316,6 +1337,9 @@ void test_settings_normalization_preserves_valid_values() {
   TEST_ASSERT_EQUAL_UINT8(4, normalized.matrixUnits);
   TEST_ASSERT_EQUAL_UINT8(3, normalized.matrixRotation);
   TEST_ASSERT_TRUE(normalized.matrixEnabled);
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(bitmap16::CursorStyle::Hand),
+      static_cast<int>(normalized.cursorStyle));
   TEST_ASSERT_EQUAL_UINT8(70, normalized.displayBrightness);
   TEST_ASSERT_EQUAL_UINT8(12, normalized.matrixBrightness);
 }
@@ -1327,6 +1351,7 @@ void test_settings_normalization_repairs_invalid_values() {
   settings.matrixUnits = 2;
   settings.matrixRotation = 7;
   settings.exportFormat = static_cast<bitmap16::ExportFormat>(99);
+  settings.cursorStyle = static_cast<bitmap16::CursorStyle>(99);
   settings.displayBrightness = 0;
   settings.matrixBrightness = 100;
 
@@ -1341,6 +1366,9 @@ void test_settings_normalization_repairs_invalid_values() {
   TEST_ASSERT_EQUAL_INT(
       static_cast<int>(bitmap16::ExportFormat::Rgb888),
       static_cast<int>(normalized.exportFormat));
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(bitmap16::CursorStyle::Arrow),
+      static_cast<int>(normalized.cursorStyle));
   TEST_ASSERT_EQUAL_UINT8(10, normalized.displayBrightness);
   TEST_ASSERT_EQUAL_UINT8(20, normalized.matrixBrightness);
 }

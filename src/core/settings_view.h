@@ -29,7 +29,9 @@ enum class Action : uint8_t {
   ExportFormatChanged,
   ShakeUndoChanged,
   SaveWarningsChanged,
+  CursorStyleChanged,
   BluetoothRequested,
+  HelpRequested,
   QuitRequested,
 };
 
@@ -50,7 +52,8 @@ int itemCount(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit = false,
-    bool includeIndicator = false);
+    bool includeIndicator = false,
+    bool includeHelp = false);
 bool moveCursor(
     State& state,
     int delta,
@@ -58,7 +61,8 @@ bool moveCursor(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit = false,
-    bool includeIndicator = false);
+    bool includeIndicator = false,
+    bool includeHelp = false);
 Action activate(
     State& state,
     Settings& settings,
@@ -66,7 +70,8 @@ Action activate(
     bool includeMatrix,
     bool includeShakeUndo,
     bool includeQuit = false,
-    bool includeIndicator = false);
+    bool includeIndicator = false,
+    bool includeHelp = false);
 void render(
     Canvas& canvas,
     State& state,
@@ -78,7 +83,8 @@ void render(
     const char* bluetoothValue = nullptr,
     const char* statusMessage = nullptr,
     bool includeQuit = false,
-    bool includeIndicator = false);
+    bool includeIndicator = false,
+    bool includeHelp = false);
 
 }  // namespace SettingsView
 }  // namespace bitmap16
