@@ -329,6 +329,30 @@ void drawUnsavedChangesModal(
   canvas.drawString(
       "KEEP CHANGES?", canvas.width() / 2, panelY + 13);
 
+#ifdef BITMAP16_STEAM_DECK
+  constexpr int saveWidth = 6 * 6;
+  constexpr int backWidth = 6 * 6;
+  constexpr int discardWidth = 9 * 6;
+  constexpr int optionGap = 18;
+  constexpr int optionsWidth =
+      saveWidth + optionGap + backWidth + optionGap + discardWidth;
+  const int saveX =
+      panelX + (panelWidth - optionsWidth) / 2;
+  const int backX = saveX + saveWidth + optionGap;
+  const int discardX = backX + backWidth + optionGap;
+  const int optionsY = panelY + 34;
+
+  canvas.setTextAlign(bitmap16::TextAlign::Left);
+  canvas.drawString("A SAVE", saveX, optionsY);
+  canvas.drawString("B BACK", backX, optionsY);
+  canvas.drawString("X DISCARD", discardX, optionsY);
+  canvas.drawLine(
+      saveX, optionsY + 9, saveX + 5, optionsY + 9, theme.text);
+  canvas.drawLine(
+      backX, optionsY + 9, backX + 5, optionsY + 9, theme.text);
+  canvas.drawLine(
+      discardX, optionsY + 9, discardX + 5, optionsY + 9, theme.text);
+#else
   constexpr int discardWidth = 7 * 6;
   constexpr int saveWidth = 4 * 6;
   constexpr int cancelWidth = 10 * 6;
@@ -351,6 +375,7 @@ void drawUnsavedChangesModal(
       saveX, optionsY + 9, saveX + 5, optionsY + 9, theme.text);
   canvas.drawLine(
       cancelX, optionsY + 9, cancelX + 17, optionsY + 9, theme.text);
+#endif
 }
 
 const bitmap16::CanvasView::Assets& canvasAssets(
@@ -2112,7 +2137,10 @@ int main(int argc, char** argv) {
         platformHasBatteryDisplay()) {
       currentView = DesktopView::Charging;
       changed = true;
-    } else if (key == SDLK_p) {
+    } else if (
+        key == SDLK_p &&
+        (currentView == DesktopView::Canvas ||
+         currentView == DesktopView::Palette)) {
       if (currentView == DesktopView::Palette) {
         currentView = DesktopView::Canvas;
       } else {
@@ -2253,6 +2281,10 @@ int main(int argc, char** argv) {
           redo
               ? performed ? "Redo" : "No redo"
               : performed ? "Undo" : "No undo");
+      rumble(
+          performed ? 0x0800 : 0x3800,
+          performed ? 0x1800 : 0x0800,
+          performed ? 30 : 110);
       changed = true;
     } else if (
         currentView == DesktopView::Canvas && key == SDLK_y &&

@@ -90,6 +90,9 @@ battery/charging UI; SteamOS provides the device battery indicator.
 Right-stick color movement follows the palette rail geometry. Up/down changes
 rows. Left/right switches columns only for a 16-color palette.
 
+When a save warning appears, `A` saves, `B` returns without continuing, and
+`X` discards the changes and continues.
+
 Keyboard controls remain available in this quick build.
 The Steam Deck Settings menu includes a `Quit` row for closing the app
 without using a keyboard or the Steam overlay. It also includes a `Help` row
