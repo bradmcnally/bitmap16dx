@@ -73,6 +73,25 @@ const int ICON_FILL_WIDTH = 24;
 const int ICON_FILL_HEIGHT = 24;
 const bool ICON_FILL_IS_INDEXED = true;
 
+// Steam Deck controller prompts, 5x6px (2-bit indexed).
+const unsigned char ICON_BUTTON_A[] PROGMEM = {
+  0x2a, 0x25, 0x69, 0x9a, 0x56, 0x99, 0x8a, 0x80
+};
+const int ICON_BUTTON_A_WIDTH = 5;
+const int ICON_BUTTON_A_HEIGHT = 6;
+
+const unsigned char ICON_BUTTON_X[] PROGMEM = {
+  0x2a, 0x26, 0x6a, 0x6a, 0x66, 0x99, 0x8a, 0x80
+};
+const int ICON_BUTTON_X_WIDTH = 5;
+const int ICON_BUTTON_X_HEIGHT = 6;
+
+const unsigned char ICON_BUTTON_Y[] PROGMEM = {
+  0x2a, 0x26, 0x69, 0x5a, 0xa6, 0x95, 0x8a, 0x80
+};
+const int ICON_BUTTON_Y_WIDTH = 5;
+const int ICON_BUTTON_Y_HEIGHT = 6;
+
 // ============================================================================
 // CURSOR ICON
 // ============================================================================

@@ -398,6 +398,9 @@ const bitmap16::CanvasView::Assets& canvasAssets(
       CURSOR_OFFSET_Y,
       MOVE_CURSOR_OFFSET_X,
       MOVE_CURSOR_OFFSET_Y,
+      {ICON_BUTTON_A, ICON_BUTTON_A_WIDTH, ICON_BUTTON_A_HEIGHT},
+      {ICON_BUTTON_X, ICON_BUTTON_X_WIDTH, ICON_BUTTON_X_HEIGHT},
+      {ICON_BUTTON_Y, ICON_BUTTON_Y_WIDTH, ICON_BUTTON_Y_HEIGHT},
   };
   static const bitmap16::CanvasView::Assets handAssets = {
       {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
@@ -415,6 +418,9 @@ const bitmap16::CanvasView::Assets& canvasAssets(
       HAND_CURSOR_OFFSET_Y,
       MOVE_CURSOR_OFFSET_X,
       MOVE_CURSOR_OFFSET_Y,
+      {ICON_BUTTON_A, ICON_BUTTON_A_WIDTH, ICON_BUTTON_A_HEIGHT},
+      {ICON_BUTTON_X, ICON_BUTTON_X_WIDTH, ICON_BUTTON_X_HEIGHT},
+      {ICON_BUTTON_Y, ICON_BUTTON_Y_WIDTH, ICON_BUTTON_Y_HEIGHT},
   };
   return settings.cursorStyle == bitmap16::CursorStyle::Hand
       ? handAssets
@@ -636,7 +642,11 @@ void renderCurrentView(
         desktopCanvasViewport.y,
 #ifdef BITMAP16_STEAM_DECK
         true,
+        false,
+        true,
 #else
+        false,
+        false,
         false,
 #endif
     };
@@ -734,12 +744,16 @@ int main(int argc, char** argv) {
   int width = BITMAP16_DEFAULT_WIDTH;
   int height = BITMAP16_DEFAULT_HEIGHT;
   bool smokeTest = false;
+  bool windowed = false;
   for (int argument = 1; argument < argc; ++argument) {
     if (std::strcmp(argv[argument], "--smoke-test") == 0) {
       smokeTest = true;
+    } else if (std::strcmp(argv[argument], "--windowed") == 0) {
+      windowed = true;
     } else if (!parseSize(argv[argument], width, height)) {
       SDL_Log(
-          "Usage: bitmap16dx_desktop [WIDTHxHEIGHT] [--smoke-test]");
+          "Usage: bitmap16dx_desktop [WIDTHxHEIGHT] "
+          "[--smoke-test] [--windowed]");
       return 2;
     }
   }
@@ -754,7 +768,15 @@ int main(int argc, char** argv) {
   SDL_EventState(SDL_CONTROLLERAXISMOTION, SDL_IGNORE);
   SDL_EventState(SDL_JOYAXISMOTION, SDL_IGNORE);
 
-#if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || defined(BITMAP16_STEAM_DECK)
+#ifdef BITMAP16_STEAM_DECK
+  const int windowWidth = windowed ? width * 4 : width;
+  const int windowHeight = windowed ? height * 4 : height;
+  const Uint32 windowFlags = windowed
+      ? SDL_WINDOW_SHOWN
+      : SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS |
+          SDL_WINDOW_FULLSCREEN_DESKTOP;
+  SDL_ShowCursor(windowed ? SDL_ENABLE : SDL_DISABLE);
+#elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
   const int windowWidth = width;
   const int windowHeight = height;
   const Uint32 windowFlags =
@@ -863,6 +885,12 @@ int main(int argc, char** argv) {
   }
   SDL_Log("Workspace: %s", workspace.root().string().c_str());
   bitmap16::Settings& settings = workspace.settings();
+#ifdef BITMAP16_STEAM_DECK
+  // SteamOS owns the physical display brightness. Applying the embedded
+  // device's saved software brightness here dims the rendered colors a
+  // second time and makes both Deck output and windowed previews inaccurate.
+  settings.displayBrightness = 100;
+#endif
   if (!showBootScreen(
           canvas,
           texture,

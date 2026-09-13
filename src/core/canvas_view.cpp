@@ -467,6 +467,30 @@ void render(
         assets->fill,
         theme,
         state.fillPressed);
+    if (state.showControllerPrompts) {
+      constexpr int sharedPromptOffsetX = 20;
+      constexpr int sharedPromptOffsetY = 15;
+      constexpr int fillPromptOffsetX = 20;
+      constexpr int fillPromptOffsetY = 17;
+      drawIndexedIcon(
+          canvas,
+          layout.toolsX + sharedPromptOffsetX,
+          toolsY + sharedPromptOffsetY,
+          assets->drawPrompt,
+          theme);
+      drawIndexedIcon(
+          canvas,
+          layout.toolsX + sharedPromptOffsetX,
+          toolsY + 27 + sharedPromptOffsetY,
+          assets->erasePrompt,
+          theme);
+      drawIndexedIcon(
+          canvas,
+          layout.toolsX + fillPromptOffsetX,
+          toolsY + 54 + fillPromptOffsetY,
+          assets->fillPrompt,
+          theme);
+    }
     const bool zoomed = cellSize > layout.cellSize;
     if (state.batteryPercent >= 0 && !zoomed) {
       int batteryStage = 0;

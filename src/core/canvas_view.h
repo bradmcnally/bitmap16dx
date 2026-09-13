@@ -34,6 +34,7 @@ struct State {
   uint8_t viewportY = 0;
   bool statusCentered = false;
   bool toolsAtLeftEdge = false;
+  bool showControllerPrompts = false;
 };
 
 struct Theme {
@@ -66,6 +67,9 @@ struct Assets {
   int cursorOffsetY = 0;
   int moveCursorOffsetX = 0;
   int moveCursorOffsetY = 0;
+  Icon drawPrompt;
+  Icon erasePrompt;
+  Icon fillPrompt;
 };
 
 struct Layout {

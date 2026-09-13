@@ -24,6 +24,12 @@ The Linux executable is:
 build_steamdeck/bitmap16dx_desktop
 ```
 
+For a 1280x800 windowed preview on a development computer, run:
+
+```sh
+build_steamdeck/bitmap16dx_desktop --windowed
+```
+
 A macOS build made with this preset is useful for compilation and controller
 testing on macOS, but it cannot run on Steam Deck. Build the executable on
 x86-64 Linux for sideloading.
