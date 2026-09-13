@@ -232,9 +232,25 @@ bool parseSize(const char* argument, int& width, int& height) {
   return true;
 }
 
+constexpr uint16_t platformDarkBackground() {
+#ifdef BITMAP16_STEAM_DECK
+  return 0x10a2;
+#else
+  return 0x0861;
+#endif
+}
+
+constexpr uint16_t platformDarkSurface() {
+#ifdef BITMAP16_STEAM_DECK
+  return 0x18e3;
+#else
+  return 0x10a2;
+#endif
+}
+
 bitmap16::HelpView::Theme helpTheme(const bitmap16::Settings& settings) {
   if (settings.theme == bitmap16::ThemeId::Dark) {
-    return {0x0861, 0xffff, 0x94b3};
+    return {platformDarkBackground(), 0xffff, 0x94b3};
   }
   return {0xd69b, 0x0000, 0x94b3};
 }
@@ -246,7 +262,7 @@ bitmap16::SettingsView::Theme settingsTheme(
 }
 
 bitmap16::PreviewView::Theme previewTheme() {
-  return {0x0000, 0xffff, 0xd69b, 0x0861};
+  return {0x0000, 0xffff, 0xd69b, platformDarkBackground()};
 }
 
 bitmap16::ChargingView::Theme chargingTheme() {
@@ -270,7 +286,9 @@ bitmap16::MemoryView::Theme memoryTheme(
   return {
       theme.background,
       static_cast<uint16_t>(
-          settings.theme == bitmap16::ThemeId::Dark ? 0x10a2 : 0xef7e),
+          settings.theme == bitmap16::ThemeId::Dark
+              ? platformDarkSurface()
+              : 0xef7e),
       theme.text,
       0x0000,
       static_cast<uint16_t>(
@@ -283,7 +301,8 @@ bitmap16::CanvasView::Theme canvasTheme(
     const bitmap16::Settings& settings) {
   if (settings.theme == bitmap16::ThemeId::Dark) {
     return {
-        0x0861, 0x10a2, 0x2965, 0x0020, 0xffff, 0x94b3, 0x0861,
+        platformDarkBackground(), platformDarkSurface(), 0x2965, 0x0020,
+        0xffff, 0x94b3, platformDarkBackground(),
         0x0000, 0xd69b, true};
   }
   return {
