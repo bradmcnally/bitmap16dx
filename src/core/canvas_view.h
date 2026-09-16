@@ -90,6 +90,9 @@ struct Layout {
 Layout layoutFor(int width, int height, uint8_t gridSize);
 bool hasPaletteButton(int width, int height);
 bool paletteButtonContains(int width, int height, uint8_t gridSize, int x, int y);
+bool cellAtPointer(
+    int width, int height, uint8_t gridSize, const Viewport& viewport,
+    int x, int y, uint8_t& cellX, uint8_t& cellY);
 bool adjustZoom(
     Viewport& viewport,
     int delta,

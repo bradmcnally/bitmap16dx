@@ -161,6 +161,27 @@ bool paletteButtonContains(
       y >= top && y < top + 24;
 }
 
+bool cellAtPointer(
+    int width, int height, uint8_t gridSize, const Viewport& viewport,
+    int x, int y, uint8_t& cellX, uint8_t& cellY) {
+  if (!isSupportedGridSize(gridSize)) return false;
+  const Layout layout = layoutFor(width, height, gridSize);
+  if (x < layout.gridX || y < layout.gridY ||
+      x >= layout.gridX + layout.gridPixels ||
+      y >= layout.gridY + layout.gridPixels) return false;
+  const int cellSize = viewport.cellSize == 0
+      ? layout.cellSize : std::max<int>(layout.cellSize, viewport.cellSize);
+  const int visible = std::max(1, layout.gridPixels / cellSize);
+  const int offsetX = std::min<int>(viewport.x, gridSize - visible);
+  const int offsetY = std::min<int>(viewport.y, gridSize - visible);
+  const int logicalX = offsetX + (x - layout.gridX) / cellSize;
+  const int logicalY = offsetY + (y - layout.gridY) / cellSize;
+  if (logicalX >= gridSize || logicalY >= gridSize) return false;
+  cellX = logicalX;
+  cellY = logicalY;
+  return true;
+}
+
 bool keepCursorVisible(
     Viewport& viewport,
     int width,

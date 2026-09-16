@@ -100,6 +100,17 @@ When a save warning appears, `A` saves, `B` returns without continuing, and
 `X` discards the changes and continues.
 
 Keyboard controls remain available in this quick build.
+For pointer control, set the **left trackpad** to **Mouse** in Steam Input and
+bind its click to **Left Mouse Click**, retaining the other gamepad bindings.
+In Gaming Mode, select Bitmap16 DX in the library, open the controller icon,
+then **Edit Layout → Trackpads**. Set **Left Trackpad Behavior** to **As Mouse**
+and **Left Trackpad Click** to **Left Mouse Click**. Launch through Steam so
+the per-game layout is active.
+Moving the trackpad positions the canvas cursor. Hold trackpad click or `A`
+to draw, or hold `X` to erase while moving. `Y` fills once per press at the
+current cursor position. A continuous draw or erase hold is one undo step.
+Desktop mouse movement uses the same path: left-click/drag draws and
+right-click/drag erases. Pointer movement outside the artwork does not paint.
 Canvas prompts follow the last keyboard or controller input. Keyboard prompts
 show `RET` (Enter), `BS` (Backspace), `F` (fill), and `P` (Palettes).
 Stick movement must exceed the input dead zone before switching prompts.

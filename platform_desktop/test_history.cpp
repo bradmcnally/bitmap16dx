@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "core/editor.h"
+#include "core/canvas_view.h"
 
 static void require(bool condition, const char* message) {
   if (!condition) {
@@ -131,4 +132,58 @@ int main() {
   require(editor.draw() && !editor.canRedo(), "drawing after undo kept redo branch");
   require(editor.undo() && editor.sketch().pixels[0][2] == 0,
           "drawing after undo merged with old hold");
+
+  // Mouse/trackpad coordinates share the logical framebuffer and zoom viewport.
+  for (const auto dimensions : {std::pair<int, int>{240, 135}, {320, 170}, {320, 200}}) {
+    for (const uint8_t grid : {8, 16, 32}) {
+      const auto layout = bitmap16::CanvasView::layoutFor(
+          dimensions.first, dimensions.second, grid);
+      bitmap16::CanvasView::Viewport viewport;
+      uint8_t x = 99, y = 99;
+      require(bitmap16::CanvasView::cellAtPointer(
+          dimensions.first, dimensions.second, grid, viewport,
+          layout.gridX, layout.gridY, x, y) && x == 0 && y == 0,
+          "pointer missed canvas top-left");
+      require(bitmap16::CanvasView::cellAtPointer(
+          dimensions.first, dimensions.second, grid, viewport,
+          layout.gridX + layout.gridPixels - 1, layout.gridY + layout.gridPixels - 1,
+          x, y) && x == grid - 1 && y == grid - 1, "pointer missed canvas bottom-right");
+      require(!bitmap16::CanvasView::cellAtPointer(
+          dimensions.first, dimensions.second, grid, viewport,
+          layout.gridX - 1, layout.gridY, x, y), "pointer accepted left margin");
+      require(!bitmap16::CanvasView::cellAtPointer(
+          dimensions.first, dimensions.second, grid, viewport,
+          layout.gridX + layout.gridPixels, layout.gridY, x, y),
+          "pointer accepted right margin");
+      if (grid >= 16) {
+        viewport.cellSize = layout.cellSize * 2;
+        viewport.x = 3;
+        viewport.y = 4;
+        require(bitmap16::CanvasView::cellAtPointer(
+            dimensions.first, dimensions.second, grid, viewport,
+            layout.gridX + viewport.cellSize, layout.gridY + viewport.cellSize,
+            x, y) && x == 4 && y == 5, "pointer ignored zoom viewport");
+      }
+    }
+  }
+
+  editor.reset(blank);
+  editor.setHeldActions(true, false, false);
+  require(editor.paintTo(2, 2, false, false), "pointer click failed");
+  require(editor.paintTo(12, 12, false, true), "pointer drag failed");
+  for (int i = 2; i <= 12; ++i) {
+    require(editor.sketch().pixels[i][i] == 1, "fast pointer drag left gaps");
+  }
+  require(editor.sketch().pixels[0][0] == 0, "pointer click connected to old cursor");
+  editor.setHeldActions(false, false, false);
+  require(editor.undo() && editor.sketch().isEmpty && !editor.canUndo(),
+          "pointer drag used multiple undo steps");
+  require(editor.redo(), "pointer drag redo failed");
+  editor.setHeldActions(false, true, false);
+  editor.setCursor(2, 2);
+  require(editor.paintTo(12, 12, true, true) && editor.sketch().isEmpty,
+          "pointer erase left gaps");
+  editor.setHeldActions(false, false, false);
+  require(editor.undo() && editor.sketch().pixels[2][2] == 1 &&
+              editor.sketch().pixels[12][12] == 1, "pointer erase undo incomplete");
 }

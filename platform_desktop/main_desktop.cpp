@@ -808,20 +808,20 @@ int main(int argc, char** argv) {
       ? SDL_WINDOW_SHOWN
       : SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS |
           SDL_WINDOW_FULLSCREEN_DESKTOP;
-  SDL_ShowCursor(windowed ? SDL_ENABLE : SDL_DISABLE);
 #elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
   const int windowWidth = width;
   const int windowHeight = height;
   const Uint32 windowFlags =
       SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS |
       SDL_WINDOW_FULLSCREEN_DESKTOP;
-  SDL_ShowCursor(SDL_DISABLE);
 #else
   const int windowWidth = width * 3;
   const int windowHeight = height * 3;
   const Uint32 windowFlags = SDL_WINDOW_SHOWN;
 #endif
 
+  // The artwork cursor supplies pointer feedback in every SDL build.
+  SDL_ShowCursor(SDL_DISABLE);
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   SDL_Window* window = SDL_CreateWindow(
@@ -1193,7 +1193,13 @@ int main(int argc, char** argv) {
 #endif
   }
 
+  bool mouseDrawHeld = false;
+  bool mouseEraseHeld = false;
+  bool pointerInsideCanvas = false;
   const auto renderNow = [&]() {
+    if (currentView != DesktopView::Canvas) {
+      mouseDrawHeld = mouseEraseHeld = pointerInsideCanvas = false;
+    }
     if (currentView != DesktopView::Canvas) editor.endUndoGroup();
     renderCurrentView(
         currentView,
@@ -1477,13 +1483,13 @@ int main(int argc, char** argv) {
       }
     }
     const Uint8* heldKeys = SDL_GetKeyboardState(nullptr);
-    const bool drawPressed =
+    const bool drawPressed = mouseDrawHeld ||
         heldKeys[SDL_SCANCODE_RETURN] != 0 ||
         heldKeys[SDL_SCANCODE_SPACE] != 0 ||
         (controller != nullptr &&
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_A) != 0);
-    const bool erasePressed =
+    const bool erasePressed = mouseEraseHeld ||
         heldKeys[SDL_SCANCODE_BACKSPACE] != 0 ||
         heldKeys[SDL_SCANCODE_DELETE] != 0 ||
         (controller != nullptr &&
@@ -1706,6 +1712,60 @@ int main(int argc, char** argv) {
       if (currentView == DesktopView::Canvas) renderNow();
     }
 #endif
+    if ((event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
+         event.type == SDL_MOUSEBUTTONUP) &&
+        (event.type == SDL_MOUSEMOTION ? event.motion.windowID : event.button.windowID) ==
+            SDL_GetWindowID(window) && currentView == DesktopView::Canvas) {
+      const bool motion = event.type == SDL_MOUSEMOTION;
+      const int pointerX = motion ? event.motion.x : event.button.x;
+      const int pointerY = motion ? event.motion.y : event.button.y;
+      uint8_t cellX = 0, cellY = 0;
+      const bool inside = bitmap16::CanvasView::cellAtPointer(
+          width, height, editor.sketch().gridSize, desktopCanvasViewport,
+          pointerX, pointerY, cellX, cellY);
+      if (event.type == SDL_MOUSEBUTTONDOWN && inside) {
+        if (event.button.button == SDL_BUTTON_LEFT) mouseDrawHeld = true;
+        if (event.button.button == SDL_BUTTON_RIGHT) mouseEraseHeld = true;
+      } else if (event.type == SDL_MOUSEBUTTONUP) {
+        if (event.button.button == SDL_BUTTON_LEFT) mouseDrawHeld = false;
+        if (event.button.button == SDL_BUTTON_RIGHT) mouseEraseHeld = false;
+      }
+      const Uint8* pointerKeys = SDL_GetKeyboardState(nullptr);
+      const bool pointerDrawHeld = mouseDrawHeld ||
+          pointerKeys[SDL_SCANCODE_RETURN] != 0 ||
+#ifndef BITMAP16_CARDPUTER_ZERO
+          pointerKeys[SDL_SCANCODE_SPACE] != 0 ||
+#endif
+          (controller != nullptr && SDL_GameControllerGetButton(
+              controller, SDL_CONTROLLER_BUTTON_A) != 0);
+      const bool pointerEraseHeld = mouseEraseHeld ||
+          pointerKeys[SDL_SCANCODE_BACKSPACE] != 0 ||
+#ifndef BITMAP16_CARDPUTER_ZERO
+          pointerKeys[SDL_SCANCODE_DELETE] != 0 ||
+#endif
+          (controller != nullptr && SDL_GameControllerGetButton(
+              controller, SDL_CONTROLLER_BUTTON_X) != 0);
+      editor.setHeldActions(pointerDrawHeld, pointerEraseHeld,
+                           pointerKeys[SDL_SCANCODE_M] != 0 || controllerMoveHeld);
+      desktopDrawPressed = pointerDrawHeld;
+      desktopErasePressed = pointerEraseHeld;
+      if (inside && (motion || (event.type == SDL_MOUSEBUTTONDOWN &&
+                      (event.button.button == SDL_BUTTON_LEFT ||
+                       event.button.button == SDL_BUTTON_RIGHT)))) {
+        if (pointerDrawHeld || pointerEraseHeld) {
+          editor.paintTo(cellX, cellY, pointerEraseHeld, motion && pointerInsideCanvas);
+        } else {
+          editor.setCursor(cellX, cellY);
+        }
+        documentDirty = !documentsMatch(editor.sketch(), savedDocumentState);
+        renderNow();
+      } else if (event.type == SDL_MOUSEBUTTONUP) {
+        renderNow();
+      }
+      pointerInsideCanvas = inside;
+      // Leave the existing Palettes-button handler available for UI clicks.
+      if (motion || event.type == SDL_MOUSEBUTTONUP || inside) continue;
+    }
     if (event.type == SDL_MOUSEBUTTONDOWN &&
         event.button.button == SDL_BUTTON_LEFT &&
         event.button.windowID == SDL_GetWindowID(window) &&
@@ -1932,6 +1992,7 @@ int main(int argc, char** argv) {
       }
     } else if (event.type == SDL_WINDOWEVENT &&
                event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+      mouseDrawHeld = mouseEraseHeld = pointerInsideCanvas = false;
       editor.endUndoGroup();
     }
     if (event.type == SDL_KEYUP &&
@@ -1991,7 +2052,7 @@ int main(int argc, char** argv) {
         keyboard[SDL_SCANCODE_M] != 0 || controllerMoveHeld;
     const bool brightnessHeld = keyboard[SDL_SCANCODE_B] != 0;
     const bool matrixHeld = keyboard[SDL_SCANCODE_L] != 0;
-    const bool drawHeld =
+    const bool drawHeld = mouseDrawHeld ||
         keyboard[SDL_SCANCODE_RETURN] != 0 ||
 #ifndef BITMAP16_CARDPUTER_ZERO
         keyboard[SDL_SCANCODE_SPACE] != 0 ||
@@ -1999,7 +2060,7 @@ int main(int argc, char** argv) {
         (controller != nullptr &&
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_A) != 0);
-    const bool eraseHeld =
+    const bool eraseHeld = mouseEraseHeld ||
         keyboard[SDL_SCANCODE_BACKSPACE] != 0 ||
 #ifndef BITMAP16_CARDPUTER_ZERO
         keyboard[SDL_SCANCODE_DELETE] != 0 ||

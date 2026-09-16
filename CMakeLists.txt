@@ -68,7 +68,10 @@ endif()
 if(BUILD_TESTING)
   add_executable(bitmap16dx_history_test
     platform_desktop/test_history.cpp
+    src/core/canvas.cpp
+    src/core/canvas_view.cpp
     src/core/editor.cpp
+    src/core/palette.cpp
     src/core/sketch.cpp
   )
   target_include_directories(bitmap16dx_history_test PRIVATE src)

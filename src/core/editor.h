@@ -28,6 +28,7 @@ class Editor {
 
   bool draw();
   bool erase();
+  bool paintTo(uint8_t x, uint8_t y, bool erase, bool connect);
   bool floodFill();
   bool floodFill(uint8_t replacementColor);
   bool clear();

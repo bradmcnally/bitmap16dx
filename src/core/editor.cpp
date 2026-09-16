@@ -1,6 +1,7 @@
 #include "core/editor.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace bitmap16 {
 
@@ -74,6 +75,27 @@ bool Editor::erase() {
 
 bool Editor::floodFill() {
   return floodFill(selectedColor_);
+}
+
+bool Editor::paintTo(uint8_t x, uint8_t y, bool erasePixel, bool connect) {
+  if (!isInBounds(x, y)) return false;
+  int currentX = connect ? cursorX_ : x;
+  int currentY = connect ? cursorY_ : y;
+  const int dx = std::abs(static_cast<int>(x) - currentX);
+  const int dy = -std::abs(static_cast<int>(y) - currentY);
+  const int stepX = currentX < x ? 1 : -1;
+  const int stepY = currentY < y ? 1 : -1;
+  int error = dx + dy;
+  bool changed = false;
+  for (;;) {
+    setCursor(currentX, currentY);
+    changed = (erasePixel ? erase() : draw()) || changed;
+    if (currentX == x && currentY == y) break;
+    const int twiceError = 2 * error;
+    if (twiceError >= dy) { error += dy; currentX += stepX; }
+    if (twiceError <= dx) { error += dx; currentY += stepY; }
+  }
+  return changed;
 }
 
 bool Editor::floodFill(uint8_t replacementColor) {
