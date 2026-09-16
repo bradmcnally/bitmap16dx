@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "core/sketch.h"
+#include "core/sketch_history.h"
 
 namespace bitmap16 {
 
@@ -18,8 +19,8 @@ class Editor {
   uint8_t cursorX() const { return cursorX_; }
   uint8_t cursorY() const { return cursorY_; }
   uint8_t selectedColor() const { return selectedColor_; }
-  bool canUndo() const { return undoAvailable_; }
-  bool canRedo() const { return redoAvailable_; }
+  bool canUndo() const { return history_.canUndo(); }
+  bool canRedo() const { return history_.canRedo(); }
 
   void setCursor(uint8_t x, uint8_t y);
   bool moveCursor(int dx, int dy);
@@ -37,19 +38,21 @@ class Editor {
   bool redo();
 
   void saveUndo();
+  void setHeldActions(bool draw, bool erase, bool move) {
+    history_.setHeldActions(draw, erase, move);
+  }
+  void endUndoGroup() { history_.endGroup(); }
+  void endUndoGroup(SketchHistory::Action action) { history_.endGroup(action); }
 
  private:
   bool isInBounds(int x, int y) const;
   bool containsArtwork() const;
 
   Sketch sketch_;
-  Sketch undoSketch_;
-  Sketch redoSketch_;
+  SketchHistory history_;
   uint8_t cursorX_ = 0;
   uint8_t cursorY_ = 0;
   uint8_t selectedColor_ = 1;
-  bool undoAvailable_ = false;
-  bool redoAvailable_ = false;
 };
 
 }  // namespace bitmap16

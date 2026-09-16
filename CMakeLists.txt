@@ -66,6 +66,13 @@ if(BITMAP16_STEAM_DECK)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(bitmap16dx_history_test
+    platform_desktop/test_history.cpp
+    src/core/editor.cpp
+    src/core/sketch.cpp
+  )
+  target_include_directories(bitmap16dx_history_test PRIVATE src)
+  add_test(NAME editor_history COMMAND bitmap16dx_history_test)
   add_executable(bitmap16dx_workspace_test
     platform_desktop/test_workspace.cpp
     platform_desktop/png_export.cpp

@@ -1194,6 +1194,7 @@ int main(int argc, char** argv) {
   }
 
   const auto renderNow = [&]() {
+    if (currentView != DesktopView::Canvas) editor.endUndoGroup();
     renderCurrentView(
         currentView,
         canvas,
@@ -1326,8 +1327,6 @@ int main(int argc, char** argv) {
   AxisRepeat dpadX;
   AxisRepeat dpadY;
   bool controllerMoveHeld = false;
-  bool controllerShiftStarted = false;
-  bool keyboardShiftStarted = false;
   bool controllerSaveChordLatched = false;
   bool focusNewestSketchOnNextMemoryOpen = false;
   bool previewLeftTriggerLatched = false;
@@ -1590,7 +1589,6 @@ int main(int argc, char** argv) {
           !leftShoulderHeld;
       if (nextMoveHeld != controllerMoveHeld) {
         controllerMoveHeld = nextMoveHeld;
-        controllerShiftStarted = false;
         if (currentView == DesktopView::Canvas) {
           desktopMoveModeActive = controllerMoveHeld;
           renderNow();
@@ -1649,6 +1647,11 @@ int main(int argc, char** argv) {
 
     // Advance independently of the SDL queue. Controller events can keep that
     // queue busy continuously, so timeout-only animations otherwise freeze.
+    editor.setHeldActions(
+        currentView == DesktopView::Canvas && desktopDrawPressed,
+        currentView == DesktopView::Canvas && desktopErasePressed,
+        currentView == DesktopView::Canvas &&
+            (heldKeys[SDL_SCANCODE_M] != 0 || controllerMoveHeld));
     advanceMemoryAnimation();
     advancePaletteAnimation();
 
@@ -1770,7 +1773,6 @@ int main(int argc, char** argv) {
         SDL_GameControllerClose(controller);
         controller = nullptr;
         controllerMoveHeld = false;
-        controllerShiftStarted = false;
         controllerSaveChordLatched = false;
         previewLeftTriggerLatched = false;
         previewRightTriggerLatched = false;
@@ -1913,11 +1915,29 @@ int main(int argc, char** argv) {
       if (changed) renderNow();
       continue;
     }
+    if (event.type == SDL_KEYUP) {
+      const SDL_Keycode released = event.key.keysym.sym;
+      if (released == SDLK_RETURN || released == SDLK_SPACE) {
+        editor.endUndoGroup(bitmap16::SketchHistory::Action::Draw);
+      } else if (released == SDLK_BACKSPACE || released == SDLK_DELETE) {
+        editor.endUndoGroup(bitmap16::SketchHistory::Action::Erase);
+      } else if (released == SDLK_m) {
+        editor.endUndoGroup(bitmap16::SketchHistory::Action::Move);
+      }
+    } else if (event.type == SDL_CONTROLLERBUTTONUP) {
+      if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
+        editor.endUndoGroup(bitmap16::SketchHistory::Action::Draw);
+      } else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_X) {
+        editor.endUndoGroup(bitmap16::SketchHistory::Action::Erase);
+      }
+    } else if (event.type == SDL_WINDOWEVENT &&
+               event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+      editor.endUndoGroup();
+    }
     if (event.type == SDL_KEYUP &&
         event.key.keysym.sym == SDLK_m &&
         desktopMoveModeActive) {
       desktopMoveModeActive = false;
-      keyboardShiftStarted = false;
       renderNow();
       continue;
     }
@@ -1926,7 +1946,6 @@ int main(int argc, char** argv) {
         event.window.event == SDL_WINDOWEVENT_FOCUS_LOST &&
         desktopMoveModeActive) {
       desktopMoveModeActive = false;
-      keyboardShiftStarted = false;
       renderNow();
       continue;
     }
@@ -1988,23 +2007,14 @@ int main(int argc, char** argv) {
         (controller != nullptr &&
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_X) != 0);
+    editor.setHeldActions(drawHeld, eraseHeld, moveHeld);
     const bool plusKey =
         key == SDLK_PLUS || key == SDLK_EQUALS || key == SDLK_KP_PLUS;
     const bool minusKey = key == SDLK_MINUS || key == SDLK_KP_MINUS;
     bool changed = false;
     const auto moveCanvasCursor = [&](int dx, int dy) {
       if (moveHeld) {
-        const bool saveUndo =
-            controllerMoveHeld
-                ? !controllerShiftStarted
-                : !keyboardShiftStarted;
-        const bool shifted = editor.shift(dx, dy, saveUndo);
-        if (shifted && controllerMoveHeld) {
-          controllerShiftStarted = true;
-        } else if (shifted) {
-          keyboardShiftStarted = true;
-        }
-        return shifted;
+        return editor.shift(dx, dy);
       }
       const bool moved = editor.moveCursor(dx, dy);
       if (!moved) return false;

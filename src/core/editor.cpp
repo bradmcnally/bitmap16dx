@@ -26,8 +26,7 @@ void Editor::reset(const Sketch& sketch) {
   cursorX_ = 0;
   cursorY_ = 0;
   selectedColor_ = 1;
-  undoAvailable_ = false;
-  redoAvailable_ = false;
+  history_.clear();
 }
 
 void Editor::setCursor(uint8_t x, uint8_t y) {
@@ -57,7 +56,7 @@ bool Editor::draw() {
   if (sketch_.pixels[cursorY_][cursorX_] == selectedColor_) {
     return false;
   }
-  saveUndo();
+  history_.recordEdit(sketch_, SketchHistory::Action::Draw);
   sketch_.pixels[cursorY_][cursorX_] = selectedColor_;
   sketch_.isEmpty = false;
   return true;
@@ -67,7 +66,7 @@ bool Editor::erase() {
   if (sketch_.pixels[cursorY_][cursorX_] == 0) {
     return false;
   }
-  saveUndo();
+  history_.recordEdit(sketch_, SketchHistory::Action::Erase);
   sketch_.pixels[cursorY_][cursorX_] = 0;
   sketch_.isEmpty = !containsArtwork();
   return true;
@@ -150,18 +149,19 @@ bool Editor::shift(int dx, int dy, bool saveUndoState) {
     return false;
   }
 
-  if (saveUndoState) {
-    saveUndo();
-  }
   uint8_t shifted[kMaxGridSize][kMaxGridSize] = {};
   const int size = sketch_.gridSize;
+  bool changed = false;
   for (int y = 0; y < size; ++y) {
     for (int x = 0; x < size; ++x) {
       const int sourceX = (x - dx % size + size) % size;
       const int sourceY = (y - dy % size + size) % size;
       shifted[y][x] = sketch_.pixels[sourceY][sourceX];
+      changed = changed || shifted[y][x] != sketch_.pixels[y][x];
     }
   }
+  if (!changed) return false;
+  if (saveUndoState) history_.recordEdit(sketch_, SketchHistory::Action::Move);
   for (int y = 0; y < size; ++y) {
     for (int x = 0; x < size; ++x) {
       sketch_.pixels[y][x] = shifted[y][x];
@@ -201,39 +201,21 @@ bool Editor::applyPalette(const uint16_t* colors, uint8_t paletteSize) {
 }
 
 bool Editor::undo() {
-  if (!undoAvailable_) {
-    return false;
-  }
-  redoSketch_ = sketch_;
-  redoAvailable_ = true;
-  sketch_ = undoSketch_;
+  if (!history_.undo(sketch_)) return false;
   setCursor(cursorX_, cursorY_);
-  if (selectedColor_ > sketch_.paletteSize) {
-    selectedColor_ = 1;
-  }
-  undoAvailable_ = false;
+  if (selectedColor_ > sketch_.paletteSize) selectedColor_ = 1;
   return true;
 }
 
 bool Editor::redo() {
-  if (!redoAvailable_) {
-    return false;
-  }
-  undoSketch_ = sketch_;
-  undoAvailable_ = true;
-  sketch_ = redoSketch_;
+  if (!history_.redo(sketch_)) return false;
   setCursor(cursorX_, cursorY_);
-  if (selectedColor_ > sketch_.paletteSize) {
-    selectedColor_ = 1;
-  }
-  redoAvailable_ = false;
+  if (selectedColor_ > sketch_.paletteSize) selectedColor_ = 1;
   return true;
 }
 
 void Editor::saveUndo() {
-  undoSketch_ = sketch_;
-  undoAvailable_ = true;
-  redoAvailable_ = false;
+  history_.record(sketch_);
 }
 
 bool Editor::isInBounds(int x, int y) const {

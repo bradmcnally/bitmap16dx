@@ -12,7 +12,8 @@ channeling the vibe of 2000s handheld game consoles.
 - 8×8, 16×16, and 32×32 canvas modes
 - Draw, Erase, Fill, Erase Fill, and Move tools
 - Canvas zoom and pixel-accurate minimap
-- Undo and redo
+- Undo and redo with 16 steps of session history; opening or creating a sketch clears history
+- Holding draw, erase, or artwork move counts as one undo step until release
 - Save, open, duplicate, preview, and delete sketches from SD card
 - Built-in 16, 8, and 4-color palettes
   - Palette swapping preserves indexed artwork when moving between smaller

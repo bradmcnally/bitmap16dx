@@ -76,6 +76,7 @@
 #include "core/settings_view.h"
 #include "core/shake_detector.h"
 #include "core/sketch_codec.h"
+#include "core/sketch_history.h"
 #include "platform/clock.h"
 #include "platform/display.h"
 #include "platform/filesystem.h"
@@ -145,16 +146,7 @@ struct EditorState {
   bool erasePressed = false;
   bool fillPressed = false;
   bitmap16::CanvasView::Viewport viewport;
-  uint8_t undoCanvas[MAX_currentGridSize][MAX_currentGridSize] = {};
-  bool undoAvailable = false;
-  uint8_t undoPaletteSize = 0;
-  uint16_t undoPaletteColors[16] = {};
-  uint8_t undoGridSize = 0;
-  uint8_t redoCanvas[MAX_currentGridSize][MAX_currentGridSize] = {};
-  bool redoAvailable = false;
-  uint8_t redoPaletteSize = 0;
-  uint16_t redoPaletteColors[16] = {};
-  uint8_t redoGridSize = 0;
+  bitmap16::SketchHistory history;
 };
 
 EditorState editorState;
@@ -353,14 +345,7 @@ char btNotifyMsg[32] = "";
 // Index 0 is always Transparent. Indices 1..paletteSize map to drawable colors.
 // Palette changes are explicit and never rewrite pixel indices.
 
-struct Sketch {
-  uint8_t pixels[MAX_currentGridSize][MAX_currentGridSize];
-  uint8_t gridSize;              // 8, 16, or 32
-  uint8_t paletteSize;           // 8 or 16 (number of drawable colors, excludes 0)
-  uint16_t paletteColors[16];    // Maps indices 1..paletteSize to RGB565 colors
-                                 // paletteColors[0] is unused (index 0 = Transparent)
-  bool isEmpty;                  // Is this sketch empty?
-};
+using Sketch = bitmap16::Sketch;
 
 struct DocumentState {
   Sketch sketch;
@@ -1503,117 +1488,75 @@ void btUpdateNotify();
  * Save current canvas state to undo buffer
  * Note: This is for regular drawing undo, not sketch deletion operations
  */
-void saveUndo() {
-  for (int y = 0; y < editorState.gridSize; y++) {
-    for (int x = 0; x < editorState.gridSize; x++) {
-      editorState.undoCanvas[y][x] = editorState.canvas[y][x];
+// Capture the live canvas as well as palette/grid metadata. The document's
+// pixel copy is not kept in sync while drawing.
+bitmap16::Sketch captureEditorSketch() {
+  bitmap16::Sketch sketch = documentState.sketch;
+  sketch.gridSize = editorState.gridSize;
+  sketch.isEmpty = true;
+  for (int y = 0; y < MAX_currentGridSize; ++y) {
+    for (int x = 0; x < MAX_currentGridSize; ++x) {
+      sketch.pixels[y][x] = editorState.canvas[y][x];
+      if (y < editorState.gridSize && x < editorState.gridSize &&
+          sketch.pixels[y][x] != 0) sketch.isEmpty = false;
     }
   }
-  // Clear palette undo info (this is just a regular drawing undo)
-  editorState.undoPaletteSize = 0;
-  editorState.undoGridSize = 0;
-  editorState.undoAvailable = true;
-  editorState.redoAvailable = false;
+  return sketch;
+}
+
+void saveUndo() {
+  editorState.history.record(captureEditorSketch());
 }
 
 void savePaletteUndo() {
   saveUndo();
-  editorState.undoGridSize = editorState.gridSize;
-  editorState.undoPaletteSize = documentState.sketch.paletteSize;
-  for (int index = 0; index < 16; ++index) {
-    editorState.undoPaletteColors[index] =
-        documentState.sketch.paletteColors[index];
-  }
 }
 
-/**
- * Restore canvas from undo buffer
- */
+bool editCanvasPixel(bool erase) {
+  const uint8_t replacement = erase ? 0 : editorState.selectedColor;
+  auto& pixel = editorState.canvas[editorState.cursorY][editorState.cursorX];
+  if (pixel == replacement) return false;
+  editorState.history.recordEdit(
+      captureEditorSketch(), erase ? bitmap16::SketchHistory::Action::Erase
+                                  : bitmap16::SketchHistory::Action::Draw);
+  pixel = replacement;
+  LED_CANVAS_UPDATED();
+  return true;
+}
+
+void restoreEditorSketch(const bitmap16::Sketch& sketch) {
+  documentState.sketch = sketch;
+  editorState.gridSize = sketch.gridSize;
+  editorState.cellSize = 128 / editorState.gridSize;
+  editorState.viewport = {};
+  for (int y = 0; y < MAX_currentGridSize; ++y) {
+    for (int x = 0; x < MAX_currentGridSize; ++x) {
+      editorState.canvas[y][x] = sketch.pixels[y][x];
+    }
+  }
+  editorState.cursorX = min(editorState.cursorX, editorState.gridSize - 1);
+  editorState.cursorY = min(editorState.cursorY, editorState.gridSize - 1);
+  if (editorState.selectedColor > sketch.paletteSize) editorState.selectedColor = 1;
+  LED_CANVAS_UPDATED();
+}
+
 void restoreUndo() {
-  if (!editorState.undoAvailable) {
+  bitmap16::Sketch sketch = captureEditorSketch();
+  if (!editorState.history.undo(sketch)) {
     setStatusMessage(StatusMsg::NO_UNDO);
     return;
   }
-
-  // Preserve the current document so Fn+Z can redo this undo.
-  for (int y = 0; y < MAX_currentGridSize; y++) {
-    for (int x = 0; x < MAX_currentGridSize; x++) {
-      editorState.redoCanvas[y][x] = editorState.canvas[y][x];
-    }
-  }
-  editorState.redoGridSize = editorState.gridSize;
-  editorState.redoPaletteSize = documentState.sketch.paletteSize;
-  for (int i = 0; i < 16; i++) {
-    editorState.redoPaletteColors[i] = documentState.sketch.paletteColors[i];
-  }
-  editorState.redoAvailable = true;
-
-  // If we have saved grid size info (from sketch deletion), restore it
-  if (editorState.undoGridSize > 0) {
-    editorState.gridSize = editorState.undoGridSize;
-    editorState.cellSize = 128 / editorState.gridSize;
-
-    // Keep cursor in bounds
-    if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
-    if (editorState.cursorY >= editorState.gridSize) editorState.cursorY = editorState.gridSize - 1;
-  }
-
-  // Restore all pixels (always restore full 16x16 to handle grid size changes)
-  for (int y = 0; y < MAX_currentGridSize; y++) {
-    for (int x = 0; x < MAX_currentGridSize; x++) {
-      editorState.canvas[y][x] = editorState.undoCanvas[y][x];
-    }
-  }
-
-  // If we have palette info saved (from sketch deletion), restore it to the active sketch
-  if (editorState.undoPaletteSize > 0) {
-    documentState.sketch.paletteSize = editorState.undoPaletteSize;
-    documentState.sketch.gridSize = editorState.undoGridSize;
-    for (int i = 0; i < 16; i++) {
-      documentState.sketch.paletteColors[i] = editorState.undoPaletteColors[i];
-    }
-  }
-
-  editorState.undoAvailable = false;
-
-  // Update LED matrix with restored canvas
-  LED_CANVAS_UPDATED();
-
+  restoreEditorSketch(sketch);
   setStatusMessage(StatusMsg::UNDO);
 }
 
 void restoreRedo() {
-  if (!editorState.redoAvailable) {
+  bitmap16::Sketch sketch = captureEditorSketch();
+  if (!editorState.history.redo(sketch)) {
     setStatusMessage("No redo");
     return;
   }
-
-  for (int y = 0; y < MAX_currentGridSize; y++) {
-    for (int x = 0; x < MAX_currentGridSize; x++) {
-      editorState.undoCanvas[y][x] = editorState.canvas[y][x];
-      editorState.canvas[y][x] = editorState.redoCanvas[y][x];
-    }
-  }
-  editorState.undoGridSize = editorState.gridSize;
-  editorState.undoPaletteSize = documentState.sketch.paletteSize;
-  for (int i = 0; i < 16; i++) {
-    editorState.undoPaletteColors[i] = documentState.sketch.paletteColors[i];
-    documentState.sketch.paletteColors[i] = editorState.redoPaletteColors[i];
-  }
-  editorState.undoAvailable = true;
-
-  editorState.gridSize = editorState.redoGridSize;
-  editorState.cellSize = 128 / editorState.gridSize;
-  documentState.sketch.gridSize = editorState.redoGridSize;
-  documentState.sketch.paletteSize = editorState.redoPaletteSize;
-  if (editorState.cursorX >= editorState.gridSize) {
-    editorState.cursorX = editorState.gridSize - 1;
-  }
-  if (editorState.cursorY >= editorState.gridSize) {
-    editorState.cursorY = editorState.gridSize - 1;
-  }
-  editorState.redoAvailable = false;
-  LED_CANVAS_UPDATED();
+  restoreEditorSketch(sketch);
   setStatusMessage("Redo");
 }
 
@@ -1637,13 +1580,17 @@ void clearCanvas() {
 void shiftCanvas(int dx, int dy) {
   uint8_t temp[MAX_currentGridSize][MAX_currentGridSize];
   int size = editorState.gridSize;
+  bool changed = false;
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
       int srcX = (x - dx + size) % size;
       int srcY = (y - dy + size) % size;
       temp[y][x] = editorState.canvas[srcY][srcX];
+      changed = changed || temp[y][x] != editorState.canvas[y][x];
     }
   }
+  if (!changed) return;
+  editorState.history.recordEdit(captureEditorSketch(), bitmap16::SketchHistory::Action::Move);
   for (int y = 0; y < size; y++) {
     for (int x = 0; x < size; x++) {
       editorState.canvas[y][x] = temp[y][x];
@@ -1743,6 +1690,7 @@ void floodFill(int startX, int startY, uint8_t fillColor) {
  * Cycle between 8×8, 16×16, and 32×32 grid modes.
  */
 void toggleGridSize() {
+  saveUndo();
   if (editorState.gridSize == 8) {
     editorState.gridSize = 16;
     setStatusMessage(StatusMsg::GRID_16X16);
@@ -1772,6 +1720,8 @@ void openSketch(String filename) {
     setStatusMessage(StatusMsg::FAILED_TO_LOAD);
     return;
   }
+
+  editorState.history.clear();
 
   // Validate palette
   if (documentState.sketch.paletteSize == 0 || documentState.sketch.paletteSize > 16) {
@@ -1804,6 +1754,7 @@ void openSketch(String filename) {
  * Create a new blank sketch
  */
 void createNewSketch() {
+  editorState.history.clear();
   initializeActiveSketch();
 
   for (int y = 0; y < MAX_currentGridSize; y++) {
@@ -1985,6 +1936,7 @@ bitmap16::MemoryView::Catalog currentMemoryCatalog() {
 }
 
 void enterMemoryView() {
+  editorState.history.endGroup();
   if (!sketchCatalogValid) {
     loadSketchListFromSD();
   }
@@ -2069,6 +2021,7 @@ void drawChargingFrame() {
 }
 
 void enterChargingMode() {
+  editorState.history.endGroup();
   app.setView(bitmap16::ViewId::Charging);
   viewState.charging.lastFrameTime = millis();
   viewState.charging.batteryPercent = Power::getBatteryPercent();
@@ -2136,6 +2089,7 @@ void exitChargingMode() {
  * Enter Help Screen mode
  */
 void enterHelpView() {
+  editorState.history.endGroup();
   app.setView(bitmap16::ViewId::Help);
   viewState.help.navigation = {};
   viewState.help.ownsCanvas = !Display::isReady();
@@ -2269,6 +2223,7 @@ void loadGallerySketch(int index) {
  * Context-aware: detects if coming from Memory View for gallery mode
  */
 void enterPreviewView() {
+  editorState.history.endGroup();
   const bool fromMemoryView =
       app.currentView() == bitmap16::ViewId::Memory;
   bitmap16::PreviewView::selectBackground(
@@ -2408,6 +2363,7 @@ int activePaletteCatalogIndex() {
 }
 
 void enterPaletteView() {
+  editorState.history.endGroup();
   app.setView(bitmap16::ViewId::Palette);
   viewState.palette.ownsCanvas = !Display::isReady();
   viewState.palette.canvasAvailable = Display::init();
@@ -2478,6 +2434,7 @@ const char* bluetoothSettingsValue() {
  * Enter Settings Menu - vertical list of persistent preferences
  */
 void enterSettingsView() {
+  editorState.history.endGroup();
   app.setView(bitmap16::ViewId::Settings);
   viewState.settings.navigation = {};
   viewState.settings.ownsCanvas = !Display::isReady();
@@ -4935,7 +4892,7 @@ void runLegacyFrame() {
   // ============================================================================
   // Check for shake gesture ONLY in canvas view
   if (app.currentView() == bitmap16::ViewId::Canvas) {
-    if (shakeUndoEnabled && detectShakeGesture() && editorState.undoAvailable) {
+    if (shakeUndoEnabled && detectShakeGesture() && editorState.history.canUndo()) {
       // Shake detected and undo is available!
       restoreUndo();  // Perform the undo operation
       drawSharedCanvasView();
@@ -4981,7 +4938,6 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   bool floodFilled = false;
   bool canvasMoved = false;
   bool zoomChanged = false;
-  static bool moveUndoSaved = false;
   // Check if enter or delete is currently being held (for drawing while moving)
   bool enterHeld =
       (input.enterHeld && !input.lHeld) || input.ctrlHeld;
@@ -4997,13 +4953,15 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   bool mHeld = input.mHeld;
   bool moveModeChanged = (mHeld != editorState.moveModeActive);
   editorState.moveModeActive = mHeld;
-  if (!mHeld) moveUndoSaved = false;
+#if ENABLE_BLUETOOTH
+  enterHeld = (enterHeld || btEnter || btSpace) && !input.lHeld;
+  deleteHeld = deleteHeld || btBackspace;
+#endif
+  editorState.history.setHeldActions(enterHeld, deleteHeld, mHeld);
 
 #if ENABLE_BLUETOOTH
   // Merge BT input with keyboard input
   // btSpace also acts as draw (BT only feature)
-  enterHeld = (enterHeld || btEnter || btSpace) && !input.lHeld;
-  deleteHeld = deleteHeld || btBackspace;
 
   // Check for BT Fn modifier (Alt key)
   bool fnHeld = input.fnHeld || btFnHeld;
@@ -5043,16 +5001,10 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   // Process BT Enter/Space/Backspace for pixel operations
   // Space on BT keyboard also draws (BT-only feature)
   if ((btEnter || btSpace) && !input.enterHeld && !input.lHeld) {
-    saveUndo();
-    editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
-    pixelPlaced = true;
-    LED_CANVAS_UPDATED();
+    pixelPlaced |= editCanvasPixel(false);
   }
   if (btBackspace && !input.deleteHeld) {
-    saveUndo();
-    editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
-    pixelPlaced = true;
-    LED_CANVAS_UPDATED();
+    pixelPlaced |= editCanvasPixel(true);
   }
 
   // Process BT character queue
@@ -5186,15 +5138,9 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   editorState.fillPressed = fillPressed;
 
   if ((input.enterPressed && !input.lHeld) || input.ctrlPressed) {
-    saveUndo();
-    editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
-    pixelPlaced = true;
-    LED_CANVAS_UPDATED();
+    pixelPlaced |= editCanvasPixel(false);
   } else if (input.deletePressed) {
-    saveUndo();
-    editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
-    pixelPlaced = true;
-    LED_CANVAS_UPDATED();
+    pixelPlaced |= editCanvasPixel(true);
   }
 
   uint8_t requestedColor = 0;
@@ -5410,10 +5356,6 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
           previousX != editorState.cursorX ||
           previousY != editorState.cursorY;
     } else if (mHeld) {
-      if (!moveUndoSaved) {
-        saveUndo();
-        moveUndoSaved = true;
-      }
       if (input.event == bitmap16::InputEvent::Up) {
         shiftCanvas(0, -1);
       } else if (input.event == bitmap16::InputEvent::Down) {
@@ -5444,13 +5386,9 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       }
 
       if (moved && enterHeld) {
-        editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
-        pixelPlaced = true;
-        LED_CANVAS_UPDATED();
+        pixelPlaced |= editCanvasPixel(false);
       } else if (moved && deleteHeld) {
-        editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
-        pixelPlaced = true;
-        LED_CANVAS_UPDATED();
+        pixelPlaced |= editCanvasPixel(true);
       }
     }
   }
@@ -5471,10 +5409,6 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       keyRepeating = true;
       lastKeyTime = currentTime;
       if (mHeld) {
-        if (!moveUndoSaved) {
-          saveUndo();
-          moveUndoSaved = true;
-        }
         if (currentBtArrow == ';') shiftCanvas(0, -1);
         else if (currentBtArrow == '.') shiftCanvas(0, 1);
         else if (currentBtArrow == ',') shiftCanvas(-1, 0);
@@ -5498,13 +5432,9 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
           moved = true;
         }
         if (moved && enterHeld) {
-          editorState.canvas[editorState.cursorY][editorState.cursorX] = editorState.selectedColor;
-          pixelPlaced = true;
-          LED_CANVAS_UPDATED();
+          pixelPlaced |= editCanvasPixel(false);
         } else if (moved && deleteHeld) {
-          editorState.canvas[editorState.cursorY][editorState.cursorX] = 0;
-          pixelPlaced = true;
-          LED_CANVAS_UPDATED();
+          pixelPlaced |= editCanvasPixel(true);
         }
       }
     }
