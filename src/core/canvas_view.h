@@ -70,6 +70,8 @@ struct Assets {
   Icon drawPrompt;
   Icon erasePrompt;
   Icon fillPrompt;
+  Icon palette;
+  Icon palettePrompt;
 };
 
 struct Layout {
@@ -84,6 +86,8 @@ struct Layout {
 };
 
 Layout layoutFor(int width, int height, uint8_t gridSize);
+bool hasPaletteButton(int width, int height);
+bool paletteButtonContains(int width, int height, uint8_t gridSize, int x, int y);
 bool adjustZoom(
     Viewport& viewport,
     int delta,

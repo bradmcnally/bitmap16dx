@@ -100,6 +100,8 @@ When a save warning appears, `A` saves, `B` returns without continuing, and
 `X` discards the changes and continues.
 
 Keyboard controls remain available in this quick build.
+Canvas zoom is disabled on Steam Deck, including keyboard `+` / `-`.
+Preview zoom remains available through LT / RT and keyboard `+` / `-`.
 The Steam Deck Settings menu includes a `Quit` row for closing the app
 without using a keyboard or the Steam overlay. It also includes a `Help` row
 that opens the controller reference and returns to Settings when closed.

@@ -74,7 +74,8 @@ void drawIndexedIcon(
     int y,
     const Icon& icon,
     const Theme& theme,
-    bool pressed = false) {
+    bool pressed = false,
+    int pixelStep = 1) {
   if (icon.pixels == nullptr) return;
   const auto iconValue = [&](int column, int row) {
     const int pixel = row * icon.width + column;
@@ -83,15 +84,17 @@ void drawIndexedIcon(
         (icon.pixels[pixel / 4] >> shift) & 0x03);
   };
   const int pressedOffsetY = pressed ? 1 : 0;
-  for (int row = 0; row < icon.height; ++row) {
-    for (int column = 0; column < icon.width; ++column) {
+  for (int row = 0; row < icon.height; row += pixelStep) {
+    for (int column = 0; column < icon.width; column += pixelStep) {
       const uint8_t value = iconValue(column, row);
       if (value == 1) {
         canvas.drawPixel(
-            x + column, y + pressedOffsetY + row, theme.iconDark);
+            x + column / pixelStep,
+            y + pressedOffsetY + row / pixelStep, theme.iconDark);
       } else if (value == 2) {
         canvas.drawPixel(
-            x + column, y + pressedOffsetY + row, theme.iconLight);
+            x + column / pixelStep,
+            y + pressedOffsetY + row / pixelStep, theme.iconLight);
       }
     }
   }
@@ -137,6 +140,25 @@ Layout layoutFor(int width, int height, uint8_t gridSize) {
       paletteSwatchSize,
       toolsX,
   };
+}
+
+bool hasPaletteButton(int width, int height) {
+#ifdef BITMAP16_STEAM_DECK
+  return width >= 320 && height >= 170;
+#else
+  (void)width;
+  (void)height;
+  return false;
+#endif
+}
+
+bool paletteButtonContains(
+    int width, int height, uint8_t gridSize, int x, int y) {
+  if (!hasPaletteButton(width, height)) return false;
+  const Layout layout = layoutFor(width, height, gridSize);
+  const int top = layout.gridY - 2 + 81;
+  return x >= layout.toolsX && x < layout.toolsX + 24 &&
+      y >= top && y < top + 24;
 }
 
 bool keepCursorVisible(
@@ -446,6 +468,8 @@ void render(
       layout.gridY + (state.cursorY - viewportY) * cellSize;
   if (assets != nullptr) {
     const int toolsY = layout.gridY - 2;
+    const bool paletteButton = hasPaletteButton(canvas.width(), canvas.height());
+    const int auxiliaryY = toolsY + 82 + (paletteButton ? 27 : 0);
     drawIndexedIcon(
         canvas,
         layout.toolsX,
@@ -491,6 +515,20 @@ void render(
           assets->fillPrompt,
           theme);
     }
+    if (paletteButton) {
+      const int buttonY = toolsY + 81;
+      drawIndexedIcon(canvas, layout.toolsX, buttonY, assets->palette, theme);
+      canvas.setTextSize(1);
+      canvas.setTextAlign(TextAlign::Left);
+      canvas.setTextColor(theme.text);
+      if (state.showControllerPrompts) {
+        drawIndexedIcon(
+            canvas, layout.toolsX + 19, buttonY + 14,
+            assets->palettePrompt, theme, false, 2);
+      } else {
+        canvas.drawString("P", layout.toolsX + 26, buttonY + 15);
+      }
+    }
     const bool zoomed = cellSize > layout.cellSize;
     if (state.batteryPercent >= 0 && !zoomed) {
       int batteryStage = 0;
@@ -500,7 +538,7 @@ void render(
       drawIndexedIcon(
           canvas,
           layout.toolsX,
-          toolsY + 82,
+          auxiliaryY,
           assets->battery[batteryStage],
           theme);
     }
@@ -511,7 +549,7 @@ void render(
       constexpr int minimapSize = 32;
       const int minimapScale = minimapSize / logicalSize;
       const int minimapX = layout.toolsX;
-      const int minimapY = toolsY + 82;
+      const int minimapY = auxiliaryY;
       drawShadow(
           canvas,
           minimapX,

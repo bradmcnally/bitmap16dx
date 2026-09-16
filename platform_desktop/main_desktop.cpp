@@ -420,6 +420,8 @@ const bitmap16::CanvasView::Assets& canvasAssets(
       {ICON_BUTTON_A, ICON_BUTTON_A_WIDTH, ICON_BUTTON_A_HEIGHT},
       {ICON_BUTTON_X, ICON_BUTTON_X_WIDTH, ICON_BUTTON_X_HEIGHT},
       {ICON_BUTTON_Y, ICON_BUTTON_Y_WIDTH, ICON_BUTTON_Y_HEIGHT},
+      {ICON_PALETTE, ICON_PALETTE_WIDTH, ICON_PALETTE_HEIGHT},
+      {ICON_BUTTON_R3, ICON_BUTTON_R3_WIDTH, ICON_BUTTON_R3_HEIGHT},
   };
   static const bitmap16::CanvasView::Assets handAssets = {
       {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
@@ -440,6 +442,8 @@ const bitmap16::CanvasView::Assets& canvasAssets(
       {ICON_BUTTON_A, ICON_BUTTON_A_WIDTH, ICON_BUTTON_A_HEIGHT},
       {ICON_BUTTON_X, ICON_BUTTON_X_WIDTH, ICON_BUTTON_X_HEIGHT},
       {ICON_BUTTON_Y, ICON_BUTTON_Y_WIDTH, ICON_BUTTON_Y_HEIGHT},
+      {ICON_PALETTE, ICON_PALETTE_WIDTH, ICON_PALETTE_HEIGHT},
+      {ICON_BUTTON_R3, ICON_BUTTON_R3_WIDTH, ICON_BUTTON_R3_HEIGHT},
   };
   return settings.cursorStyle == bitmap16::CursorStyle::Hand
       ? handAssets
@@ -763,7 +767,7 @@ int main(int argc, char** argv) {
   int width = BITMAP16_DEFAULT_WIDTH;
   int height = BITMAP16_DEFAULT_HEIGHT;
   bool smokeTest = false;
-  bool windowed = false;
+  [[maybe_unused]] bool windowed = false;  // Only the Deck uses fullscreen mode.
   for (int argument = 1; argument < argc; ++argument) {
     if (std::strcmp(argv[argument], "--smoke-test") == 0) {
       smokeTest = true;
@@ -1659,6 +1663,19 @@ int main(int argc, char** argv) {
       continue;
     }
 
+    if (event.type == SDL_MOUSEBUTTONDOWN &&
+        event.button.button == SDL_BUTTON_LEFT &&
+        event.button.windowID == SDL_GetWindowID(window) &&
+        currentView == DesktopView::Canvas &&
+        bitmap16::CanvasView::paletteButtonContains(
+            width, height, editor.sketch().gridSize,
+            event.button.x, event.button.y)) {
+      // SDL maps mouse coordinates to the renderer's logical framebuffer.
+      // Use the shortcut path so every activation opens the same palette view.
+      event = {};
+      event.type = SDL_KEYDOWN;
+      event.key.keysym.sym = SDLK_p;
+    }
     if (event.type == SDL_QUIT) {
       if (confirmUnsavedChanges()) running = false;
       continue;
@@ -2058,6 +2075,7 @@ int main(int argc, char** argv) {
                       (plusKey ? 1 : -1))));
       workspace.saveSettings();
       changed = true;
+#ifndef BITMAP16_STEAM_DECK
     } else if (
         currentView == DesktopView::Canvas &&
         (plusKey || minusKey)) {
@@ -2085,6 +2103,7 @@ int main(int argc, char** argv) {
             zoomCellSize / zoomLayout.cellSize);
         setDesktopStatus(zoomStatus);
       }
+#endif
     } else if (
         currentView == DesktopView::Preview &&
         (plusKey || minusKey)) {
