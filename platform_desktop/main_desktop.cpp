@@ -58,6 +58,10 @@ bool desktopMoveModeActive = false;
 bool desktopDrawPressed = false;
 bool desktopErasePressed = false;
 bool desktopFillPressed = false;
+bool desktopPalettePressed = false;
+#ifdef BITMAP16_STEAM_DECK
+bool desktopControllerPrompts = true;
+#endif
 bitmap16::CanvasView::Viewport desktopCanvasViewport;
 char desktopStatus[32] = {};
 Uint32 desktopStatusUntil = 0;
@@ -666,10 +670,16 @@ void renderCurrentView(
 #ifdef BITMAP16_STEAM_DECK
         true,
         false,
-        true,
+        desktopControllerPrompts,
 #else
         false,
         false,
+        false,
+#endif
+        desktopPalettePressed,
+#ifdef BITMAP16_STEAM_DECK
+        !desktopControllerPrompts,
+#else
         false,
 #endif
     };
@@ -1413,6 +1423,9 @@ int main(int argc, char** argv) {
     return true;
   };
   bool running = !smokeTest;
+#ifdef BITMAP16_STEAM_DECK
+  unsigned previousTriggerMask = 0;
+#endif
   while (running) {
     SDL_PumpEvents();
     if (quitRequested) {
@@ -1510,6 +1523,16 @@ int main(int argc, char** argv) {
       const bool rightTriggerHeld =
           SDL_GameControllerGetAxis(
               controller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000;
+#ifdef BITMAP16_STEAM_DECK
+      const unsigned triggerMask =
+          (leftTriggerHeld ? 1u : 0u) | (rightTriggerHeld ? 2u : 0u);
+      if ((triggerMask & ~previousTriggerMask) != 0 &&
+          !desktopControllerPrompts) {
+        desktopControllerPrompts = true;
+        if (currentView == DesktopView::Canvas) renderNow();
+      }
+      previousTriggerMask = triggerMask;
+#endif
       if (currentView == DesktopView::Preview) {
         const bitmap16::Sketch& previewSketch =
             previewOverride == nullptr
@@ -1663,6 +1686,23 @@ int main(int argc, char** argv) {
       continue;
     }
 
+#ifdef BITMAP16_STEAM_DECK
+    // Controller-generated key events have no window ID. Inspect the original
+    // event before mouse clicks or controller buttons are mapped to shortcuts.
+    bool controllerPrompts = desktopControllerPrompts;
+    if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
+      controllerPrompts = event.key.windowID == 0;
+    } else if (event.type == SDL_CONTROLLERBUTTONDOWN ||
+               event.type == SDL_USEREVENT) {
+      controllerPrompts = true;
+    } else if (event.type == SDL_KEYDOWN && event.key.windowID == 0) {
+      controllerPrompts = true;
+    }
+    if (controllerPrompts != desktopControllerPrompts) {
+      desktopControllerPrompts = controllerPrompts;
+      if (currentView == DesktopView::Canvas) renderNow();
+    }
+#endif
     if (event.type == SDL_MOUSEBUTTONDOWN &&
         event.button.button == SDL_BUTTON_LEFT &&
         event.button.windowID == SDL_GetWindowID(window) &&
@@ -2210,6 +2250,11 @@ int main(int argc, char** argv) {
       if (currentView == DesktopView::Palette) {
         currentView = DesktopView::Canvas;
       } else {
+        if (bitmap16::CanvasView::hasPaletteButton(width, height)) {
+          desktopPalettePressed = true;
+          renderNow();
+          desktopPalettePressed = false;
+        }
         refreshPaletteCatalog();
         currentView = DesktopView::Palette;
       }

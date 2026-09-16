@@ -100,6 +100,9 @@ When a save warning appears, `A` saves, `B` returns without continuing, and
 `X` discards the changes and continues.
 
 Keyboard controls remain available in this quick build.
+Canvas prompts follow the last keyboard or controller input. Keyboard prompts
+show `RET` (Enter), `BS` (Backspace), `F` (fill), and `P` (Palettes).
+Stick movement must exceed the input dead zone before switching prompts.
 Canvas zoom is disabled on Steam Deck, including keyboard `+` / `-`.
 Preview zoom remains available through LT / RT and keyboard `+` / `-`.
 The Steam Deck Settings menu includes a `Quit` row for closing the app

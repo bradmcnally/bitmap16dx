@@ -35,6 +35,8 @@ struct State {
   bool statusCentered = false;
   bool toolsAtLeftEdge = false;
   bool showControllerPrompts = false;
+  bool palettePressed = false;
+  bool showKeyboardPrompts = false;
 };
 
 struct Theme {

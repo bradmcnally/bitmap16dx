@@ -515,16 +515,26 @@ void render(
           assets->fillPrompt,
           theme);
     }
+    if (state.showKeyboardPrompts) {
+      canvas.setTextSize(1);
+      canvas.setTextAlign(TextAlign::Left);
+      canvas.setTextColor(theme.text);
+      canvas.drawString("RET", layout.toolsX + 20, toolsY + 15);
+      canvas.drawString("BS", layout.toolsX + 20, toolsY + 27 + 15);
+      canvas.drawString("F", layout.toolsX + 20, toolsY + 54 + 17);
+    }
     if (paletteButton) {
       const int buttonY = toolsY + 81;
-      drawIndexedIcon(canvas, layout.toolsX, buttonY, assets->palette, theme);
+      drawIndexedIcon(
+          canvas, layout.toolsX, buttonY, assets->palette, theme,
+          state.palettePressed);
       canvas.setTextSize(1);
       canvas.setTextAlign(TextAlign::Left);
       canvas.setTextColor(theme.text);
       if (state.showControllerPrompts) {
         drawIndexedIcon(
             canvas, layout.toolsX + 19, buttonY + 14,
-            assets->palettePrompt, theme, false, 2);
+            assets->palettePrompt, theme);
       } else {
         canvas.drawString("P", layout.toolsX + 26, buttonY + 15);
       }
