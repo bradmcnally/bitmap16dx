@@ -22,6 +22,9 @@ constexpr Item kItems[] = {
     {"Shake undo", Action::ShakeUndoChanged},
     {"Save warnings", Action::SaveWarningsChanged},
     {"Indicator LED", Action::IndicatorMenuRequested},
+#ifdef BITMAP16_CARDPUTER_ZERO
+    {"Battery display", Action::BatteryDisplayChanged},
+#endif
     {"Cursor", Action::CursorStyleChanged},
     {"Bluetooth", Action::BluetoothRequested},
     {"Help", Action::HelpRequested},
@@ -157,6 +160,8 @@ const char* valueFor(
       return settings.shakeUndoEnabled ? "ON" : "OFF";
     case Action::SaveWarningsChanged:
       return settings.saveWarnings ? "ON" : "OFF";
+    case Action::BatteryDisplayChanged:
+      return settings.batteryDisplay ? "ON" : "OFF";
     case Action::CursorStyleChanged:
       return settings.cursorStyle == CursorStyle::Hand ? "HAND" : "ARROW";
     case Action::BluetoothRequested:
@@ -321,6 +326,9 @@ Action activate(
     case Action::SaveWarningsChanged:
       settings.saveWarnings = !settings.saveWarnings;
       return Action::SaveWarningsChanged;
+    case Action::BatteryDisplayChanged:
+      settings.batteryDisplay = !settings.batteryDisplay;
+      return action;
     case Action::CursorStyleChanged:
       settings.cursorStyle = settings.cursorStyle == CursorStyle::Arrow
           ? CursorStyle::Hand

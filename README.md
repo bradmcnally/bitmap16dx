@@ -54,6 +54,8 @@ palettes total (12 built-in and up to 20 custom).
 
 ## How to Use
 
+For the Cardputer Zero, see the [complete keyboard reference](platform_zero/README.md#cardputer-zero-keyboard-reference).
+
 ### Drawing Mode
 
 ![Drawing Interface Link](img/drawing_link.png)
@@ -202,9 +204,8 @@ A Cardputer-sized prototype board with Lego Technic-compatible mounting holes. D
 ## Current release
 
 The current hardware release targets the **M5Stack Cardputer ADV**. The
-repository also contains in-development SDL ports for Steam Deck, Linux
-desktop, and Cardputer Zero simulation, but those ports are not part of the
-current downloadable release.
+repository includes source builds for Steam Deck, Linux desktop, and Cardputer
+Zero. The downloadable firmware is for the ADV.
 
 The next ADV release is **v0.8.0 — The Blast Processing Update**. See
 [CHANGELOG.md](CHANGELOG.md) for the complete release notes and
@@ -246,6 +247,11 @@ To upload to an attached ADV:
 pio run -e m5stack-cardputer -t upload
 ```
 
+
+### Cardputer Zero device build
+
+See the [Cardputer Zero build and install guide](platform_zero/README.md)
+to build the Linux package and launch it from HOME.
 
 ### Desktop and Cardputer Zero simulator
 

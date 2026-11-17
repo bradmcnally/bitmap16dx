@@ -45,6 +45,7 @@ int main() {
   first.settings().cursorStyle = bitmap16::CursorStyle::Hand;
   first.settings().defaultGridSize = 16;
   first.settings().matrixEnabled = true;
+  first.settings().batteryDisplay = false;
   if (!first.saveSettings()) return 3;
 
   bitmap16::Editor restoredEditor;
@@ -56,7 +57,8 @@ int main() {
       restored.settings().theme != bitmap16::ThemeId::Dark ||
       restored.settings().cursorStyle != bitmap16::CursorStyle::Hand ||
       restored.settings().defaultGridSize != 16 ||
-      !restored.settings().matrixEnabled) {
+      !restored.settings().matrixEnabled ||
+      restored.settings().batteryDisplay) {
     return 5;
   }
   if (!restored.openSketch(0, restoredEditor) ||
@@ -162,6 +164,16 @@ int main() {
     return 11;
   }
 
+  // Existing version 4 files end after the cursor style.
+  const auto settingsPath = root / "settings.bin";
+  std::filesystem::resize_file(settingsPath, 16, error);
+  bitmap16::Editor legacyEditor;
+  bitmap16::Desktop::Workspace legacy;
+  if (error || !legacy.initialize(legacyEditor) ||
+      !legacy.settings().batteryDisplay ||
+      legacy.settings().theme != bitmap16::ThemeId::Dark) {
+    return 12;
+  }
   if (std::getenv("BITMAP16_KEEP_TEST_DATA") == nullptr) {
     std::filesystem::remove_all(root, error);
   }

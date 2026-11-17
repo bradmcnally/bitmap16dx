@@ -27,6 +27,10 @@
 #include "palettes.h"
 #include "workspace.h"
 
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#include "../platform_zero/native_io.h"
+#endif
+
 #ifndef PROGMEM
 #define PROGMEM
 #endif
@@ -41,6 +45,27 @@
 #endif
 
 namespace {
+
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+bitmap16::Zero::NativeIo nativeIo;
+#endif
+
+const Uint8* keyboardState() {
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  return nativeIo.keyboardState();
+#else
+  return SDL_GetKeyboardState(nullptr);
+#endif
+}
+
+int waitEvent(SDL_Event* event, int timeout = -1) {
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  return nativeIo.waitEvent(event, timeout);
+#else
+  return timeout < 0 ? SDL_WaitEvent(event)
+                     : SDL_WaitEventTimeout(event, timeout);
+#endif
+}
 
 enum class DesktopView {
   Canvas,
@@ -376,10 +401,18 @@ void drawUnsavedChangesModal(
   canvas.drawLine(
       discardX, optionsY + 9, discardX + 5, optionsY + 9, theme.text);
 #else
-  constexpr int discardWidth = 7 * 6;
-  constexpr int saveWidth = 4 * 6;
-  constexpr int cancelWidth = 10 * 6;
+#ifdef BITMAP16_CARDPUTER_ZERO
+  constexpr char discardLabel[] = "D DISCARD";
+  constexpr char saveLabel[] = "S SAVE";
+  constexpr int optionGap = 12;
+#else
+  constexpr char discardLabel[] = "DISCARD";
+  constexpr char saveLabel[] = "SAVE";
   constexpr int optionGap = 18;
+#endif
+  constexpr int discardWidth = (sizeof(discardLabel) - 1) * 6;
+  constexpr int saveWidth = (sizeof(saveLabel) - 1) * 6;
+  constexpr int cancelWidth = 10 * 6;
   constexpr int optionsWidth =
       discardWidth + optionGap + saveWidth + optionGap + cancelWidth;
   const int discardX =
@@ -389,8 +422,8 @@ void drawUnsavedChangesModal(
   const int optionsY = panelY + 34;
 
   canvas.setTextAlign(bitmap16::TextAlign::Left);
-  canvas.drawString("DISCARD", discardX, optionsY);
-  canvas.drawString("SAVE", saveX, optionsY);
+  canvas.drawString(discardLabel, discardX, optionsY);
+  canvas.drawString(saveLabel, saveX, optionsY);
   canvas.drawString("ESC CANCEL", cancelX, optionsY);
   canvas.drawLine(
       discardX, optionsY + 9, discardX + 5, optionsY + 9, theme.text);
@@ -399,6 +432,72 @@ void drawUnsavedChangesModal(
   canvas.drawLine(
       cancelX, optionsY + 9, cancelX + 17, optionsY + 9, theme.text);
 #endif
+}
+
+void drawResizeCanvasModal(
+    bitmap16::Canvas& canvas,
+    const bitmap16::Sketch& sketch,
+    const bitmap16::Settings& settings,
+    uint8_t selectedSize) {
+  const auto theme = helpTheme(settings);
+  bool hidesPixels = false;
+  if (selectedSize < sketch.gridSize) {
+    const auto layout = bitmap16::CanvasView::layoutFor(
+        canvas.width(), canvas.height(), sketch.gridSize);
+    const int pixels = selectedSize * layout.cellSize;
+    canvas.drawRect(layout.gridX, layout.gridY, pixels, pixels, 0x0000);
+    canvas.drawRect(layout.gridX + 1, layout.gridY + 1,
+                    pixels - 2, pixels - 2, 0xffff);
+    for (int y = 0; y < sketch.gridSize && !hidesPixels; ++y) {
+      for (int x = y < selectedSize ? selectedSize : 0;
+           x < sketch.gridSize; ++x) {
+        if (sketch.pixels[y][x] != 0) {
+          hidesPixels = true;
+          break;
+        }
+      }
+    }
+  }
+
+  const int panelWidth = std::min(252, canvas.width() - 16);
+  constexpr int panelHeight = 68;
+  const int panelX = (canvas.width() - panelWidth) / 2;
+  const int panelY = (canvas.height() - panelHeight) / 2;
+  const int centerX = canvas.width() / 2;
+  canvas.fillRect(panelX, panelY, panelWidth, panelHeight, theme.background);
+  canvas.drawRect(panelX, panelY, panelWidth, panelHeight, theme.text);
+  canvas.drawRect(panelX + 1, panelY + 1, panelWidth - 2, panelHeight - 2,
+                  theme.text);
+
+  canvas.setTextSize(1);
+  canvas.setTextAlign(bitmap16::TextAlign::Center);
+  canvas.setTextColor(theme.text);
+  canvas.drawString("RESIZE CANVAS", centerX, panelY + 8);
+  char label[40] = {};
+  std::snprintf(label, sizeof(label), "Current %ux%u",
+                sketch.gridSize, sketch.gridSize);
+  canvas.drawString(label, centerX, panelY + 19);
+
+  constexpr uint8_t sizes[] = {8, 16, 32};
+  for (int index = 0; index < 3; ++index) {
+    const uint8_t size = sizes[index];
+    const int x = centerX + (index - 1) * (panelWidth / 4);
+    const bool selected = size == selectedSize;
+    if (selected) {
+      canvas.fillRect(x - 21, panelY + 29, 42, 13, theme.text);
+    }
+    canvas.setTextColor(selected ? theme.background : theme.text);
+    std::snprintf(label, sizeof(label), "%ux%u", size, size);
+    canvas.drawString(label, x, panelY + 32);
+  }
+
+  canvas.setTextColor(theme.text);
+  if (hidesPixels) {
+    std::snprintf(label, sizeof(label), "Pixels outside %ux%u will be hidden",
+                  selectedSize, selectedSize);
+    canvas.drawString(label, centerX, panelY + 44);
+  }
+  canvas.drawString("ENTER APPLY   ESC CANCEL", centerX, panelY + 56);
 }
 
 const bitmap16::CanvasView::Assets& canvasAssets(
@@ -528,6 +627,12 @@ void present(
     SDL_Texture* texture,
     SDL_Renderer* renderer,
     uint8_t brightness) {
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  (void)texture;
+  (void)renderer;
+  (void)brightness;
+  nativeIo.present(canvas.pixels(), canvas.width(), canvas.height());
+#else
   SDL_UpdateTexture(
       texture,
       nullptr,
@@ -566,6 +671,7 @@ void present(
     SDL_RenderFillRect(renderer, nullptr);
   }
   SDL_RenderPresent(renderer);
+#endif
 }
 
 bool showBootScreen(
@@ -616,7 +722,7 @@ bool showBootScreen(
   const Uint32 startedAt = SDL_GetTicks();
   while (SDL_GetTicks() - startedAt <= kBootDurationMs) {
     SDL_Event event;
-    while (SDL_PollEvent(&event)) {
+    while (waitEvent(&event, 0)) {
       if (event.type == SDL_QUIT) return false;
       if (event.type == SDL_KEYDOWN &&
           event.key.keysym.sym == SDLK_ESCAPE) {
@@ -646,9 +752,23 @@ void renderCurrentView(
     bool rulersVisible,
     const bitmap16::Settings& settings,
     SDL_Texture* texture,
-    SDL_Renderer* renderer) {
+    SDL_Renderer* renderer,
+    uint8_t resizeGridSelection = 0) {
   if (view == DesktopView::Canvas) {
     const bitmap16::Sketch& sketch = editor.sketch();
+    const char* status = desktopStatus[0] == '\0' ? nullptr : desktopStatus;
+#ifdef BITMAP16_CARDPUTER_ZERO
+    char zoomStatus[16] = {};
+    if (status == nullptr && desktopCanvasViewport.cellSize != 0) {
+      const int baseCellSize = bitmap16::CanvasView::layoutFor(
+          canvas.width(), canvas.height(), sketch.gridSize).cellSize;
+      if (desktopCanvasViewport.cellSize > baseCellSize) {
+        std::snprintf(zoomStatus, sizeof(zoomStatus), "Zoom: %dx",
+                      desktopCanvasViewport.cellSize / baseCellSize);
+        status = zoomStatus;
+      }
+    }
+#endif
     const bitmap16::CanvasView::State state = {
         sketch.pixels,
         sketch.gridSize,
@@ -659,21 +779,23 @@ void renderCurrentView(
         editor.selectedColor(),
         rulersVisible,
         desktopMoveModeActive,
-        desktopStatus[0] == '\0' ? nullptr : desktopStatus,
-        platformBatteryPercent(),
+        status,
+        settings.batteryDisplay ? platformBatteryPercent() : -1,
         desktopDrawPressed,
         desktopErasePressed,
         desktopFillPressed,
         desktopCanvasViewport.cellSize,
         desktopCanvasViewport.x,
         desktopCanvasViewport.y,
-#ifdef BITMAP16_STEAM_DECK
-        true,
-        false,
-        desktopControllerPrompts,
+#if defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_CARDPUTER_ZERO)
+        true,  // Center status messages at the bottom of the screen.
 #else
         false,
+#endif
         false,
+#ifdef BITMAP16_STEAM_DECK
+        desktopControllerPrompts,
+#else
         false,
 #endif
         desktopPalettePressed,
@@ -756,6 +878,9 @@ void renderCurrentView(
         nullptr,
         &assets);
   }
+  if (resizeGridSelection != 0) {
+    drawResizeCanvasModal(canvas, editor.sketch(), settings, resizeGridSelection);
+  }
   present(canvas, texture, renderer, settings.displayBrightness);
   if (matrixSimulator != nullptr) {
     const bitmap16::Sketch& matrixSketch =
@@ -791,10 +916,20 @@ int main(int argc, char** argv) {
     }
   }
 
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  // The shared UI still uses SDL for timing and keycodes. Its window is virtual.
+  SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
+#endif
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
     SDL_Log("SDL_Init failed: %s", SDL_GetError());
     return 1;
   }
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  if (!nativeIo.open()) {
+    SDL_Quit();
+    return 1;
+  }
+#endif
   // Stick state is polled once per loop to provide controlled hold-repeat.
   // Per-motion events are redundant and can flood the queue on Steam Deck,
   // delaying navigation behind stale analog samples.
@@ -840,12 +975,17 @@ int main(int argc, char** argv) {
   // text entry. Bitmap16 uses key commands only and never needs text input.
   SDL_StopTextInput();
 #endif
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  const Uint32 rendererFlags = SDL_RENDERER_SOFTWARE;
+#else
+  const Uint32 rendererFlags = SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC;
+#endif
   SDL_Renderer* renderer = window == nullptr
       ? nullptr
       : SDL_CreateRenderer(
             window,
             -1,
-            SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+            rendererFlags);
   SDL_Texture* texture = renderer == nullptr
       ? nullptr
       : SDL_CreateTexture(
@@ -1196,7 +1336,7 @@ int main(int argc, char** argv) {
   bool mouseDrawHeld = false;
   bool mouseEraseHeld = false;
   bool pointerInsideCanvas = false;
-  const auto renderNow = [&]() {
+  const auto renderNow = [&](uint8_t resizeGridSelection = 0) {
     if (currentView != DesktopView::Canvas) {
       mouseDrawHeld = mouseEraseHeld = pointerInsideCanvas = false;
     }
@@ -1219,7 +1359,8 @@ int main(int argc, char** argv) {
         rulersVisible,
         settings,
         texture,
-        renderer);
+        renderer,
+        resizeGridSelection);
   };
   Uint32 memoryAnimationAt = SDL_GetTicks();
   const auto advanceMemoryAnimation = [&]() {
@@ -1292,6 +1433,7 @@ int main(int argc, char** argv) {
       previewOverride = nullptr;
     }
   };
+#ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
   const auto adjustDisplayBrightness = [&](int delta) {
     settings.displayBrightness = static_cast<uint8_t>(
         std::max(
@@ -1305,6 +1447,7 @@ int main(int argc, char** argv) {
   };
   SDL_SetWindowBrightness(
       window, static_cast<float>(settings.displayBrightness) / 100.0f);
+#endif
 
   const auto moveColorCursor = [&](int dx, int dy) {
     const int colorCount = editor.sketch().paletteSize;
@@ -1372,12 +1515,16 @@ int main(int argc, char** argv) {
     bool choiceMade = false;
     while (!choiceMade) {
       SDL_Event modalEvent;
-      if (SDL_WaitEvent(&modalEvent) == 0) {
+      if (waitEvent(&modalEvent) == 0) {
         continue;
       }
       if (modalEvent.type == SDL_KEYDOWN && modalEvent.key.repeat == 0) {
         const SDL_Keycode key = modalEvent.key.keysym.sym;
-        if (key == SDLK_s || key == SDLK_RETURN) {
+        if (key == SDLK_s
+#ifndef BITMAP16_CARDPUTER_ZERO
+            || key == SDLK_RETURN
+#endif
+        ) {
           choice = Choice::Save;
           choiceMade = true;
         } else if (key == SDLK_d) {
@@ -1427,6 +1574,45 @@ int main(int argc, char** argv) {
     renderNow();
     return true;
   };
+#ifdef BITMAP16_CARDPUTER_ZERO
+  const auto chooseGridSize = [&]() {
+    constexpr uint8_t sizes[] = {8, 16, 32};
+    const uint8_t currentSize = editor.sketch().gridSize;
+    int selection = currentSize == 8 ? 0 : currentSize == 16 ? 1 : 2;
+    const auto originalViewport = desktopCanvasViewport;
+    desktopCanvasViewport = {};
+    renderNow(sizes[selection]);
+
+    uint8_t chosenSize = currentSize;
+    SDL_Event modalEvent;
+    while (waitEvent(&modalEvent)) {
+      if (modalEvent.type == SDL_QUIT ||
+          (modalEvent.type == SDL_WINDOWEVENT &&
+           modalEvent.window.event == SDL_WINDOWEVENT_CLOSE)) {
+        SDL_PushEvent(&modalEvent);
+        break;
+      }
+      if (modalEvent.type != SDL_KEYDOWN) continue;
+      const SDL_Keycode key = modalEvent.key.keysym.sym;
+      if (key == SDLK_ESCAPE && !modalEvent.key.repeat) break;
+      if (key == SDLK_RETURN && !modalEvent.key.repeat) {
+        chosenSize = sizes[selection];
+        break;
+      }
+      if (key == SDLK_z || key == SDLK_LEFT) {
+        selection = std::max(0, selection - 1);
+      } else if (key == SDLK_c || key == SDLK_RIGHT) {
+        selection = std::min(2, selection + 1);
+      } else {
+        continue;
+      }
+      renderNow(sizes[selection]);
+    }
+
+    desktopCanvasViewport = originalViewport;
+    return editor.resizeGrid(chosenSize);
+  };
+#endif
   bool running = !smokeTest;
 #ifdef BITMAP16_STEAM_DECK
   unsigned previousTriggerMask = 0;
@@ -1447,7 +1633,7 @@ int main(int argc, char** argv) {
           }
         }
       }
-      const Uint8* keyboard = SDL_GetKeyboardState(nullptr);
+      const Uint8* keyboard = keyboardState();
       activationHeld =
           activationHeld ||
           keyboard[SDL_SCANCODE_RETURN] != 0 ||
@@ -1482,7 +1668,7 @@ int main(int argc, char** argv) {
         renderNow();
       }
     }
-    const Uint8* heldKeys = SDL_GetKeyboardState(nullptr);
+    const Uint8* heldKeys = keyboardState();
     const bool drawPressed = mouseDrawHeld ||
         heldKeys[SDL_SCANCODE_RETURN] != 0 ||
         heldKeys[SDL_SCANCODE_SPACE] != 0 ||
@@ -1673,9 +1859,23 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Charging
             ? 33
             : currentView == DesktopView::Memory ? 1 : 16;
-    const int eventAvailable = animatedView
-        ? SDL_WaitEventTimeout(&event, animationWait)
-        : SDL_WaitEvent(&event);
+    int eventWait = animatedView ? animationWait : -1;
+#ifdef BITMAP16_CARDPUTER_ZERO
+    const bool canvasStatus =
+        currentView == DesktopView::Canvas && desktopStatus[0] != '\0';
+    const bool previewStatus =
+        currentView == DesktopView::Preview && previewLabelUntil != 0;
+    if (canvasStatus || previewStatus) {
+      const Uint32 deadline =
+          canvasStatus ? desktopStatusUntil : previewLabelUntil;
+      const Uint32 now = SDL_GetTicks();
+      const int remaining = SDL_TICKS_PASSED(now, deadline)
+          ? 0
+          : static_cast<int>(deadline - now);
+      eventWait = eventWait < 0 ? remaining : std::min(eventWait, remaining);
+    }
+#endif
+    const int eventAvailable = waitEvent(&event, eventWait);
     if (eventAvailable == 0) {
       if (currentView == DesktopView::Charging) {
         bitmap16::ChargingView::update(chargingState, width, height);
@@ -1694,6 +1894,22 @@ int main(int argc, char** argv) {
       }
       continue;
     }
+
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    if (nativeIo.isBacklightEvent(event)) {
+      char message[32] = {};
+      std::snprintf(message, sizeof(message), "Brightness: %d%%",
+                    event.user.code);
+      if (currentView == DesktopView::Canvas) {
+        setDesktopStatus(message);
+        renderNow();
+      } else if (currentView == DesktopView::Preview) {
+        setPreviewLabel(message);
+        renderNow();
+      }
+      continue;
+    }
+#endif
 
 #ifdef BITMAP16_STEAM_DECK
     // Controller-generated key events have no window ID. Inspect the original
@@ -1730,7 +1946,7 @@ int main(int argc, char** argv) {
         if (event.button.button == SDL_BUTTON_LEFT) mouseDrawHeld = false;
         if (event.button.button == SDL_BUTTON_RIGHT) mouseEraseHeld = false;
       }
-      const Uint8* pointerKeys = SDL_GetKeyboardState(nullptr);
+      const Uint8* pointerKeys = keyboardState();
       const bool pointerDrawHeld = mouseDrawHeld ||
           pointerKeys[SDL_SCANCODE_RETURN] != 0 ||
 #ifndef BITMAP16_CARDPUTER_ZERO
@@ -2047,10 +2263,12 @@ int main(int argc, char** argv) {
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_DPAD_RIGHT) != 0);
     if (event.key.repeat != 0 && !arrow) continue;
-    const Uint8* keyboard = SDL_GetKeyboardState(nullptr);
+    const Uint8* keyboard = keyboardState();
     const bool moveHeld =
         keyboard[SDL_SCANCODE_M] != 0 || controllerMoveHeld;
+#ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
     const bool brightnessHeld = keyboard[SDL_SCANCODE_B] != 0;
+#endif
     const bool matrixHeld = keyboard[SDL_SCANCODE_L] != 0;
     const bool drawHeld = mouseDrawHeld ||
         keyboard[SDL_SCANCODE_RETURN] != 0 ||
@@ -2072,6 +2290,13 @@ int main(int argc, char** argv) {
     const bool plusKey =
         key == SDLK_PLUS || key == SDLK_EQUALS || key == SDLK_KP_PLUS;
     const bool minusKey = key == SDLK_MINUS || key == SDLK_KP_MINUS;
+#ifdef BITMAP16_CARDPUTER_ZERO
+    const bool zoomIn = plusKey || key == SDLK_PAGEUP;
+    const bool zoomOut = minusKey || key == SDLK_PAGEDOWN;
+#else
+    const bool zoomIn = plusKey;
+    const bool zoomOut = minusKey;
+#endif
     bool changed = false;
     const auto moveCanvasCursor = [&](int dx, int dy) {
       if (moveHeld) {
@@ -2173,9 +2398,11 @@ int main(int argc, char** argv) {
     } else if (currentView == DesktopView::Charging) {
       currentView = DesktopView::Canvas;
       changed = true;
+#ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
     } else if (brightnessHeld && (plusKey || minusKey)) {
       adjustDisplayBrightness(plusKey ? 5 : -5);
       changed = true;
+#endif
     } else if (matrixHeld && (plusKey || minusKey)) {
       settings.matrixBrightness = static_cast<uint8_t>(
           std::max(
@@ -2189,10 +2416,10 @@ int main(int argc, char** argv) {
 #ifndef BITMAP16_STEAM_DECK
     } else if (
         currentView == DesktopView::Canvas &&
-        (plusKey || minusKey)) {
+        (zoomIn || zoomOut)) {
       changed = bitmap16::CanvasView::adjustZoom(
           desktopCanvasViewport,
-          plusKey ? 1 : -1,
+          zoomIn ? 1 : -1,
           width,
           height,
           editor.sketch().gridSize,
@@ -2217,12 +2444,12 @@ int main(int argc, char** argv) {
 #endif
     } else if (
         currentView == DesktopView::Preview &&
-        (plusKey || minusKey)) {
+        (zoomIn || zoomOut)) {
       const bitmap16::Sketch& previewSketch =
           previewOverride == nullptr ? editor.sketch() : *previewOverride;
       changed = bitmap16::PreviewView::adjustZoom(
           previewState,
-          plusKey ? 1 : -1,
+          zoomIn ? 1 : -1,
           previewSketch.gridSize,
           std::min(width, height));
       if (changed) {
@@ -2473,7 +2700,15 @@ int main(int argc, char** argv) {
         settings.shakeUndoEnabled) {
       changed = editor.undo();
     } else if (currentView == DesktopView::Canvas && key == SDLK_g) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+      if (!chooseGridSize()) {
+        renderNow();
+        continue;
+      }
+      changed = true;
+#else
       changed = editor.toggleGridSize();
+#endif
       desktopCanvasViewport = {};
       char gridStatus[16] = {};
       std::snprintf(

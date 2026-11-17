@@ -133,6 +133,21 @@ int main() {
   require(editor.undo() && editor.sketch().pixels[0][2] == 0,
           "drawing after undo merged with old hold");
 
+  editor.reset(blank);
+  editor.setCursor(20, 20);
+  require(editor.draw(), "resize setup failed");
+  require(editor.resizeGrid(16), "explicit resize failed");
+  require(editor.sketch().gridSize == 16 && editor.cursorX() == 15 &&
+              editor.cursorY() == 15 && editor.sketch().pixels[20][20] == 1,
+          "resize did not clamp cursor or preserve hidden artwork");
+  require(!editor.resizeGrid(16) && !editor.resizeGrid(12),
+          "unchanged or unsupported size was applied");
+  require(editor.undo() && editor.sketch().gridSize == 32 &&
+              editor.sketch().pixels[20][20] == 1,
+          "explicit resize was not a single undo step");
+  require(editor.redo() && editor.sketch().gridSize == 16,
+          "explicit resize could not be redone");
+
   // Mouse/trackpad coordinates share the logical framebuffer and zoom viewport.
   for (const auto dimensions : {std::pair<int, int>{240, 135}, {320, 170}, {320, 200}}) {
     for (const uint8_t grid : {8, 16, 32}) {

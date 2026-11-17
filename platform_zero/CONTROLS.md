@@ -1,7 +1,8 @@
 # BitMap16 DX Cardputer Zero controls
 
-This document defines the physical keyboard mapping for the Cardputer Zero
-port of BitMap16 DX. The existing Cardputer ADV controls remain unchanged.
+This table compares Cardputer ADV and Cardputer Zero shortcuts. See the
+[Zero keyboard reference](README.md#cardputer-zero-keyboard-reference) for
+the full list by view.
 
 ## Design rules
 
@@ -19,7 +20,7 @@ port of BitMap16 DX. The existing Cardputer ADV controls remain unchanged.
 
 ## Canvas
 
-| Function | Cardputer ADV keys | Cardputer Zero proposal |
+| Function | Cardputer ADV keys | Cardputer Zero keys |
 |---|---|---|
 | Move up | `Up` | `F` or `Fn+F` |
 | Move down | `Down` | `X` or `Fn+X` |
@@ -43,9 +44,9 @@ port of BitMap16 DX. The existing Cardputer ADV controls remain unchanged.
 | Save as a new sketch | `Fn+S` | `Shift+S` |
 | Export scaled PNG | `X` | `Ctrl+X` |
 | Export logical-size PNG | `Fn+X` | `Ctrl+L` |
-| Change grid size | `G` | `G` |
+| Change grid size | `G` | `G` opens the picker. Left / Right selects, Enter applies, and Escape cancels. |
 | Toggle rulers | `R` | `R` |
-| Zoom in/out | `+` / `-` | `+` / `-` |
+| Zoom in/out | `+` / `-` | `Fn+L` / `Fn+M` |
 | Move artwork | `M` + arrow | `M` + `F/Z/X/C` |
 | Open/close Help | `H` or escape | `H` or escape |
 | Open/close Settings | `T` | `T` |
@@ -53,20 +54,20 @@ port of BitMap16 DX. The existing Cardputer ADV controls remain unchanged.
 | Open/close Palette | `P` | `P` |
 | Open/close Sketches | `O` | `O` |
 | Open charging display | `Fn+B` | `Ctrl+B` |
-| Adjust display brightness | `B` + `+/-` | `B` + `+/-` |
-| Toggle RGB matrix | `L` + Enter | `L` + Enter |
-| Adjust RGB matrix brightness | `L` + `+/-` | `L` + `+/-` |
+| Adjust display brightness | `B` + `+/-` | `Fn+U` / `Fn+I` |
+| Toggle RGB matrix | `L` + Enter | `L` + Enter (simulator) |
+| Adjust RGB matrix brightness | `L` + `+/-` | `L` + `+/-` (simulator) |
 
 `M+F/Z/X/C` is the only Zero artwork-movement form. Combining `M` with a
 firmware Fn-arrow would require three held keys and is not supported.
 
 ## Sketches
 
-| Function | Cardputer ADV keys | Cardputer Zero proposal |
+| Function | Cardputer ADV keys | Cardputer Zero keys |
 |---|---|---|
 | Navigate | Arrow keys | `F/Z/X/C` or `Fn+F/Z/X/C` |
 | Activate selected slot | OK/Enter | Enter |
-| Delete selected sketch | G0 | `Fn+Backspace` |
+| Delete selected sketch | G0 | Backspace or `Fn+Backspace` |
 | Restore most recently deleted sketch | `Z` | `U` |
 | Duplicate selected sketch | `Fn+S` | `Ctrl+S` |
 | Open slideshow | `V` | `V` |
@@ -74,7 +75,7 @@ firmware Fn-arrow would require three held keys and is not supported.
 
 ## Unsaved-changes prompt
 
-| Function | Cardputer ADV keys | Cardputer Zero proposal |
+| Function | Cardputer ADV keys | Cardputer Zero keys |
 |---|---|---|
 | Save and continue | `S` | `S` |
 | Discard and continue | `D` | `D` |
@@ -82,7 +83,7 @@ firmware Fn-arrow would require three held keys and is not supported.
 
 ## Palette
 
-| Function | Cardputer ADV keys | Cardputer Zero proposal |
+| Function | Cardputer ADV keys | Cardputer Zero keys |
 |---|---|---|
 | Previous palette | Left | `Z` or `Fn+Z` |
 | Next palette | Right | `C` or `Fn+C` |
@@ -96,7 +97,7 @@ firmware Fn-arrow would require three held keys and is not supported.
 
 ## Preview and slideshow
 
-| Function | Cardputer ADV keys | Cardputer Zero proposal |
+| Function | Cardputer ADV keys | Cardputer Zero keys |
 |---|---|---|
 | Previous sketch in slideshow | Left | `Z` or `Fn+Z` |
 | Next sketch in slideshow | Right | `C` or `Fn+C` |
@@ -105,23 +106,23 @@ firmware Fn-arrow would require three held keys and is not supported.
 | Select white background | `2` | `2` |
 | Select light-gray background | `3` | `3` |
 | Select dark-gray background | `4` | `4` |
-| Zoom in/out | `+` / `-` | `+` / `-` |
-| Adjust display brightness | `B` + `+/-` | `B` + `+/-` |
+| Zoom in/out | `+` / `-` | `Fn+L` / `Fn+M` |
+| Adjust display brightness | `B` + `+/-` | `Fn+U` / `Fn+I` |
 | Close Preview | `V` or Escape | `V` or Escape |
 
 ## Settings
 
-| Function | Cardputer ADV keys | Cardputer Zero proposal |
+| Function | Cardputer ADV keys | Cardputer Zero keys |
 |---|---|---|
 | Move up | Up | `F` or `Fn+F` |
 | Move down | Down | `X` or `Fn+X` |
 | Change or activate setting | Left, Right, OK/Enter, or Space | `Z`, `C`, Enter, or Space |
 | Return from submenu | Escape | Escape |
-| Close Settings | Escape | Escape |
+| Close Settings | Escape | `T` or Escape |
 
 ## Help and charging display
 
-| Function | Cardputer ADV keys | Cardputer Zero proposal |
+| Function | Cardputer ADV keys | Cardputer Zero keys |
 |---|---|---|
 | Scroll Help up | Up | `F` or `Fn+F` |
 | Scroll Help down | Down | `X` or `Fn+X` |

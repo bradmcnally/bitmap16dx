@@ -1,8 +1,9 @@
 # Cardputer Zero Linux target
 
 Cardputer Zero uses a Raspberry Pi CM0 running 64-bit Linux. It is not an
-ESP32/PlatformIO target. This target reuses the SDL2 shell at the device's
-native 320x170 landscape resolution and packages it for APPLaunch.
+ESP32/PlatformIO target. This target shares the simulator's UI, writes
+RGB565 frames directly to the LCD, and reads the keypad through Linux evdev.
+The Debian package installs an entry in APPLaunch.
 
 ## Build on Cardputer Zero
 
@@ -20,10 +21,10 @@ cmake --preset zero-device
 cmake --build --preset zero-device
 ```
 
-Run directly:
+Run directly as the regular device user, with access to the LCD and keypad:
 
 ```sh
-SDL_VIDEODRIVER=wayland ./build_zero_device/bitmap16dx_desktop
+./build_zero_device/bitmap16dx_desktop
 ```
 
 Create an APPLaunch-compatible Debian package:
@@ -35,10 +36,14 @@ cpack
 
 Install the generated `arm64.deb` with `sudo dpkg -i`.
 
-The launcher probes Wayland first, then KMSDRM, and finally SDL's offscreen
-backend. Hardware validation is still required for the keyboard mappings,
-battery reporting, the BMM150 geomagnetic sensor, and the Grove RGB matrix
-signal adapter.
+Open BitMap16 DX from HOME. Press `Q` to quit and release the keypad to
+the system. If the app does not open, inspect `/tmp/bitmap16dx.log`. The
+launch user needs write access to `/dev/fb_lcd` (or `/dev/fb0`) and read
+access to the keypad's input event device. The brightness shortcut also
+requires write access to `/sys/class/backlight/backlight/brightness`.
+Hardware validation is still required for the keyboard mappings, battery
+reporting, the BMM150 geomagnetic sensor, and the Grove RGB matrix signal
+adapter.
 
 ## Workspace and controls
 
@@ -57,33 +62,81 @@ Settings and sketches persist between launches in:
 Set `BITMAP16_DATA_DIR` to use a different writable location. If
 `XDG_DATA_HOME` is set, the default is `$XDG_DATA_HOME/bitmap16dx`.
 
-The `zero` and `zero-device` presets enable the Cardputer Zero input profile.
-The complete physical-key mapping is documented in
-[`CONTROLS.md`](CONTROLS.md).
+### Cardputer Zero keyboard reference
 
-- `F`, `Z`, `X`, and `C`: Up, Left, Down, and Right in every navigable view
-- `Fn+F/Z/X/C`: firmware arrow alternatives; use desktop arrow keys to
-  simulate them
-- `Shift+F/Z/X/C`: jump to an artwork edge while zoomed
-- Enter: draw or activate; Backspace: erase one pixel
-- `Fn+Backspace` (Delete): clear Canvas or delete the selected saved sketch
-- `1`-`8`: colors 1-8; `Fn+1`-`Fn+8` (`F1`-`F8`): colors 9-16
-- `Ctrl+F`: fill; `E`: erase fill; `Ctrl+Z`: undo; `Ctrl+Y`: redo
-- `I`: next color; `G`: grid size; `R`: rulers; `+` / `-`: zoom
-- Hold `M` with `F/Z/X/C` to move the artwork
-- `Ctrl+S`: save; `Shift+S`: save as a new sketch
-- `Ctrl+X`: export at 128×128; `Ctrl+L`: export at logical grid size
-- `H`, `T`, `V`, `P`, and `O`: Help, Settings, Preview, Palette, and Sketches
-- `Ctrl+B`: charging display
-- Hold `B` with `+` or `-`: display brightness
-- Hold `L` with Enter: matrix on/off; hold `L` with `+` or `-`: matrix
-  brightness
-- Escape: return to Canvas; `Q`: quit
+Use `Ctrl` for BitMap16 DX commands such as save, undo, and export. Use
+`Fn` for shortcuts that use the Zero's arrow, function, Delete, Page Up,
+Page Down, or backlight keys.
 
-In Sketches, Delete removes the selected sketch, `U` restores the most recent
-deletion, `Ctrl+S` duplicates the selected sketch, and `V` opens the saved-
-sketch slideshow. Slideshow Left/Right moves between sketches and Space
-toggles three-second auto-advance.
+| Direction | Keys |
+|---|---|
+| Up | `F` or `Fn+F` |
+| Left | `Z` or `Fn+Z` |
+| Down | `X` or `Fn+X` |
+| Right | `C` or `Fn+C` |
+
+#### General
+
+| Key | Action |
+|---|---|
+| `H` or `Fn+H` | Toggle Help. Use Up and Down to scroll. |
+| `T` | Toggle Settings. Use Up and Down to select a row, then Left, Right, Enter, or Space to change or activate it. |
+| `V` | Toggle Preview. In Sketches, open the saved-sketch slideshow. |
+| `P` | Toggle Palette. |
+| `O` | Toggle Sketches. |
+| `D` | Return to Canvas. |
+| `Ctrl+B` | Open the charging display. Press a regular key to return to Canvas. |
+| `Fn+U` / `Fn+I` | Dim / brighten the LCD when the app has access to the backlight control. |
+| Escape | Go back. In Help, return to the previous view. In a slideshow, return to Sketches. At startup, skip the splash screen. |
+| `Q` | Quit. At the unsaved-changes prompt, use `S` to save, `D` to discard, or Escape to cancel. |
+
+#### Canvas
+
+| Key | Action |
+|---|---|
+| Direction keys | Move the cursor. Hold a direction to repeat. |
+| Enter / Backspace | Draw / erase a pixel. Hold the key while moving to draw or erase a line. |
+| `Ctrl+F` / `E` | Flood fill / erase fill. |
+| `Fn+Backspace` | Clear the canvas. |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo. |
+| `1`–`8` / `Fn+1`–`Fn+8` | Select colors 1–8 / 9–16 when available in the current palette. |
+| `I` | Select the next color. |
+| `G` | Open Resize Canvas. Use Left and Right to select 8×8, 16×16, or 32×32, then Enter to apply or Escape to cancel. |
+| `R` | Toggle rulers. |
+| `Fn+L` / `Fn+M` | Zoom in / out. Canvas starts at minimum zoom and shows the zoom level while zoomed. |
+| `Shift+F/Z/X/C` | Jump to the corresponding artwork edge while zoomed. |
+| `M+F/Z/X/C` | Move the artwork in the corresponding direction. |
+| `Ctrl+S` / `Shift+S` | Save / save as a new sketch. |
+| `Ctrl+X` / `Ctrl+L` | Export a 128×128 PNG / export at the sketch's native grid size. |
+
+#### Sketches, Palette, and Preview
+
+| View | Key | Action |
+|---|---|---|
+| Sketches | Direction keys / Enter | Select and open a sketch or create one using the `+` tile. |
+| Sketches | Backspace or `Fn+Backspace` | Delete the selected saved sketch. |
+| Sketches | `U` / `Ctrl+S` | Restore the most recently deleted sketch / duplicate the selected sketch. |
+| Palette | Left and Right / Enter | Browse and apply palettes. |
+| Palette | `4`, `8`, `1`, `U`, `0` | Filter to 4, 8, or 16 colors or user palettes, or clear all filters. |
+| Preview and slideshow | `Fn+L` / `Fn+M` | Zoom in / out. |
+| Preview and slideshow | `1`, `2`, `3`, `4` | Choose a black, white, gray, or dark-gray background. |
+| Slideshow | Left and Right / Space | Browse saved sketches / toggle three-second auto-advance. |
+
+The resize picker outlines the part of the canvas that will stay visible
+when shrinking. It warns if the new grid hides drawn pixels. Resize preserves
+those pixels and can be undone with `Ctrl+Z`. **Grid default** in Settings
+sets the starting size for new sketches.
+
+In Settings, set **Battery display** to **Off** to hide the Canvas battery
+icon. The setting defaults to **On** and persists between launches.
+
+In the Zero simulator, use desktop arrows for the `Fn` arrow combinations,
+`F1`–`F8` for colors 9–16, Delete for `Fn+Backspace`, and Page Up and Page
+Down for `Fn+L` and `Fn+M`. Use `B` with `+` or `-` for simulated display
+brightness. In the RGB matrix simulator, use `L+Enter` to toggle the matrix
+and hold `L` with `+` or `-` to adjust its brightness.
+
+See the [ADV and Zero key comparison](CONTROLS.md) for platform differences.
 
 Memory starts with a `+` tile for a new sketch, followed by saved sketches.
 The newest saved sketch opens automatically on the next launch.

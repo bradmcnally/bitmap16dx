@@ -35,7 +35,8 @@ std::filesystem::path dataRoot() {
   return std::filesystem::temp_directory_path() / "bitmap16dx";
 }
 
-std::array<uint8_t, 16> encodeSettings(const Settings& settings) {
+// Version 4 files may include an optional trailing battery-display setting.
+std::array<uint8_t, 17> encodeSettings(const Settings& settings) {
   return {
       'B', '1', '6', 'S', 4,
       static_cast<uint8_t>(settings.theme),
@@ -49,6 +50,7 @@ std::array<uint8_t, 16> encodeSettings(const Settings& settings) {
       static_cast<uint8_t>(settings.matrixEnabled ? 1 : 0),
       static_cast<uint8_t>(settings.saveWarnings ? 1 : 0),
       static_cast<uint8_t>(settings.cursorStyle),
+      static_cast<uint8_t>(settings.batteryDisplay ? 1 : 0),
   };
 }
 
@@ -78,6 +80,7 @@ bool decodeSettings(
   settings.cursorStyle = data[4] >= 4 && data.size() >= 16
       ? static_cast<CursorStyle>(data[15])
       : CursorStyle::Arrow;
+  settings.batteryDisplay = data[4] < 4 || data.size() < 17 || data[16] != 0;
   settings = normalizeSettings(settings);
   return true;
 }

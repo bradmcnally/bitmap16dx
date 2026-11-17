@@ -33,6 +33,7 @@ enum class Action : uint8_t {
   BluetoothRequested,
   HelpRequested,
   QuitRequested,
+  BatteryDisplayChanged,
 };
 
 struct State {

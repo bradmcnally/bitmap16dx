@@ -382,7 +382,7 @@ void render(
   cutGridCorners(canvas, layout, theme);
 
   const int columns = state.paletteSize > 8 ? 2 : 1;
-#ifdef BITMAP16_STEAM_DECK
+#if defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_CARDPUTER_ZERO)
   const int paletteStartX = layout.paletteX;
 #else
   const int paletteStartX =
@@ -561,17 +561,23 @@ void render(
       }
     }
     const bool zoomed = cellSize > layout.cellSize;
-    if (state.batteryPercent >= 0 && !zoomed) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+    constexpr bool batteryAtTopRight = true;
+#else
+    constexpr bool batteryAtTopRight = false;
+#endif
+    if (state.batteryPercent >= 0 && (batteryAtTopRight || !zoomed)) {
       int batteryStage = 0;
       if (state.batteryPercent >= 90) batteryStage = 3;
       else if (state.batteryPercent >= 50) batteryStage = 2;
       else if (state.batteryPercent >= 10) batteryStage = 1;
-      drawIndexedIcon(
-          canvas,
-          layout.toolsX,
-          auxiliaryY,
-          assets->battery[batteryStage],
-          theme);
+      const Icon& icon = assets->battery[batteryStage];
+      constexpr int margin = 5;
+      const int batteryX = batteryAtTopRight
+          ? canvas.width() - icon.width - margin
+          : layout.toolsX;
+      const int batteryY = batteryAtTopRight ? margin : auxiliaryY;
+      drawIndexedIcon(canvas, batteryX, batteryY, icon, theme);
     }
 
     if (zoomed) {

@@ -193,9 +193,14 @@ bool Editor::shift(int dx, int dy, bool saveUndoState) {
 }
 
 bool Editor::toggleGridSize() {
+  return resizeGrid(
+      sketch_.gridSize == 8 ? 16 : sketch_.gridSize == 16 ? 32 : 8);
+}
+
+bool Editor::resizeGrid(uint8_t size) {
+  if (!isSupportedGridSize(size) || size == sketch_.gridSize) return false;
   saveUndo();
-  sketch_.gridSize =
-      sketch_.gridSize == 8 ? 16 : sketch_.gridSize == 16 ? 32 : 8;
+  sketch_.gridSize = size;
   setCursor(cursorX_, cursorY_);
   return true;
 }

@@ -40,7 +40,11 @@ constexpr Item kItems[] = {
     {"Settings", "T", "T", 1, false, false},
     {"Export", "X", "Ctrl X", 1, false, false},
     {"Logical PNG", "Fn X", "Ctrl L", 1, false, false},
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    {"Brightness", "B +/-", "Fn U/I", 1, false, false},
+#else
     {"Brightness", "B +/-", "B +/-", 1, false, false},
+#endif
     {"Charge", "Fn B", "Ctrl B", 1, false, true},
     {"RGB on/off", "L Ok", "L Enter", 2, true, false},
     {"RGB Bright", "L +/-", "L +/-", 2, true, false},
