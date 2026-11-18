@@ -8,18 +8,26 @@ namespace bitmap16 {
 namespace PaletteView {
 
 constexpr float kInsertionDurationMs = 520.0f;
+#if defined(BITMAP16_LOSPEC) || defined(BITMAP16_CARDPUTER_ZERO) || defined(BITMAP16_STEAM_DECK)
+constexpr int kMaximumEntries = 128;
+#else
 constexpr int kMaximumEntries = 32;
+#endif
 
 struct Entry {
   const uint16_t* colors = nullptr;
   const char* name = nullptr;
   uint8_t size = 16;
   bool user = false;
+  const char* author = nullptr;
+  int likes = -1;
 };
 
 struct Catalog {
   const Entry* entries = nullptr;
   int count = 0;
+  const char* title = "PALETTES";
+  const char* emptyMessage = "NO PALETTES";
 };
 
 struct State {

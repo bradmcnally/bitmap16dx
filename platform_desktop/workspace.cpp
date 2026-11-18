@@ -396,7 +396,7 @@ bool Workspace::reloadUserPalettes() {
   }
   std::sort(candidates.begin(), candidates.end());
   for (const auto& path : candidates) {
-    if (userPalettes_.size() >= 20) break;
+    if (userPalettes_.size() >= kMaximumUserPalettes) break;
     std::ifstream input(path, std::ios::binary);
     const std::string contents(
         (std::istreambuf_iterator<char>(input)),
@@ -420,6 +420,21 @@ bool Workspace::reloadUserPalettes() {
           [](unsigned char value) {
             return static_cast<char>(std::toupper(value));
           });
+      if (contents.rfind("// Lospec palette\n", 0) == 0) {
+        std::istringstream metadata(contents);
+        std::string line;
+        while (std::getline(metadata, line) && line.compare(0, 3, "// ") == 0) {
+          if (line.compare(0, 9, "// Name: ") == 0 && line.size() > 9) {
+            palette.name = line.substr(9, 80);
+          } else if (line.compare(0, 11, "// Author: ") == 0) {
+            palette.author = line.substr(11, 80);
+          } else if (line.compare(0, 10, "// Likes: ") == 0) {
+            std::istringstream count(line.substr(10));
+            int likes = -1;
+            if (count >> likes && likes >= 0) palette.likes = likes;
+          }
+        }
+      }
       userPalettes_.push_back(std::move(palette));
     }
   }

@@ -1,0 +1,6 @@
+#pragma once
+// Generated in the build folder. Never commit a release credential.
+namespace bitmap16 { namespace Lospec {
+inline constexpr char kBundledApiKey[] = { @BITMAP16_LOSPEC_KEY_BYTES@ 0 };
+inline constexpr char kSharedFeedUrl[] = { @BITMAP16_LOSPEC_FEED_BYTES@ 0 };
+} }

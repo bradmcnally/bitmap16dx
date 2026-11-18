@@ -11,12 +11,20 @@
 namespace bitmap16 {
 namespace Desktop {
 
+#if defined(BITMAP16_CARDPUTER_ZERO) || defined(BITMAP16_STEAM_DECK)
+constexpr std::size_t kMaximumUserPalettes = 116;
+#else
+constexpr std::size_t kMaximumUserPalettes = 20;
+#endif
+
 class Workspace {
  public:
   struct UserPalette {
     std::array<uint16_t, 16> colors = {};
     uint8_t size = 0;
     std::string name;
+    std::string author;
+    int likes = -1;
   };
 
   bool initialize(Editor& editor);

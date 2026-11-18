@@ -11,7 +11,7 @@ Install the native build dependencies:
 
 ```sh
 sudo apt update
-sudo apt install cmake build-essential libsdl2-dev
+sudo apt install cmake build-essential libsdl2-dev libcurl4-openssl-dev ca-certificates
 ```
 
 Configure and build:
@@ -143,6 +143,43 @@ The newest saved sketch opens automatically on the next launch.
 
 Copy Lospec `.hex` files containing 4, 8, or 16 colors into `palettes/`.
 Opening the Palette view reloads them. The `U` filter shows user palettes.
+The Zero supports up to 116 saved user palettes, alongside the 12 built-in
+palettes.
+
+### New palettes from Lospec
+
+In Palette, press `L` for Lospec, then `R` to refresh. Use `+` and `-` to
+adjust the minimum likes in steps of five (default: 10). Left/Right browse
+the same cartridges as local palettes; Enter saves the selected palette and
+applies it with the insertion animation. Press `L` to return to local palettes.
+The existing `4`, `8`, `1`, and `0` color filters also work in Lospec.
+Saved palettes are omitted from the new-palette feed.
+
+The newest 20 matching palettes are shown from the fetched results. Results
+and the like threshold persist locally. Opening Lospec or changing the
+threshold uses the cache without a network request. Refresh runs in the
+background, at most once a minute, and a failed refresh keeps the previous
+cache. Saved palettes remain available offline.
+
+For releases, use the shared [Cloudflare palette feed](../services/lospec-feed/README.md).
+Your key stays in a Cloudflare secret; app users do not need a Lospec account.
+Build with the public feed URL:
+
+```sh
+cmake --preset zero -DBITMAP16_LOSPEC_FEED_URL=https://YOUR-WORKER.workers.dev/palettes.json
+```
+
+For device packaging from your Mac, set `BITMAP16_LOSPEC_FEED_URL` when
+running `platform_zero/device.sh package`. The script forwards that URL to
+the device build. The hosted feed is one request per refresh.
+
+For direct API development without hosting, put your key alone on one line
+in `~/.local/share/bitmap16dx/lospec-key.txt`. The build can bundle that file;
+override its location with `-DBITMAP16_LOSPEC_KEY_FILE=/absolute/path/to/key.txt`.
+Do not commit the key. Direct mode checks up to three batches of 100, stopping
+at 20 unsaved matches. `BITMAP16_LOSPEC_API_KEY` or `lospec-key.txt` in the
+active data folder can override the bundled key for testing. A hosted-feed
+build does not bundle or send a Lospec key.
 
 ## Complete simulator validation
 

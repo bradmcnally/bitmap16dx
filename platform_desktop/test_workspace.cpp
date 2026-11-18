@@ -163,6 +163,18 @@ int main() {
       restored.userPalettes()[0].name != "TEST PALETTE") {
     return 11;
   }
+  {
+    std::ofstream palette(root / "palettes" / "lospec-sample.hex");
+    palette << "// Lospec palette\n// Name: A real palette title\n"
+            << "// Author: Palette creator\n// Likes: 42\n"
+            << "ff0000\n00ff00\n0000ff\nffffff\n";
+  }
+  if (!restored.reloadUserPalettes() || restored.userPalettes().size() != 2 ||
+      restored.userPalettes()[0].name != "A real palette title" ||
+      restored.userPalettes()[0].author != "Palette creator" ||
+      restored.userPalettes()[0].likes != 42) {
+    return 13;
+  }
 
   // Existing version 4 files end after the cursor style.
   const auto settingsPath = root / "settings.bin";

@@ -12,7 +12,7 @@ Build on an x86-64 Linux machine with SDL2 development files installed:
 
 ```sh
 sudo apt update
-sudo apt install cmake build-essential libsdl2-dev
+sudo apt install cmake build-essential libsdl2-dev libcurl4-openssl-dev ca-certificates
 
 cmake --preset steamdeck
 cmake --build --preset steamdeck
@@ -33,6 +33,8 @@ build_steamdeck/bitmap16dx_desktop --windowed
 A macOS build made with this preset is useful for compilation and controller
 testing on macOS, but it cannot run on Steam Deck. Build the executable on
 x86-64 Linux for sideloading.
+Include `third_party/picojson/picojson.h` with distributed builds to retain
+the bundled JSON reader's license notice.
 
 ## Sideload
 
@@ -100,6 +102,33 @@ When a save warning appears, `A` saves, `B` returns without continuing, and
 `X` discards the changes and continues.
 
 Keyboard controls remain available in this quick build.
+
+## Lospec palettes
+
+In Palettes (`R3`), press `Y` to switch between local and Lospec cartridges.
+Press `X` to refresh, `LB` / `RB` to decrease/increase the minimum likes, and
+`A` to save and apply a palette. Left/right stick or D-pad browses the
+cartridges. Keyboard equivalents are `P`, `L`, `R`, `-` / `+`, and Enter.
+The default minimum is 10 likes; only 4-, 8-, and 16-color palettes appear.
+Up to 20 unsaved matches are shown in newest-first order. Results persist
+offline and saved palettes join the local cartridge collection (up to 116
+user palettes). Refresh is manual and runs in the background.
+
+For the Steam release, deploy the [shared Cloudflare feed](../services/lospec-feed/README.md)
+and configure its public URL before building:
+
+```sh
+cmake --preset steamdeck \
+  -DBITMAP16_LOSPEC_FEED_URL=https://YOUR-WORKER.workers.dev/palettes.json
+cmake --build --preset steamdeck
+```
+
+This build contains the public feed URL and no Lospec key. Players do not
+need a Lospec account. Without a feed URL, direct API development uses the
+same optional key setup as the [Zero build](../platform_zero/README.md#new-palettes-from-lospec).
+
+## Trackpad and additional controls
+
 For pointer control, set the **left trackpad** to **Mouse** in Steam Input and
 bind its click to **Left Mouse Click**, retaining the other gamepad bindings.
 In Gaming Mode, select Bitmap16 DX in the library, open the controller icon,

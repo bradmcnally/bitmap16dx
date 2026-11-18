@@ -1,0 +1,11 @@
+name = "bitmap16dx-palettes"
+main = "worker.mjs"
+compatibility_date = "2026-11-17"
+
+[triggers]
+crons = ["0 */6 * * *"]
+
+[[kv_namespaces]]
+binding = "PALETTES"
+# Replace with the ID printed by: npx wrangler kv namespace create PALETTES
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"

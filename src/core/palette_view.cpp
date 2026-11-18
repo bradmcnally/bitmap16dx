@@ -343,7 +343,7 @@ void render(
   canvas.setTextAlign(TextAlign::Left);
   canvas.setTextSize(1);
   canvas.setTextColor(theme.text);
-  canvas.drawString("PALETTES", 4, 4);
+  canvas.drawString(catalog.title, 4, 4);
 
   char filter[20] = {};
   if (state.filterSize != 0 && state.userOnly) {
@@ -362,7 +362,11 @@ void render(
     canvas.setTextAlign(TextAlign::Center);
     canvas.setTextColor(theme.textSecondary);
     canvas.drawString(
-        "NO PALETTES", canvas.width() / 2, canvas.height() / 2);
+        catalog.emptyMessage, canvas.width() / 2, canvas.height() / 2);
+    if (statusMessage != nullptr) {
+      canvas.setTextAlign(TextAlign::Left);
+      canvas.drawString(statusMessage, 3, canvas.height() - 11);
+    }
     return;
   }
 
@@ -409,6 +413,15 @@ void render(
       canvas.setTextColor(theme.text);
       canvas.drawString(
           label, centerX, centerY + kCartridgeHeight / 2 + 6);
+      if (entry.likes >= 0 && canvas.height() >= 170) {
+        char details[48] = {};
+        std::snprintf(details, sizeof(details), "%.28s  %d likes",
+                      entry.author == nullptr || entry.author[0] == '\0'
+                          ? "Lospec" : entry.author,
+                      entry.likes);
+        canvas.setTextColor(theme.textSecondary);
+        canvas.drawString(details, centerX, centerY + kCartridgeHeight / 2 + 18);
+      }
     }
     if (selected && state.insertionAnimating) {
       drawImpactSparks(
