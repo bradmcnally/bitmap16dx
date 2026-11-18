@@ -177,7 +177,7 @@ if(BITMAP16_CARDPUTER_ZERO_DEVICE)
     DESTINATION share/APPLaunch/applications
   )
   install(
-    FILES img/bitmap16dx.png
+    FILES platform_zero/bitmap16dx.png
     DESTINATION share/APPLaunch/share/images
     RENAME bitmap16dx.png
   )

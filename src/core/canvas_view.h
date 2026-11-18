@@ -37,6 +37,7 @@ struct State {
   bool showControllerPrompts = false;
   bool palettePressed = false;
   bool showKeyboardPrompts = false;
+  bool batteryCharging = false;
 };
 
 struct Theme {
@@ -74,6 +75,7 @@ struct Assets {
   Icon fillPrompt;
   Icon palette;
   Icon palettePrompt;
+  Icon chargingPlug{};
 };
 
 struct Layout {

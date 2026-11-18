@@ -35,6 +35,7 @@ private:
   int keyboard_ = -1;
   uint8_t* mapping_ = nullptr;
   std::size_t mappingSize_ = 0;
+  bool directWrite_ = false;
   fb_fix_screeninfo fixed_{};
   fb_var_screeninfo mode_{};
   std::array<Uint8, SDL_NUM_SCANCODES> keys_{};

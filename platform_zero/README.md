@@ -45,6 +45,23 @@ Hardware validation is still required for the keyboard mappings, battery
 reporting, the BMM150 geomagnetic sensor, and the Grove RGB matrix signal
 adapter.
 
+## Package and reinstall from your Mac
+
+After installing the build dependencies on the Zero, run these commands from
+the BitMap16 DX source folder on your Mac. Replace `pi@cardputerzero.local`
+with your Zero's username and IP address if needed.
+
+```sh
+./platform_zero/device.sh package pi@cardputerzero.local
+./platform_zero/device.sh install pi@cardputerzero.local
+```
+
+The first command builds on the Zero and saves the resulting package locally
+as `build_zero_device/bitmap16dx_arm64.deb`. Run it again when the source
+changes. The second command copies and reinstalls the cached package, including
+rebuilds with the same version. Quit BitMap16 DX before installing and reopen
+it from HOME afterward.
+
 ## Workspace and controls
 
 Settings and sketches persist between launches in:
@@ -128,7 +145,8 @@ those pixels and can be undone with `Ctrl+Z`. **Grid default** in Settings
 sets the starting size for new sketches.
 
 In Settings, set **Battery display** to **Off** to hide the Canvas battery
-icon. The setting defaults to **On** and persists between launches.
+icon. The plug next to the battery appears while the Zero reports charging.
+The setting defaults to **On** and persists between launches.
 
 In the Zero simulator, use desktop arrows for the `Fn` arrow combinations,
 `F1`–`F8` for colors 9–16, Delete for `Fn+Backspace`, and Page Up and Page

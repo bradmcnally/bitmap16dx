@@ -31,6 +31,9 @@ constexpr Item kItems[] = {
     {"Clear", "G0", "Fn Bksp", 0, false, false},
     {"Preview", "V", "V", 0, false, false},
     {"Grid size", "G", "G", 0, false, false},
+#ifdef BITMAP16_CARDPUTER_ZERO
+    {"Zoom in/out", "", "Fn+L/M", 0, false, false},
+#endif
     {"Grid ruler", "R", "R", 0, false, false},
     {"Open", "O", "O", 1, false, false},
     {"Undo", "Z", "Ctrl Z", 1, false, false},

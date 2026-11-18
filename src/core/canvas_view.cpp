@@ -578,6 +578,11 @@ void render(
           : layout.toolsX;
       const int batteryY = batteryAtTopRight ? margin : auxiliaryY;
       drawIndexedIcon(canvas, batteryX, batteryY, icon, theme);
+      if (state.batteryCharging) {
+        const Icon& plug = assets->chargingPlug;
+        drawIndexedIcon(
+            canvas, batteryX - plug.width - 2, batteryY + 2, plug, theme);
+      }
     }
 
     if (zoomed) {

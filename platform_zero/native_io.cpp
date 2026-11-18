@@ -185,12 +185,45 @@ bool NativeIo::open() {
     return false;
   }
   backlightEventType_ = SDL_RegisterEvents(1);
+  const char* directWrite = SDL_getenv("BITMAP16_FB_WRITE");
+  directWrite_ = directWrite == nullptr || std::strcmp(directWrite, "0") != 0;
+  SDL_Log("Zero LCD output: %s", directWrite_ ? "direct write" : "mapped");
   SDL_Log("Zero LCD: %ux%u RGB565, keypad acquired", mode_.xres, mode_.yres);
   return true;
 }
 
 void NativeIo::present(
     const uint16_t* pixels, int width, int height) {
+  if (directWrite_) {
+    if (static_cast<unsigned>(width) == mode_.xres &&
+        static_cast<unsigned>(height) == mode_.yres &&
+        mode_.xoffset == 0 &&
+        fixed_.line_length == mode_.xres * sizeof(uint16_t)) {
+      const auto* bytes = reinterpret_cast<const uint8_t*>(pixels);
+      const std::size_t frameSize = std::size_t{mode_.yres} * fixed_.line_length;
+      const auto origin =
+          static_cast<off_t>(std::size_t{mode_.yoffset} * fixed_.line_length);
+      std::size_t written = 0;
+      while (written < frameSize) {
+        const ssize_t count = pwrite(
+            framebuffer_, bytes + written, frameSize - written,
+            origin + static_cast<off_t>(written));
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+          SDL_Log("Zero LCD direct write failed: %s",
+                  count < 0 ? std::strerror(errno) : "no bytes written");
+          break;
+        }
+        written += static_cast<std::size_t>(count);
+      }
+      if (written == frameSize) return;
+    } else {
+      SDL_Log("Zero LCD direct write requires a tightly packed native frame");
+    }
+    SDL_Log("Zero LCD output: falling back to mapped");
+    directWrite_ = false;
+  }
+
   for (unsigned y = 0; y < mode_.yres; ++y) {
     const auto* source = pixels + (std::size_t{y} * height / mode_.yres) * width;
     auto* row = reinterpret_cast<uint16_t*>(

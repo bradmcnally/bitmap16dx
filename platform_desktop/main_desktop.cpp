@@ -115,31 +115,40 @@ void setPreviewLabel(const char* message) {
   previewLabelUntil = SDL_GetTicks() + 2000u;
 }
 
-int platformBatteryPercent() {
+struct BatteryReading {
+  int percent = -1;
+  bool charging = false;
+};
+
+BatteryReading readPlatformBattery() {
 #ifdef BITMAP16_STEAM_DECK
-  return -1;
+  return {};
 #elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
   constexpr const char* kPowerSupplyRoot = "/sys/class/power_supply";
   DIR* directory = opendir(kPowerSupplyRoot);
-  if (directory == nullptr) return -1;
-  int result = -1;
+  if (directory == nullptr) return {};
+  BatteryReading result;
   while (const dirent* entry = readdir(directory)) {
     if (entry->d_name[0] == '.') continue;
-    const std::string path =
-        std::string(kPowerSupplyRoot) + "/" + entry->d_name + "/capacity";
-    std::ifstream capacity(path);
+    const std::string path = std::string(kPowerSupplyRoot) + "/" + entry->d_name;
+    std::ifstream capacity(path + "/capacity");
     int value = -1;
     if (capacity >> value && value >= 0 && value <= 100) {
-      result = value;
+      std::ifstream status(path + "/status");
+      std::string statusText;
+      std::getline(status, statusText);
+      result = {value, statusText == "Charging"};
       break;
     }
   }
   closedir(directory);
   return result;
 #else
-  return 78;
+  return {78, false};
 #endif
 }
+
+BatteryReading batteryReading;
 
 bool platformHasLedMatrixControls() {
 #ifdef BITMAP16_STEAM_DECK
@@ -535,6 +544,7 @@ const bitmap16::CanvasView::Assets& canvasAssets(
       {ICON_BUTTON_Y, ICON_BUTTON_Y_WIDTH, ICON_BUTTON_Y_HEIGHT},
       {ICON_PALETTE, ICON_PALETTE_WIDTH, ICON_PALETTE_HEIGHT},
       {ICON_BUTTON_R3, ICON_BUTTON_R3_WIDTH, ICON_BUTTON_R3_HEIGHT},
+      {ICON_CHARGING_PLUG, ICON_CHARGING_PLUG_WIDTH, ICON_CHARGING_PLUG_HEIGHT},
   };
   static const bitmap16::CanvasView::Assets handAssets = {
       {ICON_DRAW, ICON_DRAW_WIDTH, ICON_DRAW_HEIGHT},
@@ -557,6 +567,7 @@ const bitmap16::CanvasView::Assets& canvasAssets(
       {ICON_BUTTON_Y, ICON_BUTTON_Y_WIDTH, ICON_BUTTON_Y_HEIGHT},
       {ICON_PALETTE, ICON_PALETTE_WIDTH, ICON_PALETTE_HEIGHT},
       {ICON_BUTTON_R3, ICON_BUTTON_R3_WIDTH, ICON_BUTTON_R3_HEIGHT},
+      {ICON_CHARGING_PLUG, ICON_CHARGING_PLUG_WIDTH, ICON_CHARGING_PLUG_HEIGHT},
   };
   return settings.cursorStyle == bitmap16::CursorStyle::Hand
       ? handAssets
@@ -708,7 +719,7 @@ bool showBootScreen(
     }
   }
 
-#ifdef BITMAP16_STEAM_DECK
+#if defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_CARDPUTER_ZERO)
   const int labelY = canvas.height() - 12;
   const int labelLeft = 4;
   const int labelCenter = canvas.width() / 2;
@@ -723,7 +734,12 @@ bool showBootScreen(
   canvas.drawString(kVersion, labelLeft, labelY);
   canvas.setTextAlign(bitmap16::TextAlign::Center);
   canvas.drawString("beepbot", labelCenter, labelY);
-#ifndef BITMAP16_STEAM_DECK
+#if defined(BITMAP16_CARDPUTER_ZERO)
+  const int helpRight = canvas.width() - 4;
+  canvas.setTextAlign(bitmap16::TextAlign::Right);
+  canvas.drawString("HELP", helpRight, labelY);
+  canvas.drawFastHLine(helpRight - 4 * 6, labelY + 8, 5, 0xffff);
+#elif !defined(BITMAP16_STEAM_DECK)
   const int helpX = imageX + BOOT_IMAGE_WIDTH - 4 - (4 * 6);
   canvas.setTextAlign(bitmap16::TextAlign::Left);
   canvas.drawString("HELP", helpX, labelY);
@@ -792,7 +808,7 @@ void renderCurrentView(
         rulersVisible,
         desktopMoveModeActive,
         status,
-        settings.batteryDisplay ? platformBatteryPercent() : -1,
+        settings.batteryDisplay ? batteryReading.percent : -1,
         desktopDrawPressed,
         desktopErasePressed,
         desktopFillPressed,
@@ -816,6 +832,7 @@ void renderCurrentView(
 #else
         false,
 #endif
+        batteryReading.charging,
     };
     bitmap16::CanvasView::render(
         canvas, state, canvasTheme(settings), &canvasAssets(settings));
@@ -1099,7 +1116,8 @@ int main(int argc, char** argv) {
       initialSketch.paletteColors,
       initialSketch.paletteSize,
   };
-  const int initialBatteryPercent = std::max(0, platformBatteryPercent());
+  batteryReading = readPlatformBattery();
+  const int initialBatteryPercent = std::max(0, batteryReading.percent);
   const uint8_t* const chargingIconPointers[4] = {
       ICON_DRAW,
       ICON_ERASE,
@@ -1675,6 +1693,10 @@ int main(int argc, char** argv) {
 #ifdef BITMAP16_STEAM_DECK
   unsigned previousTriggerMask = 0;
 #endif
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  constexpr Uint32 kBatteryRefreshMs = 2000;
+  Uint32 nextBatteryRefresh = SDL_GetTicks() + kBatteryRefreshMs;
+#endif
   while (running) {
     SDL_PumpEvents();
 #ifdef BITMAP16_LOSPEC
@@ -1697,6 +1719,20 @@ int main(int argc, char** argv) {
                       "%s", result.error.c_str());
       }
       if (currentView == DesktopView::Palette) renderNow();
+    }
+#endif
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    if (currentView == DesktopView::Canvas && settings.batteryDisplay) {
+      const Uint32 now = SDL_GetTicks();
+      if (SDL_TICKS_PASSED(now, nextBatteryRefresh)) {
+        nextBatteryRefresh = now + kBatteryRefreshMs;
+        const BatteryReading previous = batteryReading;
+        batteryReading = readPlatformBattery();
+        if (batteryReading.percent != previous.percent ||
+            batteryReading.charging != previous.charging) {
+          renderNow();
+        }
+      }
     }
 #endif
     if (quitRequested) {
@@ -1942,6 +1978,15 @@ int main(int argc, char** argv) {
     int eventWait = animatedView ? animationWait : -1;
 #ifdef BITMAP16_LOSPEC
     if (lospecRequest.valid()) eventWait = eventWait < 0 ? 16 : std::min(16, eventWait);
+#endif
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    if (currentView == DesktopView::Canvas && settings.batteryDisplay) {
+      const Uint32 now = SDL_GetTicks();
+      const int remaining = SDL_TICKS_PASSED(now, nextBatteryRefresh)
+          ? 0
+          : static_cast<int>(nextBatteryRefresh - now);
+      eventWait = eventWait < 0 ? remaining : std::min(eventWait, remaining);
+    }
 #endif
 #ifdef BITMAP16_CARDPUTER_ZERO
     const bool canvasStatus =
