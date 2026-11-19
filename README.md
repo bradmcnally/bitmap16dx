@@ -1,7 +1,9 @@
 # BitMap16 DX
 
-BitMap16 DX is a tiny pixel-art sketchbook for the M5Stack Cardputer ADV,
-channeling the vibe of 2000s handheld game consoles.
+**[ADV](platform_adv/README.md) · [Zero](platform_zero/README.md) · [Steam / Steam Deck — coming soon](platform_steamdeck/README.md)**
+
+BitMap16 DX is a tiny pixel-art sketchbook for Cardputer ADV and Cardputer Zero,
+channeling the vibe of 2000s handheld game consoles. Steam / Steam Deck is coming soon.
 
 ![Logo](img/bitmap16dx.png)
 ![Drawing](img/drawing.png)
@@ -11,305 +13,89 @@ channeling the vibe of 2000s handheld game consoles.
 
 - 8×8, 16×16, and 32×32 canvas modes
 - Draw, Erase, Fill, Erase Fill, and Move tools
-- Canvas zoom and pixel-accurate minimap
+- Canvas zoom and pixel-accurate minimap (ADV/Zero)
 - Undo and redo with 16 steps of session history; opening or creating a sketch clears history
-- Holding draw, erase, or artwork move counts as one undo step until release
-- Save, open, duplicate, preview, and delete sketches from SD card
+- Save, open, duplicate, preview, and delete sketches
 - Built-in 16, 8, and 4-color palettes
   - Palette swapping preserves indexed artwork when moving between smaller
     and larger palettes
   - Import Lospec `.hex` palettes containing any number of colors from 4 through 16
   - Zero and Steam Deck: browse a daily Lospec feed or import by name/URL
   - Color filters group palettes into 4, 5–8, and 9–16 colors
-  - StampS3A LED displays currently selected color
-- Export `.png` files to `bitmap16dx/exports/` at 128×128 or logical size
+  - StampS3A LED displays currently selected color (ADV)
+- Export PNG artwork at 128×128 or its original canvas size
 - Light and dark themes
 - Preview/gallery mode
-- Screensaver with animated icons and artwork; Zero shows live charging status
-- Shake-to-undo
-- Display mirroring with Puzzle Unit 8×8 RGB LED Matrix modules (WS2812E)
+- Screensaver
+- Shake-to-undo (ADV/Zero)
+- Display mirroring with Puzzle Unit 8×8 RGB LED Matrix modules (WS2812E) (ADV)
 
 ![Drawing](img/photo_drawing.jpg)
 
-## First boot
+## Choose your platform
 
-1. **Insert SD card** before powering on (FAT32 format recommended)
-2. Power on your Cardputer
-3. BitMap16 DX will automatically create these folders:
-   ```
-   /bitmap16dx/
-   ├── sketches/   # Your saved artwork
-   ├── exports/    # Exported PNG files
-   └── palettes/   # Custom color palettes (optional)
-   ```
-4. Start drawing!
+Each guide covers installation, first launch, controls, everyday use, and troubleshooting.
 
-## Adding custom palettes (Optional)
-![Available Palettes](img/palettes.png)
-1. Download `.hex` palette files from [Lospec](https://lospec.com/palette-list)
-2. Copy to `/bitmap16dx/palettes/` on your SD card
-3. Power cycle your Cardputer
-4. Access custom palettes in the Palette Menu
+| Platform guide | Contents |
+|---|---|
+| [M5Stack Cardputer ADV →](platform_adv/README.md) | Firmware, SD card setup, keyboard controls, RGB matrix |
+| [Cardputer Zero →](platform_zero/README.md) | Installation, keyboard controls, Lospec, device settings |
+| [Steam / Steam Deck →](platform_steamdeck/README.md) — coming soon | Development build setup and controls |
 
-Current source builds support every palette size from **4 through 16 colors**,
-retaining the palette's actual color count. The ADV supports up to 32 palettes
-(12 built-in and 20 custom); Zero and Steam Deck support the 12 built-in
-palettes plus up to 116 saved user palettes.
+## Using Bitmap16 DX
 
-## How to Use
+### Draw
 
-For the Cardputer Zero, see the [complete keyboard reference](platform_zero/README.md#cardputer-zero-keyboard-reference).
+Move the cursor and use Draw or Erase to edit pixels. Hold either action while
+moving to draw a line. Fill colors a connected region; Erase Fill clears it.
+Move shifts your artwork. Use Undo to reverse an edit and Redo to restore it.
 
-### Drawing Mode
+Choose an 8×8, 16×16, or 32×32 canvas with Resize Canvas. Shrinking hides pixels
+outside the new size without erasing them. On ADV and Zero, zoom in for finer
+editing and use the minimap to keep track of your position.
 
-![Drawing Interface Link](img/drawing_link.png)
-![32x](img/32x.png)
-![Drawing Interface Zoom](img/zoom.png)
+### Choose a palette
 
+Open Palettes, browse the cartridges, and apply one to your drawing. Filter
+by 4, 5–8, or 9–16 colors, or show only your saved user palettes.
+Changing palettes preserves the arrangement of your pixels.
 
-| Key | Function |
-|-----|----------|
-| Arrow keys (`↑` `←` `↓` `→`) | Move cursor (hold to repeat) |
-| `ctrl, ok`/`enter ` | Place pixel with selected color |
-| `del`/`backspace` | Erase pixel |
-| `F` | Flood **f**ill |
-| `fn` + `F` | Flood fill with transparency (**Erase Fill**) |
-| `M` + `Arrow keys` | **M**ove canvas |
-| `1-8` | Quick color selection (colors 1-8) |
-| `fn` + `1-8` | Quick color selection (colors 9-16) |
-| `C` | **C**ycle to next color |
-| `G` | Open Resize Canvas; choose a size, then select Apply |
-| `+` / `-` | Zoom canvas in/out at integer pixel scales |
-| `fn` + `Arrow keys` | While zoomed, jump to that edge of the artwork |
-| `R` | Toggle viewport-centered **r**ulers |
-| `T` | Toggle Se**t**tings |
-| `Z` | Undo last action (or shake when enabled) |
-| `fn` + `Z` | Redo last action |
-| `g0` button | Clear canvas |
-| `S` | **S**ave sketch (update current or create new) |
-| `FN` + `S` | **S**ave as new sketch (always creates new file) |
-| `X` | E**x**port PNG (128×128 scaled) |
-| `FN` + `X` | Export PNG at its logical grid size |
-| `H` | Open **h**elp screen (key commands) |
-| `P` | Open **P**alette Menu |
-| `O` | **O**pen Sketches Menu |
-| `V` | Open Pre**v**iew Mode |
-| `B` + `+/-` | Adjust **b**rightness |
-| `FN` + `B` | Screensaver |
-| `L` + `Ok` | RGB Matrix on/off |
-| `L` + `+/-` | RGB Matrix brightness |
+All three platforms accept Lospec `.hex` palettes with 4–16 colors. Zero and
+Steam Deck also let you browse the Lospec feed or import a palette by name or
+URL. Successful imports save and apply the palette. The feed refreshes locally
+on the first visit each day; cached palettes remain available offline.
+See your platform guide for controls and palette folder locations.
 
-### Drawing Preview *(V)*
+### Save and manage sketches
 
-| Key | Function |
-|-----|----------|
-| `1` | Black background |
-| `2` | White background |
-| `3` | Light gray background |
-| `4` | Dark gray background |
-| `+` / `-` | Zoom preview at integer scales |
-| `esc` | Dismiss |
+Save updates the current sketch; Save As creates another copy. Open Sketches
+to create a drawing, reopen saved artwork, duplicate it, or delete it. Preview
+shows artwork without the editing tools; the slideshow lets you browse saved
+sketches or advance through them automatically.
 
-### Palette Menu *(P)*
+Sketches store their own palette colors, so deleting a saved palette does not
+change existing artwork.
 
-| Key | Function |
-|-----|----------|
-| `←`/`→` | Navigate palettes |
-| `ok`/`enter` | Select palette |
-| `esc` | Dismiss |
-| `4` | Toggle the 4-color filter |
-| `8` | Toggle the 5–8-color filter |
-| `1` | Toggle the 9–16-color filter |
-| `U` | Toggle custom user palettes filter (can be combined with 4/8/16 filters) |
-| `0` | Clear all filters |
+### Export and customize
 
-### Online palettes on Zero and Steam Deck
+Export saves a PNG in the app's `exports/` folder. Choose a scaled 128×128 image
+or the original canvas size. Your platform guide explains where to find files.
 
-On Zero, press `I` in Palettes to **Import from Lospec**, or `L` to
-**Browse Lospec**. On Steam Deck, use `L3` to import and `Y` to browse.
+Settings includes the theme, default canvas size, and export format, alongside
+options for your device. Open Help for the controls available on your platform.
 
-- Browse the feed's newest palettes with 4–16 colors in one continuous carousel.
-  Saved Lospec palettes are omitted. Each cartridge shows its color count.
-- The feed refreshes locally the first time you open Lospec each day.
-  Cached palettes remain available offline, including if a refresh fails.
-- Import accepts a palette slug such as `endesga-16` or a full Lospec palette
-  URL. A successful import saves and applies the palette immediately.
-- Escape / `B` navigates **Lospec → local Palettes → Canvas**, one press per step.
-- Steam Deck: LB/RB cycles color-range filters, D-pad Up toggles local user
-  palettes, and D-pad Down clears filters.
-- Backspace/Delete on Zero or `X` on Steam Deck moves a saved user palette to
-  trash. Artwork stores its own colors, so deleting a palette does not change
-  existing sketches.
+## Downloads and releases
 
-See the [Zero guide](platform_zero/README.md),
-[Steam Deck guide](platform_steamdeck/README.md), and
-[Cloudflare feed setup](services/lospec-feed/README.md) for details.
+Download firmware and read release notes on
+[GitHub Releases](https://github.com/bradmcnally/bitmap16dx/releases).
+The latest ADV release is **v0.8.0 — The Blast Processing Update**.
+See [CHANGELOG.md](CHANGELOG.md) for its release notes.
 
-### Sketches Menu *(O)*
+The downloadable firmware is for the ADV. Zero installation instructions are
+in its platform guide. Steam / Steam Deck is coming soon.
 
-![Sketches Menu](img/sketches.png)
-![Sketches Menu](img/sketches_dark.png)
+## Building and contributing
 
-| Key | Function |
-|-----|----------|
-| Arrow keys (`↑` `←` `↓` `→`) | Navigate sketch grid |
-| `ok`/`enter` | Load selected sketch |
-| `V` | Open slideshow **v**iew |
-| `esc` | Dismiss |
-| `g0` button | Confirm deletion of the focused sketch (Cancel selected initially) |
-| `Z` | Restore the most recently deleted sketch |
-| `fn` + `S` | Duplicate the focused sketch |
-
-### Sketch Slideshow View *(V from Sketches Menu)*
-
-View your saved sketches in a fullscreen slideshow with optional auto-advance.
-
-| Key | Function |
-|-----|----------|
-| `←`/`→` | Navigate previous/next sketch |
-| `space` | Toggle auto-advance (3 second intervals) |
-| `1` | Black background |
-| `2` | White background |
-| `3` | Light gray background |
-| `4` | Dark gray background |
-| `B` + `+/-` | Adjust **b**rightness |
-| `esc` | Return to Sketches |
-
-### Settings *(T)*
-
-- Set UI theme (light, dark)
-- Set default grid (8×8, 16×16, or 32×32)
-- Set export format (RGB888, RGB565)
-- RGB Matrix settings:
-  - Enable/disable matrix output
-  - Set matrix layout (1 or 4 units)
-  - Set matrix rotation (0°, 90°, 180°, or 270°)
-  - Set matrix brightness
-- Enable Shake to Undo (IMU accelerometer)
-- Enable or disable save warnings
-- Indicator LED settings:
-  - Show the currently selected palette color
-  - Override the palette color with a red low-battery warning at 10%
-
-![Sketches](img/photo_sketches.jpg)
-![Palettes](img/photo_palettes.jpg)
-
-## RGB LED Matrix mirroring
-
-The RGB LED matrix display mirrors your canvas in real time. Connect one or
-four Puzzle Unit 8×8 RGB LED Matrix (WS2812E) modules to the Cardputer ADV
-expansion port. Matrix power, layout, brightness, and rotation are configurable
-from the nested RGB Matrix settings page.
-
-When editing zoomed 16×16 or 32×32 artwork, the matrix displays the region
-currently visible in the canvas viewport.
-
-### Quad Matrix (16x16)
-
-<p>
-<img src="img/photo_clamshell_open.jpg" height="300">
-<img src="img/photo_clamshell_detail.jpg" height="300">
-</p>
-
-### Single Matrix (8x8)
-
-<p>
-<img src="img/photo_singleLEDMatrix.jpg" height="300">
-<img src="img/photo_singleLEDMatrix_detail.jpg" height="300">
-</p>
-
-### Technic Panel Board
-
-<p>
-<img src="img/photo_techplate1.jpg" height="300">
-<img src="img/photo_techplate2.jpg" height="300">
-</p>
-
-A Cardputer-sized prototype board with Lego Technic-compatible mounting holes. Designed for snapping peripherals — like the RGB matrix modules — into modular, reconfigurable layouts.
-
-## Current release
-
-The current hardware release targets the **M5Stack Cardputer ADV**. The
-repository includes source builds for Steam Deck, Linux desktop, and Cardputer
-Zero. The downloadable firmware is for the ADV.
-
-The next ADV release is **v0.8.0 — The Blast Processing Update**. See
-[CHANGELOG.md](CHANGELOG.md) for the complete release notes and
-[the ADV release checklist](docs/adv_release_test_checklist.md) for physical
-device validation.
-
-### Project Structure
-
-```
-bitmap16dx/
-├── platformio.ini          # PlatformIO configuration
-├── CMakeLists.txt          # SDL development builds
-├── platform_desktop/       # Shared desktop/Steam Deck/Zero SDL shell
-├── platform_steamdeck/     # Steam Deck packaging and sideload files
-├── platform_zero/          # Cardputer Zero simulator/runtime files
-├── src/
-│   ├── main.cpp            # Cardputer ADV application
-│   ├── core/               # Shared editor, views, codecs, and settings
-│   ├── platform/           # ADV hardware adapters
-│   ├── palettes.h          # Built-in palette definitions
-│   ├── icons.h             # UI icons
-│   └── boot_image.h        # Splash screen
-├── test/                   # Native shared-core tests
-└── docs/                   # Porting and release validation documents
-```
-
-## Build and install the ADV firmware
-
-The PlatformIO environment is named `m5stack-cardputer` and builds the
-Cardputer ADV firmware:
-
-```sh
-pio run -e m5stack-cardputer
-```
-
-To upload to an attached ADV:
-
-```sh
-pio run -e m5stack-cardputer -t upload
-```
-
-
-### Cardputer Zero device build
-
-See the [Cardputer Zero build and install guide](platform_zero/README.md)
-to build the Linux package and launch it from HOME.
-
-### Desktop and Cardputer Zero simulator
-
-The repository includes SDL2 simulators for the 240×135 Cardputer ADV layout
-and the 320×170 Cardputer Zero layout:
-
-```sh
-cmake --preset desktop
-cmake --build --preset desktop
-./build/desktop/bitmap16dx_desktop
-
-cmake --preset zero
-cmake --build --preset zero
-./build_zero/bitmap16dx_desktop
-```
-
-The simulator persists sketches, exports, settings, and custom palettes under
-`~/.local/share/bitmap16dx`. The desktop ADV simulator also opens an RGB-matrix
-simulation window. RGB matrix support and its controls are disabled for Zero
-and Steam Deck builds.
-
-Icons are embedded directly in the application; no separate icon files are needed at runtime.
-
-### Steam Deck development build
-
-The Deck preset renders a 320×200 logical framebuffer at an exact 4× scale on
-the 1280×800 display and enables SDL controller input:
-
-```sh
-cmake --preset steamdeck
-cmake --build --preset steamdeck
-```
-
-See [the Steam Deck sideload guide](platform_steamdeck/README.md) for the
-controller layout and copy/run instructions.
+See the [development guide](docs/development.md) for source builds, packaging,
+simulators, and validation, and the [Cloudflare feed setup](services/lospec-feed/README.md)
+for hosting the palette feed.

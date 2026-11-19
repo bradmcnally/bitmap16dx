@@ -1,4 +1,4 @@
-#include "platform/power.h"
+#include "platform_adv/power.h"
 
 #include <M5Cardputer.h>
 

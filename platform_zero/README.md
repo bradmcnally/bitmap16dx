@@ -1,70 +1,27 @@
-# Cardputer Zero Linux target
+# Cardputer Zero guide
 
-Cardputer Zero uses a Raspberry Pi CM0 running 64-bit Linux. It is not an
-ESP32/PlatformIO target. This target shares the simulator's UI, writes
-RGB565 frames directly to the LCD, and reads the keypad through Linux evdev.
-The Debian package installs an entry in APPLaunch.
+**[ADV](../platform_adv/README.md) · [Zero](../platform_zero/README.md) · [Steam / Steam Deck — coming soon](../platform_steamdeck/README.md)**
 
-## Build on Cardputer Zero
+[All platforms](../README.md#choose-your-platform) · [Install](#install) ·
+[First launch](#first-launch) · [Controls](#controls) · [Using the app](#using-the-app) ·
+[Troubleshooting](#troubleshooting)
 
-Install the native build dependencies:
+## Install
 
-```sh
-sudo apt update
-sudo apt install cmake build-essential libsdl2-dev libcurl4-openssl-dev ca-certificates
-```
-
-Configure and build:
+Install the generated ARM64 Debian package on the Zero:
 
 ```sh
-cmake --preset zero-device
-cmake --build --preset zero-device
+sudo dpkg -i bitmap16dx_arm64.deb
 ```
 
-Run directly as the regular device user, with access to the LCD and keypad:
+To create the package from source or update over SSH, follow the
+[Zero build and packaging instructions](../docs/development.md#zero-build-and-packaging).
+Quit BitMap16 DX before reinstalling.
 
-```sh
-./build_zero_device/bitmap16dx_desktop
-```
+## First launch
 
-Create an APPLaunch-compatible Debian package:
-
-```sh
-cd build_zero_device
-cpack
-```
-
-Install the generated `arm64.deb` with `sudo dpkg -i`.
-
-Open BitMap16 DX from HOME. Press `Q` to quit and release the keypad to
-the system. If the app does not open, inspect `/tmp/bitmap16dx.log`. The
-launch user needs write access to `/dev/fb_lcd` (or `/dev/fb0`) and read
-access to the keypad's input event device. The brightness shortcut also
-requires write access to `/sys/class/backlight/backlight/brightness`.
-Hardware validation is still required for the keyboard mappings, battery
-reporting, BMI270 shake undo, and the Grove RGB matrix signal adapter.
-
-## Package and reinstall from your Mac
-
-
-After installing the build dependencies on the Zero, run these commands from
-the BitMap16 DX source folder on your Mac. Replace `pi@cardputerzero.local`
-with your Zero's username and IP address if needed.
-
-```sh
-./platform_zero/device.sh package pi@cardputerzero.local
-./platform_zero/device.sh install pi@cardputerzero.local
-```
-
-The first command builds on the Zero and saves the resulting package locally
-as `build_zero_device/bitmap16dx_arm64.deb`. Run it again when the source
-changes. The second command copies and reinstalls the cached package, including
-rebuilds with the same version. Quit BitMap16 DX before installing and reopen
-it from HOME afterward.
-
-## Workspace and controls
-
-Settings and sketches persist between launches in:
+Open BitMap16 DX from HOME. The app creates its data folders automatically.
+Press `Q` to quit. Your settings and sketches persist between launches in:
 
 ```text
 ~/.local/share/bitmap16dx/
@@ -73,39 +30,11 @@ Settings and sketches persist between launches in:
 ├── trash/
 ├── settings.bin
 └── sketches/
-    └── sketch-0001.dat
 ```
 
-Set `BITMAP16_DATA_DIR` to use a different writable location. If
-`XDG_DATA_HOME` is set, the default is `$XDG_DATA_HOME/bitmap16dx`.
+## Controls
 
-### Cardputer Zero keyboard reference
-
-**Shake undo** in Settings uses the standard Zero's BMI270 accelerometer.
-Shake the device in Canvas to undo the last edit. It uses the ADV's threshold
-above 6 g and 500 ms cooldown. Sampling continues while no keys are pressed.
-The setting is hidden automatically on the Zero Lite and whenever a usable
-accelerometer is not detected at startup. The saved preference is retained.
-
-The app discovers the BMI270 by its Linux IIO name (`bmi27` or `bmi270`),
-reads acceleration through `/sys/bus/iio/devices/iio:device*/`, and converts
-the scaled readings from m/s² to g. It needs read access to `in_accel_scale`
-and `in_accel_{x,y,z}_raw`. A range of ±8 g or ±16 g is required. If the
-image starts with a smaller range, the app selects an advertised ±8 g range
-(or ±16 g) when the scale file is writable. Otherwise it hides the setting
-and records the reason in `/tmp/bitmap16dx.log`. Configure the sensor range
-or permissions through the device image rather than running the app as root.
-The BMM150 compass sensor is not needed for shake undo. The simulator retains
-the `Y` shortcut for a simulated shake; on the physical Zero, `Y` no longer
-simulates motion.
-
-In Settings, **Warmth** cycles through **Neutral**, **Mild**, **Warm**, and
-**Warmer**. Use Left/Right or Enter to change it; the display updates immediately
-and remembers the choice. Start with Mild for a slightly cool-looking LCD.
-Neutral restores the original colors. This affects only Bitmap16DX's LCD output,
-including its UI; palettes, saved sketches, and exported PNGs keep their original
-colors. Framebuffer screenshots include the display tint. The
-desktop simulator and other applications are unaffected.
+<a id="cardputer-zero-keyboard-reference"></a>
 
 Use `Ctrl` for BitMap16 DX commands such as save, undo, and export. Use
 `Fn` for shortcuts that use the Zero's arrow, function, Delete, Page Up,
@@ -118,7 +47,7 @@ Page Down, or backlight keys.
 | Down | `X` or `Fn+X` |
 | Right | `C` or `Fn+C` |
 
-#### General
+### General
 
 | Key | Action |
 |---|---|
@@ -133,7 +62,7 @@ Page Down, or backlight keys.
 | Escape | Go back. In Help, return to the previous view. In a slideshow, return to Sketches. At startup, skip the splash screen. |
 | `Q` | Quit. At the unsaved-changes prompt, use Left/Right to choose, Enter to confirm, or Escape to cancel. |
 
-#### Canvas
+### Canvas
 
 | Key | Action |
 |---|---|
@@ -152,7 +81,7 @@ Page Down, or backlight keys.
 | `Ctrl+S` / `Shift+S` | Save / save as a new sketch. |
 | `Ctrl+X` / `Ctrl+L` | Export a 128×128 PNG / export at the sketch's native grid size. |
 
-#### Sketches, Palette, and Preview
+### Sketches, Palette, and Preview
 
 | View | Key | Action |
 |---|---|---|
@@ -165,20 +94,11 @@ Page Down, or backlight keys.
 | Preview and slideshow | `1`, `2`, `3`, `4` | Choose a black, white, gray, or dark-gray background. |
 | Slideshow | Left and Right / Space | Browse saved sketches / toggle three-second auto-advance. |
 
-In Settings, set **Battery display** to **Off** to hide the Canvas battery
-icon. While the Zero reports charging, the charging symbol replaces the
-battery icon in the same status slot. The battery returns when charging stops.
-The setting defaults to **On** and persists between launches.
-Screensaver includes the floppy and skull icons and shows the charging symbol
-only while charging. Battery status continues updating while it runs.
-
-In the Zero simulator, use desktop arrows for the `Fn` arrow combinations,
-`F1`–`F8` for colors 9–16, Delete for `Fn+Backspace`, and Page Up and Page
-Down for `Fn+L` and `Fn+M`. Use `B` with `+` or `-` for simulated display
-brightness. RGB matrix support, its settings, and its simulator window are
-disabled in Zero builds.
-
 See the [ADV and Zero key comparison](CONTROLS.md) for platform differences.
+
+## Using the app
+
+See [Using Bitmap16 DX](../README.md#using-bitmap16-dx) for the shared workflow.
 
 Memory starts with a `+` tile for a new sketch, followed by saved sketches.
 The newest saved sketch opens automatically on the next launch.
@@ -192,6 +112,26 @@ In the local Palette view, select a user cartridge and press Backspace or
 Delete to remove it. Removed palette files
 move to `trash/`; saved artwork and the current drawing retain their own
 palette colors. A deleted Lospec palette can appear in the online feed again.
+
+### Device settings
+
+**Shake undo** in Settings uses the standard Zero's BMI270 accelerometer.
+Shake the device in Canvas to undo the last edit.
+The setting is hidden automatically on the Zero Lite and whenever a usable
+accelerometer is not detected at startup. The saved preference is retained.
+
+In Settings, **Warmth** cycles through **Neutral**, **Mild**, **Warm**, and
+**Warmer**. Use Left/Right or Enter to change it; the display updates immediately
+and remembers the choice. Start with Mild for a slightly cool-looking LCD.
+Neutral restores the original colors. This affects only Bitmap16DX's LCD output,
+including its UI; palettes, saved sketches, and exported PNGs keep their original
+colors. Framebuffer screenshots include the display tint. The
+desktop simulator and other applications are unaffected.
+
+In Settings, set **Battery display** to **Off** to hide the Canvas battery
+icon. While the Zero reports charging, the charging symbol replaces the
+battery icon in the same status slot. The battery returns when charging stops.
+The setting defaults to **On** and persists between launches.
 
 ### Import a palette by name or URL
 
@@ -211,63 +151,14 @@ Saved palettes are omitted from the feed.
 The feed refreshes locally on the first visit each day. If a refresh fails,
 the previous cache remains available.
 
-For releases, use the [Cloudflare palette feed](../services/lospec-feed/README.md).
-Build with the public feed URL:
+## Troubleshooting
 
-```sh
-cmake --preset zero -DBITMAP16_LOSPEC_FEED_URL=https://YOUR-WORKER.workers.dev/palettes.json
-```
+- If the app does not open, inspect `/tmp/bitmap16dx.log`.
+- If the LCD or keypad is unavailable, check device permissions using the
+  [Zero build instructions](../docs/development.md#zero-build-and-packaging).
+- Shake undo is available when a supported accelerometer is detected. If the
+  setting is missing, see [Zero sensor diagnostics](../docs/development.md#zero-sensor-diagnostics).
+- If Lospec cannot refresh, keep using the cached feed or saved palettes and
+  try again when connected.
 
-For device packaging from your Mac, set `BITMAP16_LOSPEC_FEED_URL` when
-running `platform_zero/device.sh package`. The script forwards that URL to
-the device build.
-
-For direct API development, configure with `-DBITMAP16_LOSPEC_FEED_URL=`
-to disable the default hosted feed, then put your key alone on one line
-in `~/.local/share/bitmap16dx/lospec-key.txt`. The build can bundle that file;
-override its location with `-DBITMAP16_LOSPEC_KEY_FILE=/absolute/path/to/key.txt`.
-Do not commit the key. Direct mode checks up to three batches of 100, stopping
-at 20 unsaved matches. `BITMAP16_LOSPEC_API_KEY` or `lospec-key.txt` in the
-active data folder can override the bundled key for testing. A hosted-feed
-build does not bundle or send a Lospec key.
-
-## Complete simulator validation
-
-Build and launch the 320×170 Zero simulator:
-
-```sh
-cmake --preset zero
-cmake --build --preset zero
-./build_zero/bitmap16dx_desktop
-```
-
-The Zero simulator opens only the main app window; RGB matrix support is disabled.
-
-For an isolated test that does not touch the normal workspace:
-
-```sh
-BITMAP16_DATA_DIR=/tmp/bitmap16dx-zero-test \
-  ./build_zero/bitmap16dx_desktop
-```
-
-Recommended all-at-once test:
-
-1. Navigate with both `F/Z/X/C` and desktop arrows. Draw with Enter, erase
-   with Backspace, fill with `Ctrl+F`, erase fill with `E`, undo/redo with
-   `Ctrl+Z`/`Ctrl+Y`, jump with `Shift+F/Z/X/C`, move with `M+F/Z/X/C`, and
-   clear with Delete.
-2. Select colors 1-8 and colors 9-16 with `F1`-`F8`, cycle with `I`, apply
-   built-in palettes,
-   then add a `.hex` file and verify the `U` user-palette filter.
-3. Save with `Ctrl+S`, save-as with `Shift+S`, create a sketch through the `+`
-   slot, reopen both sketches, delete one with Delete, restore it with `U`,
-   and duplicate one with `Ctrl+S`.
-4. Export scaled and logical PNGs with `Ctrl+X` and `Ctrl+L`, then inspect the
-   `exports/` directory.
-5. Enter Memory and start the slideshow with `V`; test arrows, backgrounds
-   1-4, `Space` autoplay, and return to the same Memory selection.
-6. Change every Settings row and restart to confirm persistence.
-7. Test palette import, 4 / 5–8 / 9–16 filters, saved-palette deletion, and
-   Escape navigation from Lospec to local Palettes to Canvas.
-8. Test Help return navigation, Preview, `Ctrl+B` Screensaver, display
-   brightness, both themes, Escape behavior, and `Q` quit.
+For simulator setup and checks, see the [development guide](../docs/development.md#complete-simulator-validation).

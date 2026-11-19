@@ -1,45 +1,18 @@
-# Steam Deck quick test target
+# Steam Deck guide
 
-This target runs the existing SDL application fullscreen with a 320x200
-logical framebuffer. Steam Deck's 1280x800 panel scales it by an exact 4x.
-It is intended for sideloaded controller testing before Steamworks packaging.
-Other display resolutions use strict integer scaling. Any letterbox or
-pillarbox margins are filled with the active view's background color.
+**[ADV](../platform_adv/README.md) · [Zero](../platform_zero/README.md) · [Steam / Steam Deck — coming soon](../platform_steamdeck/README.md)**
 
-## Build
+Steam / Steam Deck is coming soon. This guide covers the development build.
 
-Build on an x86-64 Linux machine with SDL2 development files installed:
+[All platforms](../README.md#choose-your-platform) · [Install](#install) ·
+[First launch](#first-launch) · [Controls](#controls) · [Using the app](#using-the-app) ·
+[Troubleshooting](#troubleshooting)
 
-```sh
-sudo apt update
-sudo apt install cmake build-essential libsdl2-dev libcurl4-openssl-dev ca-certificates
+## Install
 
-cmake --preset steamdeck
-cmake --build --preset steamdeck
-```
-
-The Linux executable is:
-
-```text
-build_steamdeck/bitmap16dx_desktop
-```
-
-For a 1280x800 windowed preview on a development computer, run:
-
-```sh
-build_steamdeck/bitmap16dx_desktop --windowed
-```
-
-A macOS build made with this preset is useful for compilation and controller
-testing on macOS, but it cannot run on Steam Deck. Build the executable on
-x86-64 Linux for sideloading.
-Include `third_party/picojson/picojson.h` with distributed builds to retain
-the bundled JSON reader's license notice.
-
-## Sideload
-
-Enable SSH on the Deck or copy the executable with removable storage. An SSH
-example from the Linux build machine:
+Build the Linux executable using the [Steam Deck build instructions](../docs/development.md#steam-deck-build).
+Copy it to `~/Applications/bitmap16dx/` on the Deck using removable storage
+or SSH. From the Linux build machine:
 
 ```sh
 ssh deck@steamdeck.local 'mkdir -p ~/Applications/bitmap16dx'
@@ -49,28 +22,18 @@ ssh deck@steamdeck.local \
   'chmod +x ~/Applications/bitmap16dx/bitmap16dx_desktop'
 ```
 
-Run it once from a Desktop Mode terminal:
+Replace the hostname or username if your Deck uses different ones.
 
-```sh
-~/Applications/bitmap16dx/bitmap16dx_desktop
-```
+## First launch
 
-To test in Gaming Mode, add that executable as a non-Steam game and select
-Steam Input's standard Gamepad template. The application logs the controller
-name when SDL recognizes it.
+In Desktop Mode, add `~/Applications/bitmap16dx/bitmap16dx_desktop` to Steam
+as a non-Steam game and select Steam Input's standard Gamepad template.
+Launch through Steam in Gaming Mode or Desktop Mode.
 
-Data is stored under:
+Settings, sketches, palettes, and exports are stored in
+`~/.local/share/bitmap16dx/`. Use Quit in Settings to close the app.
 
-```text
-~/.local/share/bitmap16dx/
-```
-
-Set `BITMAP16_DATA_DIR` before launching to use an isolated test workspace.
-
-The Deck build does not read system battery information or draw Bitmap16's
-battery/charging UI; SteamOS provides the device battery indicator.
-
-## Provisional controller layout
+## Controls
 
 | Control | Canvas | Menus / Preview |
 |---|---|---|
@@ -100,20 +63,24 @@ rows. Left/right switches columns for palettes with more than eight colors.
 
 L3 or L4 resizes the canvas. Resizing is undoable.
 
-Keyboard controls remain available in this quick build.
+Keyboard controls are also available.
 
 In local Palettes, press `X` (keyboard Backspace/Delete) to remove a saved
 user palette. Removed files move to `trash/`.
 Existing artwork retains its palette colors, including when reopened later.
 
-## Import a palette by name or URL
+## Using the app
+
+See [Using Bitmap16 DX](../README.md#using-bitmap16-dx) for the shared workflow.
+
+### Import a palette by name or URL
 
 In Palettes, press `L3` (keyboard `I`) to import a palette slug such as
 `endesga-16` or a full Lospec palette URL. A successful import saves and
 applies the palette immediately. Palettes with 4–16 colors are supported,
 and saved imports remain available offline.
 
-## Lospec palettes
+### Lospec palettes
 
 In Palettes (`R3`), press `Y` to switch between local and Lospec cartridges.
 Press `A` to save and apply a palette. Left/right stick or D-pad browses
@@ -129,20 +96,7 @@ palettes in the local list; D-pad Down clears the filters in either list.
 Each cartridge shows its actual color count. `B` returns
 from Lospec to local Palettes; press `B` again to return to Canvas.
 
-For the Steam release, deploy the [Cloudflare feed](../services/lospec-feed/README.md)
-and configure its public URL before building:
-
-```sh
-cmake --preset steamdeck \
-  -DBITMAP16_LOSPEC_FEED_URL=https://YOUR-WORKER.workers.dev/palettes.json
-cmake --build --preset steamdeck
-```
-
-The public feed is configured by default. To use direct API development,
-set `-DBITMAP16_LOSPEC_FEED_URL=` and use the
-same optional key setup as the [Zero build](../platform_zero/README.md#new-palettes-from-lospec).
-
-## Trackpad and additional controls
+### Trackpad and additional controls
 
 For pointer control, set the **left trackpad** to **Mouse** in Steam Input and
 bind its click to **Left Mouse Click**, retaining the other gamepad bindings.
@@ -164,7 +118,7 @@ The Steam Deck Settings menu includes a `Quit` row for closing the app
 without using a keyboard or the Steam overlay. It also includes a `Help` row
 that opens the controller reference and returns to Settings when closed.
 
-## UI-free screenshot export
+### Export a screenshot
 
 Press `F12` to write a UI-free 1280x800 PNG to:
 
@@ -177,39 +131,15 @@ screen. Transparent pixels use the active theme background, or the selected
 Preview background when exporting from Preview. The saved image excludes the
 cursor, tools, palette rail, rulers, labels, and all other UI.
 
-This local export is the App-ID-independent screenshot path. A future optional
-Steamworks adapter can submit the same RGB buffer to `ISteamScreenshots` when
-an App ID is available.
+## Troubleshooting
 
-## First Deck test
+- If the executable will not run, use an x86-64 Linux build and check that
+  it has executable permission. A macOS build cannot run on the Deck.
+- If controller or trackpad input is missing, launch through Steam and check
+  the game's Steam Input layout.
+- If rear grips do not respond, bind L4, L5, R4, and R5 to their corresponding
+  gamepad paddle inputs in Steam Input.
+- If Lospec cannot refresh, cached palettes remain available offline.
 
-1. Confirm the window fills 1280x800 and retains sharp integer-scaled pixels.
-2. Confirm SDL logs a controller and every control above responds.
-3. Hold A or X while moving the left stick.
-4. Hold LT while moving the left stick and verify the move cursor and wrapped
-   artwork movement.
-5. Move the right stick through palette rails with 4–16 colors, including
-   a partially filled second column such as a 14-color palette.
-6. Press R3, browse palettes with the right stick, apply with A, and cancel
-   with B. Also verify left stick, D-pad, and keyboard arrows browse the
-   carousel, and that A applies the selected palette before
-   returning to the canvas.
-7. Draw, release L1 to undo, and press R1 to redo. Confirm L1+L2 saves without
-   also undoing, then open Sketches with View and reopen the saved sketch.
-8. Confirm L4 toggles the grid, L5 toggles Preview, and R4 opens Help then
-   returns to the previous screen. Confirm R5 toggles the grid rulers.
-9. Test both Gaming Mode and Desktop Mode, then report any incorrect button
-   labels, dead-zone problems, double movements, or missed repeats.
-10. Press F12 and inspect the resulting 1280x800 PNG in `exports/`. Confirm it
-    contains only integer-scaled artwork and the selected background.
-
-SDL exposes the Deck's rear grips as controller paddles. If Steam Input does
-not pass them through with the selected template, bind L4, L5, R4, and R5 to
-their corresponding gamepad paddle inputs in the game's controller layout.
-
-### Text-input smoke check
-
-Run the Steam Deck text-input smoke check against native SDL2, as on the Deck.
-The macOS SDL2-compat package cannot inject synthetic `SDL_TEXTINPUT` events;
-the smoke check reports that limitation instead of exercising that unsupported
-library path. Normal system keyboard events do not use synthetic injection.
+For build checks and controller validation, see the
+[development guide](../docs/development.md#steam-deck-validation).

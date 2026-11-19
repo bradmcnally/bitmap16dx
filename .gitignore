@@ -55,4 +55,5 @@ docs/notes.md
 assets/
 reference/
 ux/
-docs/
+docs/*
+!docs/development.md
