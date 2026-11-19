@@ -165,17 +165,6 @@ Page Down, or backlight keys.
 | Preview and slideshow | `1`, `2`, `3`, `4` | Choose a black, white, gray, or dark-gray background. |
 | Slideshow | Left and Right / Space | Browse saved sketches / toggle three-second auto-advance. |
 
-The resize picker outlines the part of the canvas that will stay visible
-when shrinking. It warns if the new grid hides drawn pixels. Resize preserves
-those pixels and can be undone with `Ctrl+Z`. **Grid default** in Settings
-sets the starting size for new sketches.
-The `>` marker identifies the currently applied size. When focus moves to
-Cancel or Apply, an outline keeps the pending size visible.
-
-Dialogs use arrow-key focus and Enter to select. Save warnings start on Save;
-sketch-deletion confirmation starts on Cancel. Focused buttons have white text
-on black in light theme and black text on white in dark theme.
-
 In Settings, set **Battery display** to **Off** to hide the Canvas battery
 icon. While the Zero reports charging, the charging symbol replaces the
 battery icon in the same status slot. The battery returns when charging stops.
@@ -200,51 +189,29 @@ The Zero supports up to 116 saved user palettes, alongside the 12 built-in
 palettes.
 
 In the local Palette view, select a user cartridge and press Backspace or
-Delete to remove it. Built-in palettes are protected. Removed palette files
+Delete to remove it. Removed palette files
 move to `trash/`; saved artwork and the current drawing retain their own
 palette colors. A deleted Lospec palette can appear in the online feed again.
 
-Deleting a sketch from Sketches opens a confirmation with **Cancel**
-selected. Use Left/Right (Zero `Z`/`C`, or controller D-pad) to choose, then
-Enter/`A` to confirm. Escape/`B` cancels. This confirmation always appears,
-regardless of the save-warning setting.
-
 ### Import a palette by name or URL
 
-In either palette list, press `I` to open **Import from Lospec**. Type a
-palette slug such as `endesga-16`, or paste a full Lospec palette URL with
-`Ctrl+V` when a clipboard is available. This dialog uses the Zero's physical
-keyboard, with no on-screen keyboard. A gray example is chosen when the
-dialog opens and stays fixed; it is not submitted as input. The insertion
-cursor blinks while the text field is focused. Enter moves focus to Import;
-Enter again fetches the palette. Up returns to editing, and Escape cancels.
-The field accepts up to 2048 characters.
-
-A successful lookup opens an **Import Preview** cartridge. Enter saves and
-applies it; Escape returns to local palettes without saving. Creator credit
-is shown when Lospec supplies it. Import supports 4–16 colors
-and reports missing palettes, unsupported sizes, and connection failures.
-Lookup runs in the background, uses the public Lospec download endpoint
-without an API key, and does not replace the daily feed cache. Saved imports
-work offline like other user palettes.
+In either palette list, press `I` to import a palette slug such as
+`endesga-16` or a full Lospec palette URL. A successful import saves and
+applies the palette immediately. Palettes with 4–16 colors are supported,
+and saved imports remain available offline.
 
 ### New palettes from Lospec
 
-In Palette, press `L` for Lospec, then `R` to refresh. Left/Right browse
-all downloaded palettes in one continuous carousel; Enter saves the selected
-palette and applies it with the insertion animation. Press `L` to return to
-local palettes. Escape also returns to local Palettes; a second Escape closes
-Palettes and returns to Canvas. The `4`, `8`, and `1` filters show 4, 5–8,
-and 9–16 colors respectively;
-`0` clears the filters. These filters also work in Lospec.
-Saved palettes are omitted from the new-palette feed. There is no likes filter.
+In Palette, press `L` for Lospec. Left/Right browses the feed; Enter saves
+and applies the selected palette. Escape returns to local Palettes; a
+second Escape returns to Canvas. The `4`, `8`, and `1` filters show 4, 5–8,
+and 9–16 colors respectively; `0` clears the filters.
+Saved palettes are omitted from the feed.
 
-Browsing and filtering use the local cache without network requests. Refresh
-runs in the background, at most once a minute, and a failed refresh keeps the
-previous cache. Saved palettes remain available offline.
+The feed refreshes locally on the first visit each day. If a refresh fails,
+the previous cache remains available.
 
-For releases, use the shared [Cloudflare palette feed](../services/lospec-feed/README.md).
-Your key stays in a Cloudflare secret; app users do not need a Lospec account.
+For releases, use the [Cloudflare palette feed](../services/lospec-feed/README.md).
 Build with the public feed URL:
 
 ```sh
@@ -253,7 +220,7 @@ cmake --preset zero -DBITMAP16_LOSPEC_FEED_URL=https://YOUR-WORKER.workers.dev/p
 
 For device packaging from your Mac, set `BITMAP16_LOSPEC_FEED_URL` when
 running `platform_zero/device.sh package`. The script forwards that URL to
-the device build. The hosted feed is one request per refresh.
+the device build.
 
 For direct API development, configure with `-DBITMAP16_LOSPEC_FEED_URL=`
 to disable the default hosted feed, then put your key alone on one line

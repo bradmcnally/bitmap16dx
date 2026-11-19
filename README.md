@@ -19,7 +19,7 @@ channeling the vibe of 2000s handheld game consoles.
   - Palette swapping preserves indexed artwork when moving between smaller
     and larger palettes
   - Import Lospec `.hex` palettes containing any number of colors from 4 through 16
-  - Zero and Steam Deck: browse a shared daily Lospec feed or import by name/URL
+  - Zero and Steam Deck: browse a daily Lospec feed or import by name/URL
   - Color filters group palettes into 4, 5–8, and 9–16 colors
   - StampS3A LED displays currently selected color
 - Export `.png` files to `bitmap16dx/exports/` at 128×128 or logical size
@@ -128,48 +128,22 @@ For the Cardputer Zero, see the [complete keyboard reference](platform_zero/READ
 On Zero, press `I` in Palettes to **Import from Lospec**, or `L` to
 **Browse Lospec**. On Steam Deck, use `L3` to import and `Y` to browse.
 
-- The browser shows the shared feed's newest palettes with 4–16 colors in one
-  continuous cartridge carousel. Saved Lospec palettes are omitted; there is
-  no likes threshold. Browse and filter offline after downloading the feed.
-- The shared feed refreshes once daily and checks up to 300 newest palettes.
-  Refresh the app's copy with `R` on Zero or `X` on Steam Deck. Browsing and
-  filtering make no additional network requests.
+- Browse the feed's newest palettes with 4–16 colors in one continuous carousel.
+  Saved Lospec palettes are omitted. Each cartridge shows its color count.
+- The feed refreshes locally the first time you open Lospec each day.
+  Cached palettes remain available offline, including if a refresh fails.
 - Import accepts a palette slug such as `endesga-16` or a full Lospec palette
-  URL. Zero uses its physical keyboard; Steam Deck uses the SteamOS system
-  keyboard (Steam + X) or a physical keyboard. The empty field shows a gray example chosen each time it opens.
-- Enter moves focus from the text field to Import; Enter again
-  fetches the palette. Up returns to editing, `Ctrl+V` pastes when available,
-  and Escape cancels. The insertion cursor blinks while the field is focused.
-- A successful lookup opens a cartridge preview. Enter / `A` saves and applies
-  it; Escape / `B` returns to local Palettes without saving.
+  URL. A successful import saves and applies the palette immediately.
 - Escape / `B` navigates **Lospec → local Palettes → Canvas**, one press per step.
 - Steam Deck: LB/RB cycles color-range filters, D-pad Up toggles local user
   palettes, and D-pad Down clears filters.
 - Backspace/Delete on Zero or `X` on Steam Deck moves a saved user palette to
-  trash. Built-in palettes are protected. Artwork stores its own colors, so
-  deleting a palette does not change existing sketches.
+  trash. Artwork stores its own colors, so deleting a palette does not change
+  existing sketches.
 
-The focused cartridge rises 8 pixels as it reaches the center. Opening
-Palettes uses a center-out entrance wave; switching lists or filters reloads
-cartridges in place. Each cartridge shows its actual color count.
-The ADV uses the same entrance, focus, filter-reload, and exit animations for
-its local palette collection.
-
-Players do not need API keys. See the [Zero guide](platform_zero/README.md),
+See the [Zero guide](platform_zero/README.md),
 [Steam Deck guide](platform_steamdeck/README.md), and
-[shared Cloudflare feed setup](services/lospec-feed/README.md) for details.
-
-### Dialogs
-
-Move focus with arrows / D-pad, select with Enter / `A`, and cancel with
-Escape / `B`. Save warnings default to Save; sketch deletion defaults to
-Cancel and always asks for confirmation.
-
-On ADV and Zero, `G` opens Resize Canvas; on Steam Deck, use L3 or L4.
-Left/Right chooses a size; Enter / `A` moves to Apply, then another press confirms. Up returns to the size row. The `>` marker stays
-on the applied size, while an outline marks the pending size when focus moves
-to the buttons. Shrinking hides pixels outside the new grid without erasing
-them, and resizing can be undone.
+[Cloudflare feed setup](services/lospec-feed/README.md) for details.
 
 ### Sketches Menu *(O)*
 
@@ -325,8 +299,7 @@ The simulator persists sketches, exports, settings, and custom palettes under
 simulation window. RGB matrix support and its controls are disabled for Zero
 and Steam Deck builds.
 
-Icons are embedded directly in `src/icons.h`, `src/screensaver_icons.h`, and
-`src/core/dialog_artwork.h`; no separate icon files are needed at runtime.
+Icons are embedded directly in the application; no separate icon files are needed at runtime.
 
 ### Steam Deck development build
 
