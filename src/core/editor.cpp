@@ -221,6 +221,7 @@ bool Editor::applyPalette(const uint16_t* colors, uint8_t paletteSize) {
 
   saveUndo();
   sketch_.paletteSize = paletteSize;
+  if (selectedColor_ > paletteSize) selectedColor_ = paletteSize;
   for (std::size_t index = 0; index < kMaxPaletteColors; ++index) {
     sketch_.paletteColors[index] = colors[index];
   }

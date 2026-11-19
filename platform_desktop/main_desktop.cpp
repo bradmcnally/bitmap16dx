@@ -1,3 +1,4 @@
+#include "core/dialog_view.h"
 #include <SDL.h>
 
 #include <algorithm>
@@ -28,12 +29,14 @@
 #include "core/preview_view.h"
 #include "core/settings_view.h"
 #include "icons.h"
+#include "screensaver_icons.h"
 #include "cartridge_graphic.h"
 #include "matrix_simulator.h"
 #include "palettes.h"
 #include "workspace.h"
 
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#include "../platform_zero/imu.h"
 #include "../platform_zero/native_io.h"
 #endif
 
@@ -54,6 +57,7 @@ namespace {
 
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
 bitmap16::Zero::NativeIo nativeIo;
+bitmap16::Zero::Imu zeroImu;
 #endif
 
 const Uint8* keyboardState() {
@@ -100,7 +104,8 @@ Uint32 previewLabelUntil = 0;
 char previewLabel[20] = {};
 #ifdef BITMAP16_LOSPEC
 bool desktopLospecView = false;
-char desktopPaletteStatus[64] = "L: Lospec";
+bool desktopImportPreview = false;
+char desktopPaletteStatus[64] = "[I]mport|Browse [L]ospec";
 #endif
 
 void setDesktopStatus(const char* message) {
@@ -150,8 +155,22 @@ BatteryReading readPlatformBattery() {
 
 BatteryReading batteryReading;
 
-bool platformHasLedMatrixControls() {
 #ifdef BITMAP16_STEAM_DECK
+SDL_Keycode paletteFilterKey(Uint8 button, uint8_t currentFilter, bool localList) {
+  if (button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ||
+      button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+    const auto next = bitmap16::PaletteView::steppedSizeFilter(currentFilter,
+        button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER ? -1 : 1);
+    return next == 4 ? SDLK_4 : next == 8 ? SDLK_8 : next == 16 ? SDLK_1 : SDLK_0;
+  }
+  if (button == SDL_CONTROLLER_BUTTON_DPAD_DOWN) return SDLK_0;
+  if (button == SDL_CONTROLLER_BUTTON_DPAD_UP && localList) return SDLK_u;
+  return SDLK_UNKNOWN;
+}
+#endif
+
+bool platformHasLedMatrixControls() {
+#if defined(BITMAP16_STEAM_DECK) || (defined(ENABLE_LED_MATRIX) && !ENABLE_LED_MATRIX)
   return false;
 #else
   return true;
@@ -161,6 +180,8 @@ bool platformHasLedMatrixControls() {
 bool platformHasShakeUndo() {
 #ifdef BITMAP16_STEAM_DECK
   return false;
+#elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
+  return zeroImu.isAvailable();
 #else
   return true;
 #endif
@@ -358,165 +379,37 @@ bitmap16::CanvasView::Theme canvasTheme(
       0x0000, 0xffff, false};
 }
 
-void drawUnsavedChangesModal(
-    bitmap16::Canvas& canvas,
-    const bitmap16::Settings& settings) {
-  const bitmap16::HelpView::Theme theme = helpTheme(settings);
-  const int panelWidth = std::min(192, canvas.width() - 16);
-  constexpr int panelHeight = 60;
-  const int panelX = (canvas.width() - panelWidth) / 2;
-  const int panelY = (canvas.height() - panelHeight) / 2;
+int desktopResizeAction = -1;
 
-  canvas.fillRect(
-      panelX + 2,
-      panelY + 2,
-      panelWidth - 4,
-      panelHeight - 4,
-      theme.background);
-  canvas.fillRect(
-      panelX + 2, panelY, panelWidth - 4, 2, theme.text);
-  canvas.fillRect(
-      panelX, panelY + 2, 2, panelHeight - 4, theme.text);
-  canvas.fillRect(
-      panelX + panelWidth - 2,
-      panelY + 2,
-      2,
-      panelHeight - 4,
-      theme.text);
-  canvas.fillRect(
-      panelX + 2,
-      panelY + panelHeight - 2,
-      panelWidth - 4,
-      2,
-      theme.text);
-
-  canvas.setTextSize(1);
-  canvas.setTextColor(theme.text);
-  canvas.setTextAlign(bitmap16::TextAlign::Center);
-  canvas.drawString(
-      "KEEP CHANGES?", canvas.width() / 2, panelY + 13);
-
-#ifdef BITMAP16_STEAM_DECK
-  constexpr int saveWidth = 6 * 6;
-  constexpr int backWidth = 6 * 6;
-  constexpr int discardWidth = 9 * 6;
-  constexpr int optionGap = 18;
-  constexpr int optionsWidth =
-      saveWidth + optionGap + backWidth + optionGap + discardWidth;
-  const int saveX =
-      panelX + (panelWidth - optionsWidth) / 2;
-  const int backX = saveX + saveWidth + optionGap;
-  const int discardX = backX + backWidth + optionGap;
-  const int optionsY = panelY + 34;
-
-  canvas.setTextAlign(bitmap16::TextAlign::Left);
-  canvas.drawString("A SAVE", saveX, optionsY);
-  canvas.drawString("B BACK", backX, optionsY);
-  canvas.drawString("X DISCARD", discardX, optionsY);
-  canvas.drawLine(
-      saveX, optionsY + 9, saveX + 5, optionsY + 9, theme.text);
-  canvas.drawLine(
-      backX, optionsY + 9, backX + 5, optionsY + 9, theme.text);
-  canvas.drawLine(
-      discardX, optionsY + 9, discardX + 5, optionsY + 9, theme.text);
-#else
-#ifdef BITMAP16_CARDPUTER_ZERO
-  constexpr char discardLabel[] = "D DISCARD";
-  constexpr char saveLabel[] = "S SAVE";
-  constexpr int optionGap = 12;
-#else
-  constexpr char discardLabel[] = "DISCARD";
-  constexpr char saveLabel[] = "SAVE";
-  constexpr int optionGap = 18;
-#endif
-  constexpr int discardWidth = (sizeof(discardLabel) - 1) * 6;
-  constexpr int saveWidth = (sizeof(saveLabel) - 1) * 6;
-  constexpr int cancelWidth = 10 * 6;
-  constexpr int optionsWidth =
-      discardWidth + optionGap + saveWidth + optionGap + cancelWidth;
-  const int discardX =
-      panelX + (panelWidth - optionsWidth) / 2;
-  const int saveX = discardX + discardWidth + optionGap;
-  const int cancelX = saveX + saveWidth + optionGap;
-  const int optionsY = panelY + 34;
-
-  canvas.setTextAlign(bitmap16::TextAlign::Left);
-  canvas.drawString(discardLabel, discardX, optionsY);
-  canvas.drawString(saveLabel, saveX, optionsY);
-  canvas.drawString("ESC CANCEL", cancelX, optionsY);
-  canvas.drawLine(
-      discardX, optionsY + 9, discardX + 5, optionsY + 9, theme.text);
-  canvas.drawLine(
-      saveX, optionsY + 9, saveX + 5, optionsY + 9, theme.text);
-  canvas.drawLine(
-      cancelX, optionsY + 9, cancelX + 17, optionsY + 9, theme.text);
-#endif
+bitmap16::DialogView::Theme dialogTheme(const bitmap16::Settings& settings) {
+  const auto theme = canvasTheme(settings);
+  return {theme.background, theme.text, theme.iconDark, theme.iconLight, theme.dark};
 }
 
-void drawResizeCanvasModal(
-    bitmap16::Canvas& canvas,
-    const bitmap16::Sketch& sketch,
-    const bitmap16::Settings& settings,
-    uint8_t selectedSize) {
-  const auto theme = helpTheme(settings);
-  bool hidesPixels = false;
-  if (selectedSize < sketch.gridSize) {
-    const auto layout = bitmap16::CanvasView::layoutFor(
-        canvas.width(), canvas.height(), sketch.gridSize);
-    const int pixels = selectedSize * layout.cellSize;
-    canvas.drawRect(layout.gridX, layout.gridY, pixels, pixels, 0x0000);
-    canvas.drawRect(layout.gridX + 1, layout.gridY + 1,
-                    pixels - 2, pixels - 2, 0xffff);
-    for (int y = 0; y < sketch.gridSize && !hidesPixels; ++y) {
-      for (int x = y < selectedSize ? selectedSize : 0;
-           x < sketch.gridSize; ++x) {
-        if (sketch.pixels[y][x] != 0) {
-          hidesPixels = true;
-          break;
-        }
-      }
-    }
-  }
+#ifdef BITMAP16_LOSPEC
+bitmap16::DialogView::Frame drawDialogFrame(
+    bitmap16::Canvas& canvas, const bitmap16::Settings& settings,
+    const char* title, int height) {
+  return bitmap16::DialogView::drawFrame(canvas, dialogTheme(settings), title, height);
+}
 
-  const int panelWidth = std::min(252, canvas.width() - 16);
-  constexpr int panelHeight = 68;
-  const int panelX = (canvas.width() - panelWidth) / 2;
-  const int panelY = (canvas.height() - panelHeight) / 2;
-  const int centerX = canvas.width() / 2;
-  canvas.fillRect(panelX, panelY, panelWidth, panelHeight, theme.background);
-  canvas.drawRect(panelX, panelY, panelWidth, panelHeight, theme.text);
-  canvas.drawRect(panelX + 1, panelY + 1, panelWidth - 2, panelHeight - 2,
-                  theme.text);
+void drawDialogOption(bitmap16::Canvas& canvas, const bitmap16::Settings& settings,
+                      const char* label, int x, int y, bool selected, int minimumWidth = 64) {
+  bitmap16::DialogView::drawOption(canvas, dialogTheme(settings), label, x, y, selected, minimumWidth);
+}
 
-  canvas.setTextSize(1);
-  canvas.setTextAlign(bitmap16::TextAlign::Center);
-  canvas.setTextColor(theme.text);
-  canvas.drawString("RESIZE CANVAS", centerX, panelY + 8);
-  char label[40] = {};
-  std::snprintf(label, sizeof(label), "Current %ux%u",
-                sketch.gridSize, sketch.gridSize);
-  canvas.drawString(label, centerX, panelY + 19);
 
-  constexpr uint8_t sizes[] = {8, 16, 32};
-  for (int index = 0; index < 3; ++index) {
-    const uint8_t size = sizes[index];
-    const int x = centerX + (index - 1) * (panelWidth / 4);
-    const bool selected = size == selectedSize;
-    if (selected) {
-      canvas.fillRect(x - 21, panelY + 29, 42, 13, theme.text);
-    }
-    canvas.setTextColor(selected ? theme.background : theme.text);
-    std::snprintf(label, sizeof(label), "%ux%u", size, size);
-    canvas.drawString(label, x, panelY + 32);
-  }
+#endif
 
-  canvas.setTextColor(theme.text);
-  if (hidesPixels) {
-    std::snprintf(label, sizeof(label), "Pixels outside %ux%u will be hidden",
-                  selectedSize, selectedSize);
-    canvas.drawString(label, centerX, panelY + 44);
-  }
-  canvas.drawString("ENTER APPLY   ESC CANCEL", centerX, panelY + 56);
+void drawUnsavedChangesModal(bitmap16::Canvas& canvas,
+                             const bitmap16::Settings& settings, int selected) {
+  bitmap16::DialogView::drawSave(canvas, dialogTheme(settings), selected);
+}
+
+void drawResizeCanvasModal(bitmap16::Canvas& canvas, const bitmap16::Sketch& sketch,
+                          const bitmap16::Settings& settings, uint8_t selectedSize) {
+  bitmap16::DialogView::drawResize(canvas, sketch, dialogTheme(settings), selectedSize,
+                                  desktopResizeAction);
 }
 
 const bitmap16::CanvasView::Assets& canvasAssets(
@@ -883,6 +776,12 @@ void renderCurrentView(
         sketch.paletteColors,
         sketch.paletteSize,
     };
+    bitmap16::ChargingView::setBattery(
+        chargingState, std::max(0, batteryReading.percent),
+        batteryIconForPercent(std::max(0, batteryReading.percent)));
+    bitmap16::ChargingView::setDecorationIcons(
+        chargingState, SCREENSAVER_SAVE, SCREENSAVER_SKULL,
+        batteryReading.charging ? ICON_CHARGING_PLUG : nullptr);
     bitmap16::ChargingView::render(
         canvas, chargingState, chargingTheme(), &chargingSketch);
   } else if (view == DesktopView::Palette) {
@@ -962,6 +861,9 @@ int main(int argc, char** argv) {
     SDL_Quit();
     return 1;
   }
+  if (!zeroImu.open()) {
+    SDL_Log("Shake undo: %s", zeroImu.error().c_str());
+  }
 #endif
   // Stick state is polled once per loop to provide controlled hold-repeat.
   // Per-motion events are redundant and can flood the queue on Steam Deck,
@@ -1004,8 +906,8 @@ int main(int argc, char** argv) {
       windowHeight,
       windowFlags);
 #ifdef BITMAP16_STEAM_DECK
-  // The Deck presents its virtual keyboard when an application advertises
-  // text entry. Bitmap16 uses key commands only and never needs text input.
+  // Keep canvas shortcuts out of text-entry mode. The import dialog enables
+  // system text input only while its field has focus.
   SDL_StopTextInput();
 #endif
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
@@ -1091,6 +993,10 @@ int main(int argc, char** argv) {
   }
   SDL_Log("Workspace: %s", workspace.root().string().c_str());
   bitmap16::Settings& settings = workspace.settings();
+  if (!platformHasLedMatrixControls()) settings.matrixEnabled = false;
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  nativeIo.setDisplayWarmth(settings.displayWarmth);
+#endif
 #ifdef BITMAP16_STEAM_DECK
   // SteamOS owns the physical display brightness. Applying the embedded
   // device's saved software brightness here dims the rendered colors a
@@ -1144,7 +1050,11 @@ int main(int argc, char** argv) {
   std::vector<bitmap16::Lospec::Palette> lospecCache =
       bitmap16::Lospec::loadCache(workspace.root());
   std::vector<bitmap16::Lospec::Palette> lospecEntries;
-  int lospecMinimumLikes = bitmap16::Lospec::readMinimumLikes(workspace.root());
+  std::vector<bitmap16::Lospec::Palette> importedPalettes;
+  bool lospecRequestIsImport = false;
+  std::string lastPaletteLookup;
+  uint8_t lospecSizeFilter = 0;
+  char lospecTitle[48] = {};
   std::atomic_bool lospecCancel{false};
   std::future<bitmap16::Lospec::Result> lospecRequest;
   Uint32 nextLospecRefreshAt = 0;
@@ -1177,23 +1087,38 @@ int main(int argc, char** argv) {
   };
   const auto refreshPaletteCatalog = [&]() {
 #ifdef BITMAP16_LOSPEC
-    if (desktopLospecView) {
-      lospecEntries = bitmap16::Lospec::matching(
-          lospecCache, lospecMinimumLikes,
-          bitmap16::Lospec::savedSlugs(workspace.root()));
+    if (desktopImportPreview) {
+      lospecEntries = importedPalettes;
+      paletteEntries.clear();
+      for (const auto& palette : lospecEntries) {
+        paletteEntries.push_back({palette.colors.data(), palette.title.c_str(), palette.size,
+                                  false, palette.author.c_str(), palette.likes});
+      }
+      paletteCatalog.title = "IMPORT PREVIEW";
+      paletteCatalog.emptyMessage = "NO IMPORTED PALETTE";
+      std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
+#ifdef BITMAP16_STEAM_DECK
+                    "A: save and apply  B: cancel  L3: lookup");
+#else
+                    "Enter: save and apply  Esc: cancel  I: lookup");
+#endif
+    } else if (desktopLospecView) {
+      lospecEntries = bitmap16::Lospec::availablePalettes(
+          lospecCache, bitmap16::Lospec::savedSlugs(workspace.root()), lospecSizeFilter);
       paletteEntries.clear();
       for (const auto& palette : lospecEntries) {
         paletteEntries.push_back({palette.colors.data(), palette.title.c_str(),
             palette.size, false, palette.author.c_str(), palette.likes});
       }
-      paletteCatalog.title = "LOSPEC / NEWEST";
+      std::snprintf(lospecTitle, sizeof(lospecTitle), "LOSPEC (%zu)", lospecEntries.size());
+      paletteCatalog.title = lospecTitle;
       paletteCatalog.emptyMessage = lospecCache.empty()
-          ? "PRESS R TO GET PALETTES" : "NO NEW MATCHES; TRY FEWER LIKES";
+          ? "PRESS R TO GET PALETTES" : "NO NEW MATCHES";
       std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
 #ifdef BITMAP16_STEAM_DECK
-          "A:save X:refresh LB/RB:%d likes Y:local", lospecMinimumLikes);
+                    "L3:Import");
 #else
-          "R: refresh  +/-: %d likes  L: local", lospecMinimumLikes);
+                    "[I]mport");
 #endif
     } else
 #endif
@@ -1205,9 +1130,9 @@ int main(int argc, char** argv) {
 #ifdef BITMAP16_LOSPEC
       std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
 #ifdef BITMAP16_STEAM_DECK
-                    "Y: Lospec  A: apply");
+                    "Y:Lospec L3:import X:delete A:apply");
 #else
-                    "L: Lospec");
+                    "[I]mport|Browse [L]ospec");
 #endif
 #endif
     }
@@ -1215,6 +1140,11 @@ int main(int argc, char** argv) {
         paletteEntries.empty() ? nullptr : paletteEntries.data();
     paletteCatalog.count = static_cast<int>(paletteEntries.size());
     bitmap16::PaletteView::reset(paletteState, paletteCatalog);
+#ifdef BITMAP16_LOSPEC
+    if (desktopLospecView && lospecSizeFilter != 0) {
+      bitmap16::PaletteView::toggleSizeFilter(paletteState, paletteCatalog, lospecSizeFilter);
+    }
+#endif
     activePalette = findActivePalette(editor.sketch(), paletteEntries);
     if (activePalette >= 0) {
       bitmap16::PaletteView::selectCatalogIndex(
@@ -1223,11 +1153,13 @@ int main(int argc, char** argv) {
   };
 #if !defined(BITMAP16_CARDPUTER_ZERO_DEVICE) && !defined(BITMAP16_STEAM_DECK)
   bitmap16::Desktop::MatrixSimulator desktopMatrix;
-  if (desktopMatrix.create()) {
-    desktopMatrix.setEnabled(settings.matrixEnabled);
-    matrixSimulator = &desktopMatrix;
-  } else {
-    SDL_Log("RGB matrix simulator creation failed: %s", SDL_GetError());
+  if (platformHasLedMatrixControls()) {
+    if (desktopMatrix.create()) {
+      desktopMatrix.setEnabled(settings.matrixEnabled);
+      matrixSimulator = &desktopMatrix;
+    } else {
+      SDL_Log("RGB matrix simulator creation failed: %s", SDL_GetError());
+    }
   }
 #endif
   bool galleryMode = false;
@@ -1235,7 +1167,11 @@ int main(int argc, char** argv) {
   int galleryIndex = 0;
   Uint32 galleryLastAdvance = SDL_GetTicks();
   Uint32 paletteCompletionAt = 0;
-  Uint32 paletteInsertionAdvanceAt = 0;
+  Uint32 paletteFrameAt = SDL_GetTicks();
+  constexpr Uint32 paletteFrameInterval = 16u;
+  Uint32 palettePresentedAt = 0;
+  bool paletteHasPresented = false;
+  bool paletteRenderPending = false;
   bool rulersVisible = false;
   renderCurrentView(
       currentView,
@@ -1412,7 +1348,62 @@ int main(int argc, char** argv) {
   bool mouseDrawHeld = false;
   bool mouseEraseHeld = false;
   bool pointerInsideCanvas = false;
+  enum class PaletteExitAction { None, SwitchList, FilterSize, FilterUser, Close };
+  uint8_t pendingPaletteSize = 0;
+  PaletteExitAction paletteExitAction = PaletteExitAction::None;
+  std::vector<uint16_t> paletteReloadFrame;
+  const auto replacePaletteList = [&](PaletteExitAction action) {
+#ifdef BITMAP16_LOSPEC
+    if (action == PaletteExitAction::SwitchList) {
+      desktopLospecView = desktopImportPreview ? false : !desktopLospecView;
+      desktopImportPreview = false;
+      refreshPaletteCatalog();
+    } else if (desktopLospecView && action == PaletteExitAction::FilterSize) {
+      lospecSizeFilter = lospecSizeFilter == pendingPaletteSize ? 0 : pendingPaletteSize;
+      refreshPaletteCatalog();
+    } else
+#endif
+    if (action == PaletteExitAction::FilterUser) {
+      bitmap16::PaletteView::toggleUserFilter(paletteState, paletteCatalog);
+    } else if (pendingPaletteSize == 0) {
+      bitmap16::PaletteView::reset(paletteState, paletteCatalog);
+    } else {
+      bitmap16::PaletteView::toggleSizeFilter(paletteState, paletteCatalog, pendingPaletteSize);
+    }
+  };
+  const auto requestPaletteExit = [&](PaletteExitAction action) {
+    if (paletteExitAction != PaletteExitAction::None || paletteState.insertionAnimating) return;
+    if (action != PaletteExitAction::Close) {
+      paletteReloadFrame.assign(canvas.pixels(), canvas.pixels() + width * height);
+      replacePaletteList(action);
+      bitmap16::PaletteView::beginReload(paletteState, width, paletteReloadFrame.data());
+      return;
+    }
+    paletteExitAction = action;
+    if (!paletteState.entranceAnimating && !paletteState.reloadAnimating)
+      bitmap16::PaletteView::beginExit(paletteState, width);
+  };
+  bool paletteWasVisible = false;
   const auto renderNow = [&](uint8_t resizeGridSelection = 0) {
+    if (currentView == DesktopView::Palette && !paletteWasVisible) {
+      bitmap16::PaletteView::beginEntrance(paletteState, width);
+      paletteFrameAt = SDL_GetTicks();
+    }
+    paletteWasVisible = currentView == DesktopView::Palette;
+    if (currentView == DesktopView::Palette) {
+      const Uint32 now = SDL_GetTicks();
+      if (paletteHasPresented && now - palettePresentedAt < paletteFrameInterval) {
+        // Keep the latest state; input events must not bypass frame pacing.
+        paletteRenderPending = true;
+        return;
+      }
+      palettePresentedAt = now;
+      paletteHasPresented = true;
+      paletteRenderPending = false;
+    } else {
+      paletteHasPresented = false;
+      paletteRenderPending = false;
+    }
     if (currentView != DesktopView::Canvas) {
       mouseDrawHeld = mouseEraseHeld = pointerInsideCanvas = false;
     }
@@ -1463,26 +1454,27 @@ int main(int argc, char** argv) {
     renderNow();
   };
   const auto advancePaletteAnimation = [&]() {
-    if (currentView != DesktopView::Palette) return;
-    float insertionStep = 0.0f;
-    if (paletteState.insertionAnimating) {
-      const Uint32 now = SDL_GetTicks();
-      if (paletteInsertionAdvanceAt == 0) {
-        paletteInsertionAdvanceAt = now;
-      }
-      const Uint32 elapsed = std::min<Uint32>(
-          now - paletteInsertionAdvanceAt, 50u);
-      paletteInsertionAdvanceAt = now;
-      insertionStep =
-          static_cast<float>(elapsed) /
-          bitmap16::PaletteView::kInsertionDurationMs;
-    } else {
-      paletteInsertionAdvanceAt = 0;
+    const Uint32 now = SDL_GetTicks();
+    if (currentView != DesktopView::Palette) { paletteFrameAt = now; return; }
+    const Uint32 elapsed = now - paletteFrameAt;
+    if (elapsed < paletteFrameInterval) {
+      if (paletteRenderPending) renderNow();
+      return;
     }
+    paletteFrameAt = now;
+    if (paletteExitAction != PaletteExitAction::None &&
+        !paletteState.entranceAnimating && !paletteState.reloadAnimating && !paletteState.exitAnimating)
+      bitmap16::PaletteView::beginExit(paletteState, width);
     const bitmap16::PaletteView::AnimationResult result =
-        bitmap16::PaletteView::advance(
-            paletteState, 0.25f, insertionStep);
-    if (result ==
+        bitmap16::PaletteView::advanceTimed(
+            paletteState, static_cast<float>(elapsed > 250u ? paletteFrameInterval : std::min(elapsed, 100u)));
+    if (result == bitmap16::PaletteView::AnimationResult::ExitComplete) {
+      paletteExitAction = PaletteExitAction::None;
+      paletteState.exitAnimating = false;
+      currentView = DesktopView::Canvas;
+      paletteHasPresented = false;
+      renderNow();
+    } else if (result ==
         bitmap16::PaletteView::AnimationResult::SelectionComplete) {
       if (paletteCompletionAt == 0) {
         paletteCompletionAt = SDL_GetTicks();
@@ -1491,9 +1483,14 @@ int main(int argc, char** argv) {
         paletteState.insertionAnimating = false;
         paletteCompletionAt = 0;
         currentView = DesktopView::Canvas;
+#ifdef BITMAP16_LOSPEC
+        desktopImportPreview = false;
+#endif
         renderNow();
       }
     } else if (result != bitmap16::PaletteView::AnimationResult::Idle) {
+      renderNow();
+    } else if (paletteRenderPending) {
       renderNow();
     }
   };
@@ -1552,6 +1549,7 @@ int main(int argc, char** argv) {
   AxisRepeat dpadX;
   AxisRepeat dpadY;
   bool controllerMoveHeld = false;
+  bool paletteUndoReleaseConsumed = false;
   bool controllerSaveChordLatched = false;
   bool focusNewestSketchOnNextMemoryOpen = false;
   bool previewLeftTriggerLatched = false;
@@ -1573,14 +1571,62 @@ int main(int argc, char** argv) {
                 right.pixels,
                 sizeof(left.pixels)) == 0;
       };
+  const auto confirmSketchDeletion = [&]() {
+    bool deleteSelected = false;
+    const auto draw = [&]() {
+      renderNow();
+      bitmap16::DialogView::drawDelete(canvas, dialogTheme(settings), deleteSelected);
+      present(canvas, texture, renderer, settings.displayBrightness);
+    };
+    draw();
+    SDL_Event confirmation;
+    while (waitEvent(&confirmation)) {
+      SDL_Keycode key = SDLK_UNKNOWN;
+      if (confirmation.type == SDL_KEYDOWN && confirmation.key.repeat == 0) {
+        key = confirmation.key.keysym.sym;
+#ifdef BITMAP16_CARDPUTER_ZERO
+        if (key == SDLK_z) key = SDLK_LEFT;
+        if (key == SDLK_c) key = SDLK_RIGHT;
+#endif
+      } else if (confirmation.type == SDL_CONTROLLERBUTTONDOWN) {
+        switch (confirmation.cbutton.button) {
+          case SDL_CONTROLLER_BUTTON_A: key = SDLK_RETURN; break;
+          case SDL_CONTROLLER_BUTTON_B: key = SDLK_ESCAPE; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_LEFT: key = SDLK_LEFT; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: key = SDLK_RIGHT; break;
+          default: break;
+        }
+      } else if (confirmation.type == SDL_QUIT ||
+                 (confirmation.type == SDL_WINDOWEVENT &&
+                  confirmation.window.event == SDL_WINDOWEVENT_CLOSE)) {
+        SDL_PushEvent(&confirmation);
+        renderNow();
+        return false;
+      }
+      if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+        renderNow();
+        return key != SDLK_ESCAPE && deleteSelected;
+      }
+      if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+        deleteSelected = key == SDLK_RIGHT;
+        draw();
+      }
+    }
+    renderNow();
+    return false;
+  };
   const auto confirmUnsavedChanges = [&]() {
     if (!settings.saveWarnings || !documentDirty) {
       return true;
     }
 
-    renderNow();
-    drawUnsavedChangesModal(canvas, settings);
-    present(canvas, texture, renderer, settings.displayBrightness);
+    int selected = 2;
+    const auto draw = [&]() {
+      renderNow();
+      drawUnsavedChangesModal(canvas, settings, selected);
+      present(canvas, texture, renderer, settings.displayBrightness);
+    };
+    draw();
 
     enum class Choice {
       Cancel,
@@ -1594,37 +1640,35 @@ int main(int argc, char** argv) {
       if (waitEvent(&modalEvent) == 0) {
         continue;
       }
+      SDL_Keycode key = SDLK_UNKNOWN;
       if (modalEvent.type == SDL_KEYDOWN && modalEvent.key.repeat == 0) {
-        const SDL_Keycode key = modalEvent.key.keysym.sym;
-        if (key == SDLK_s
-#ifndef BITMAP16_CARDPUTER_ZERO
-            || key == SDLK_RETURN
+        key = modalEvent.key.keysym.sym;
+#ifdef BITMAP16_CARDPUTER_ZERO
+        if (key == SDLK_z) key = SDLK_LEFT;
+        if (key == SDLK_c) key = SDLK_RIGHT;
 #endif
-        ) {
-          choice = Choice::Save;
-          choiceMade = true;
-        } else if (key == SDLK_d) {
-          choice = Choice::Discard;
-          choiceMade = true;
-        } else if (key == SDLK_ESCAPE) {
-          choiceMade = true;
-        }
       } else if (modalEvent.type == SDL_CONTROLLERBUTTONDOWN) {
-        if (modalEvent.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
-          choice = Choice::Save;
-          choiceMade = true;
-        } else if (
-            modalEvent.cbutton.button == SDL_CONTROLLER_BUTTON_X) {
-          choice = Choice::Discard;
-          choiceMade = true;
-        } else if (
-            modalEvent.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
-          choiceMade = true;
+        switch (modalEvent.cbutton.button) {
+          case SDL_CONTROLLER_BUTTON_A: key = SDLK_RETURN; break;
+          case SDL_CONTROLLER_BUTTON_B: key = SDLK_ESCAPE; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_LEFT: key = SDLK_LEFT; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: key = SDLK_RIGHT; break;
+          default: break;
         }
-      } else if (
-          modalEvent.type == SDL_QUIT ||
-          (modalEvent.type == SDL_WINDOWEVENT &&
-           modalEvent.window.event == SDL_WINDOWEVENT_CLOSE)) {
+      } else if (modalEvent.type == SDL_QUIT ||
+                 (modalEvent.type == SDL_WINDOWEVENT &&
+                  modalEvent.window.event == SDL_WINDOWEVENT_CLOSE)) {
+        SDL_PushEvent(&modalEvent);
+        choiceMade = true;
+      }
+      if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+        selected = std::clamp(selected + (key == SDLK_LEFT ? -1 : 1), 0, 2);
+        draw();
+      } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+        constexpr Choice choices[] = {Choice::Cancel, Choice::Discard, Choice::Save};
+        choice = choices[selected];
+        choiceMade = true;
+      } else if (key == SDLK_ESCAPE) {
         choiceMade = true;
       }
     }
@@ -1650,13 +1694,13 @@ int main(int argc, char** argv) {
     renderNow();
     return true;
   };
-#ifdef BITMAP16_CARDPUTER_ZERO
   const auto chooseGridSize = [&]() {
     constexpr uint8_t sizes[] = {8, 16, 32};
     const uint8_t currentSize = editor.sketch().gridSize;
     int selection = currentSize == 8 ? 0 : currentSize == 16 ? 1 : 2;
     const auto originalViewport = desktopCanvasViewport;
     desktopCanvasViewport = {};
+    desktopResizeAction = -1;
     renderNow(sizes[selection]);
 
     uint8_t chosenSize = currentSize;
@@ -1668,17 +1712,37 @@ int main(int argc, char** argv) {
         SDL_PushEvent(&modalEvent);
         break;
       }
-      if (modalEvent.type != SDL_KEYDOWN) continue;
-      const SDL_Keycode key = modalEvent.key.keysym.sym;
-      if (key == SDLK_ESCAPE && !modalEvent.key.repeat) break;
-      if (key == SDLK_RETURN && !modalEvent.key.repeat) {
-        chosenSize = sizes[selection];
-        break;
-      }
-      if (key == SDLK_z || key == SDLK_LEFT) {
-        selection = std::max(0, selection - 1);
-      } else if (key == SDLK_c || key == SDLK_RIGHT) {
-        selection = std::min(2, selection + 1);
+      SDL_Keycode key = SDLK_UNKNOWN;
+      bool repeated = false;
+      if (modalEvent.type == SDL_KEYDOWN) {
+        key = modalEvent.key.keysym.sym;
+        repeated = modalEvent.key.repeat != 0;
+      } else if (modalEvent.type == SDL_CONTROLLERBUTTONDOWN) {
+        switch (modalEvent.cbutton.button) {
+          case SDL_CONTROLLER_BUTTON_A: key = SDLK_RETURN; break;
+          case SDL_CONTROLLER_BUTTON_B: key = SDLK_ESCAPE; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_LEFT: key = SDLK_LEFT; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: key = SDLK_RIGHT; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_UP: key = SDLK_UP; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_DOWN: key = SDLK_DOWN; break;
+          default: break;
+        }
+      } else continue;
+      if (key == SDLK_ESCAPE && !repeated) break;
+      if ((key == SDLK_RETURN || key == SDLK_KP_ENTER) && !repeated) {
+        if (desktopResizeAction < 0) desktopResizeAction = 1;
+        else {
+          if (desktopResizeAction == 1) chosenSize = sizes[selection];
+          break;
+        }
+      } else if (key == SDLK_UP || key == SDLK_x) {
+        desktopResizeAction = -1;
+      } else if (key == SDLK_DOWN || key == SDLK_f) {
+        if (desktopResizeAction < 0) desktopResizeAction = 1;
+      } else if (key == SDLK_z || key == SDLK_LEFT || key == SDLK_c || key == SDLK_RIGHT) {
+        const int delta = key == SDLK_z || key == SDLK_LEFT ? -1 : 1;
+        if (desktopResizeAction < 0) selection = std::clamp(selection + delta, 0, 2);
+        else desktopResizeAction = std::clamp(desktopResizeAction + delta, 0, 1);
       } else {
         continue;
       }
@@ -1686,8 +1750,285 @@ int main(int argc, char** argv) {
     }
 
     desktopCanvasViewport = originalViewport;
+    desktopResizeAction = -1;
     return editor.resizeGrid(chosenSize);
   };
+#ifdef BITMAP16_LOSPEC
+  const auto enterPaletteLookup = [&](std::string& input) {
+    int actionFocus = -1;
+#ifdef BITMAP16_STEAM_DECK
+    struct TextInputSession {
+      TextInputSession() { SDL_StartTextInput(); }
+      ~TextInputSession() { SDL_StopTextInput(); }
+    } textInputSession;
+#endif
+    constexpr const char* examples[] = {
+        "endesga-16", "vanilla-milkshake", "dreamscape8", "cl8uds", "citrink",
+        "mist-gb", "bubblegum-16", "commodore64", "slso8", "island-joy-16"};
+    static std::size_t nextExampleIndex = 0;
+    const std::size_t exampleIndex = nextExampleIndex;
+    nextExampleIndex = (nextExampleIndex + 1) % (sizeof(examples) / sizeof(examples[0]));
+    std::string hint;
+    constexpr Uint32 cursorBlinkMs = 500;
+    Uint32 cursorEpoch = SDL_GetTicks();
+    const auto fieldFocused = [&]() { return actionFocus < 0; };
+    const auto draw = [&]() {
+#ifdef BITMAP16_STEAM_DECK
+      if (fieldFocused() && !SDL_IsTextInputActive()) SDL_StartTextInput();
+      if (!fieldFocused() && SDL_IsTextInputActive()) SDL_StopTextInput();
+#endif
+      renderNow();
+      const auto theme = helpTheme(settings);
+      const int dialogHeight = hint.empty() ? 124 : 144;
+      const auto frame = drawDialogFrame(canvas, settings, "IMPORT FROM LOSPEC", dialogHeight);
+      const auto iconTheme = canvasTheme(settings);
+      for (int pixel = 0; pixel < 24 * 24; ++pixel) {
+        const int value = (ICON_LOSPEC[pixel / 4] >> ((3 - pixel % 4) * 2)) & 3;
+        if (value == 1 || value == 2)
+          canvas.drawPixel(canvas.width() / 2 - 12 + pixel % 24,
+                           frame.y + 12 + pixel / 24,
+                           value == 1 ? iconTheme.iconDark : iconTheme.iconLight);
+      }
+      canvas.setTextColor(theme.textSecondary);
+      canvas.setTextAlign(bitmap16::TextAlign::Left);
+      const int fieldX = frame.x + 12;
+      const int fieldWidth = frame.width - 24;
+      canvas.drawRect(fieldX, frame.y + 60, fieldWidth, 20, theme.text);
+      if (fieldFocused())
+        canvas.drawRect(fieldX + 1, frame.y + 61, fieldWidth - 2, 18, theme.text);
+      const auto visibleCharacters = static_cast<std::size_t>((fieldWidth - 10) / 6);
+      const auto visible = input.substr(
+          input.size() > visibleCharacters ? input.size() - visibleCharacters : 0);
+      canvas.setTextColor(input.empty() ? theme.textSecondary : theme.text);
+      canvas.drawString(input.empty() ? examples[exampleIndex] : visible.c_str(),
+                        fieldX + 4, frame.y + 66);
+      if (fieldFocused() && ((SDL_GetTicks() - cursorEpoch) / cursorBlinkMs) % 2 == 0) {
+        const int cursorX = input.empty() ? fieldX + 3 :
+            fieldX + 5 + static_cast<int>(visible.size()) * 6;
+        canvas.fillRect(cursorX, frame.y + 65, 1, 9, theme.text);
+      }
+      canvas.setTextColor(theme.text);
+      canvas.setTextAlign(bitmap16::TextAlign::Center);
+      if (!hint.empty()) canvas.drawString(hint.c_str(), canvas.width() / 2, frame.y + 86);
+      drawDialogOption(canvas, settings, "CANCEL", bitmap16::DialogView::optionX(canvas, 0, 2),
+                       frame.y + frame.height - 24, actionFocus == 0);
+      drawDialogOption(canvas, settings, "IMPORT", bitmap16::DialogView::optionX(canvas, 1, 2),
+                       frame.y + frame.height - 24, actionFocus == 1);
+      present(canvas, texture, renderer, settings.displayBrightness);
+    };
+    const auto paste = [&]() {
+      cursorEpoch = SDL_GetTicks();
+      actionFocus = -1;
+      char* text = SDL_GetClipboardText();
+      if (text) {
+        input.append(text, std::min<std::size_t>(std::strlen(text), 2048 - input.size()));
+        SDL_free(text);
+      }
+    };
+    const auto finish = [&](bool submit) {
+      if (submit) {
+        std::string slug;
+        if (!bitmap16::Lospec::lookupSlug(input, slug)) {
+          hint = "Enter a Lospec name or URL";
+          actionFocus = -1;
+          return false;
+        }
+      }
+      paletteHasPresented = false;
+      return true;
+    };
+    draw();
+    SDL_Event entryEvent;
+    while (true) {
+      const int timeout = fieldFocused() ? static_cast<int>(
+          cursorBlinkMs - (SDL_GetTicks() - cursorEpoch) % cursorBlinkMs) : -1;
+      if (!waitEvent(&entryEvent, timeout)) { draw(); continue; }
+      if (entryEvent.type == SDL_QUIT || (entryEvent.type == SDL_WINDOWEVENT &&
+          entryEvent.window.event == SDL_WINDOWEVENT_CLOSE)) {
+        SDL_PushEvent(&entryEvent);
+        finish(false);
+        return false;
+      }
+#ifdef BITMAP16_STEAM_DECK
+      if (entryEvent.type == SDL_TEXTINPUT) {
+        if (fieldFocused()) {
+          for (const unsigned char character : entryEvent.text.text) {
+            if (character == 0) break;
+            if (character >= 32 && character <= 126 && input.size() < 2048)
+              input += static_cast<char>(character);
+          }
+          cursorEpoch = SDL_GetTicks();
+          draw();
+        }
+        continue;
+      }
+#endif
+      SDL_Keycode key = SDLK_UNKNOWN;
+#ifndef BITMAP16_STEAM_DECK
+      bool shift = false;
+#endif
+      if (entryEvent.type == SDL_KEYDOWN) {
+        key = entryEvent.key.keysym.sym;
+#ifndef BITMAP16_STEAM_DECK
+        shift = (entryEvent.key.keysym.mod & KMOD_SHIFT) != 0;
+#endif
+        if ((entryEvent.key.keysym.mod & KMOD_CTRL) != 0) {
+          if (key == SDLK_v) { paste(); draw(); }
+          continue;
+        }
+      } else if (entryEvent.type == SDL_CONTROLLERBUTTONDOWN) {
+        switch (entryEvent.cbutton.button) {
+          case SDL_CONTROLLER_BUTTON_A: key = SDLK_RETURN; break;
+          case SDL_CONTROLLER_BUTTON_B: key = SDLK_ESCAPE; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_LEFT: key = SDLK_LEFT; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: key = SDLK_RIGHT; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_UP: key = SDLK_UP; break;
+          case SDL_CONTROLLER_BUTTON_DPAD_DOWN: key = SDLK_DOWN; break;
+          default: break;
+        }
+      } else continue;
+      cursorEpoch = SDL_GetTicks();
+      if (key == SDLK_ESCAPE) { finish(false); return false; }
+      if ((key == SDLK_RETURN || key == SDLK_KP_ENTER) &&
+          (entryEvent.type != SDL_KEYDOWN || entryEvent.key.repeat == 0)) {
+        if (actionFocus < 0) actionFocus = 1;
+        else if (actionFocus == 0) { finish(false); return false; }
+        else if (finish(true)) return true;
+      } else if (key == SDLK_BACKSPACE || key == SDLK_DELETE) {
+        if (!input.empty()) input.pop_back();
+        actionFocus = -1;
+      } else if (key == SDLK_UP) {
+        actionFocus = -1;
+      } else if (key == SDLK_DOWN) {
+        if (actionFocus < 0) actionFocus = 1;
+      } else if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+        if (actionFocus >= 0) actionFocus = key == SDLK_LEFT ? 0 : 1;
+#ifndef BITMAP16_STEAM_DECK
+      } else if (key >= 32 && key <= 126 && input.size() < 2048) {
+        char character = static_cast<char>(key);
+        if (shift) {
+          if (character >= 'a' && character <= 'z') character -= 'a' - 'A';
+          else {
+            const char* plain = "1234567890-=[];'/,`.\\";
+            const char* shifted = "!@#$%^&*()_+{}:\"?<~>|";
+            const char* found = std::strchr(plain, character);
+            if (found) character = shifted[found - plain];
+          }
+        }
+        input += character;
+        actionFocus = -1;
+#endif
+      }
+      draw();
+    }
+  };
+  if (smokeTest) {
+    SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+    pushKeyEvent(SDLK_RETURN, false);
+    if (confirmSketchDeletion()) return 1;
+    pushKeyEvent(SDLK_RIGHT, false);
+    pushKeyEvent(SDLK_ESCAPE, false);
+    if (confirmSketchDeletion()) return 1;
+    pushKeyEvent(SDLK_RIGHT, false);
+    pushKeyEvent(SDLK_RETURN, false);
+    if (!confirmSketchDeletion()) return 1;
+    const auto originalGridSize = editor.sketch().gridSize;
+    pushKeyEvent(SDLK_RIGHT, false);
+    pushKeyEvent(SDLK_DOWN, false);
+    pushKeyEvent(SDLK_LEFT, false);
+    pushKeyEvent(SDLK_RETURN, false);
+    chooseGridSize();
+    if (editor.sketch().gridSize != originalGridSize) return 1;
+    pushKeyEvent(originalGridSize == 32 ? SDLK_LEFT : SDLK_RIGHT, false);
+    pushKeyEvent(SDLK_RETURN, false);
+    pushKeyEvent(SDLK_RETURN, false);
+    chooseGridSize();
+    if (editor.sketch().gridSize == originalGridSize) return 1;
+    editor.resizeGrid(originalGridSize);
+    std::string input;
+    pushKeyEvent(SDLK_RETURN, false);
+    pushKeyEvent(SDLK_ESCAPE, false);
+    if (enterPaletteLookup(input) || !input.empty()) {
+      SDL_Log("Palette placeholder must not be submitted as input");
+      return 1;
+    }
+#ifdef BITMAP16_STEAM_DECK
+    SDL_version textTestVersion{};
+    SDL_GetVersion(&textTestVersion);
+    // SDL2-compat reserves patch versions >= 50 and cannot inject SDL_TEXTINPUT.
+    // Real system text input works; this synthetic-event check needs native SDL2.
+    if (textTestVersion.patch >= 50) {
+      SDL_Log("System text-input smoke check requires native SDL2; SDL2-compat cannot inject text events");
+      return 1;
+    }
+    const auto pushText = [&](const char* text) {
+      SDL_StartTextInput();
+      SDL_Event event{};
+      event.type = SDL_TEXTINPUT;
+      event.text.windowID = SDL_GetWindowID(window);
+      std::snprintf(event.text.text, sizeof(event.text.text), "%s", text);
+      SDL_PushEvent(&event);
+    };
+#endif
+    for (const char character : std::string("sweetie-16")) pushKeyEvent(character, false);
+#ifdef BITMAP16_STEAM_DECK
+    pushText("sweetie-16");
+#endif
+    pushKeyEvent(SDLK_RETURN, false);
+    pushKeyEvent(SDLK_RETURN, false);
+    if (!enterPaletteLookup(input) || input != "sweetie-16") {
+      SDL_Log("Palette lookup keyboard smoke test failed");
+      return 1;
+    }
+    const auto button = [](Uint8 value) {
+      SDL_Event event{};
+      event.type = SDL_CONTROLLERBUTTONDOWN;
+      event.cbutton.button = value;
+      event.cbutton.state = SDL_PRESSED;
+      SDL_PushEvent(&event);
+    };
+#ifdef BITMAP16_STEAM_DECK
+    if (SDL_IsTextInputActive()) return 1;
+    // Resize and filter controls must work without keyboard input.
+    const auto beforeControllerResize = editor.sketch().gridSize;
+    const int resizeDirection = beforeControllerResize == 32 ? SDL_CONTROLLER_BUTTON_DPAD_LEFT :
+        SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+    button(static_cast<Uint8>(resizeDirection));
+    button(SDL_CONTROLLER_BUTTON_A);
+    button(SDL_CONTROLLER_BUTTON_DPAD_UP);
+    button(SDL_CONTROLLER_BUTTON_B);
+    if (chooseGridSize() || editor.sketch().gridSize != beforeControllerResize) return 1;
+    button(static_cast<Uint8>(resizeDirection));
+    button(SDL_CONTROLLER_BUTTON_A);
+    button(SDL_CONTROLLER_BUTTON_A);
+    if (!chooseGridSize() || editor.sketch().gridSize == beforeControllerResize) return 1;
+    editor.resizeGrid(beforeControllerResize);
+    if (paletteFilterKey(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 0, true) != SDLK_4 ||
+        paletteFilterKey(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 4, true) != SDLK_8 ||
+        paletteFilterKey(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 8, false) != SDLK_1 ||
+        paletteFilterKey(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 16, false) != SDLK_0 ||
+        paletteFilterKey(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, 0, true) != SDLK_1 ||
+        paletteFilterKey(SDL_CONTROLLER_BUTTON_DPAD_UP, 8, true) != SDLK_u ||
+        paletteFilterKey(SDL_CONTROLLER_BUTTON_DPAD_UP, 8, false) != SDLK_UNKNOWN ||
+        paletteFilterKey(SDL_CONTROLLER_BUTTON_DPAD_DOWN, 8, true) != SDLK_0) return 1;
+    input.clear();
+    pushText("a");
+    button(SDL_CONTROLLER_BUTTON_A);
+    button(SDL_CONTROLLER_BUTTON_A);
+    if (!enterPaletteLookup(input) || input != "a" || SDL_IsTextInputActive()) {
+      SDL_Log("Palette system text input/controller smoke test failed");
+      return 1;
+    }
+#endif
+    button(SDL_CONTROLLER_BUTTON_B);
+    if (enterPaletteLookup(input)) {
+      SDL_Log("Palette lookup cancel smoke test failed");
+      return 1;
+    }
+#ifdef BITMAP16_STEAM_DECK
+    if (SDL_IsTextInputActive()) return 1;
+#endif
+  }
 #endif
   bool running = !smokeTest;
 #ifdef BITMAP16_STEAM_DECK
@@ -1701,28 +2042,37 @@ int main(int argc, char** argv) {
     SDL_PumpEvents();
 #ifdef BITMAP16_LOSPEC
     if (lospecRequest.valid() &&
-        !(currentView == DesktopView::Palette && paletteState.insertionAnimating) &&
+        !(currentView == DesktopView::Palette &&
+          (paletteState.insertionAnimating || paletteState.reloadAnimating ||
+           paletteExitAction != PaletteExitAction::None)) &&
         lospecRequest.wait_for(std::chrono::milliseconds(0)) ==
             std::future_status::ready) {
       auto result = lospecRequest.get();
-      if (result.error.empty()) {
+      if (result.error.empty() && lospecRequestIsImport) {
+        importedPalettes = std::move(result.palettes);
+        desktopImportPreview = true;
+        desktopLospecView = false;
+        refreshPaletteCatalog();
+      } else if (result.error.empty()) {
         const bool cached = bitmap16::Lospec::saveCache(workspace.root(), result.palettes);
         lospecCache = std::move(result.palettes);
         if (desktopLospecView) {
           refreshPaletteCatalog();
-          std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
-              "%zu found, %d request%s. %s", lospecEntries.size(), result.calls,
-              result.calls == 1 ? "" : "s", cached ? "Enter: save" : "Cache write failed");
+          if (!cached) {
+            std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Cache write failed");
+          }
         }
-      } else if (desktopLospecView) {
+      } else if (desktopLospecView || lospecRequestIsImport) {
         std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
                       "%s", result.error.c_str());
       }
       if (currentView == DesktopView::Palette) renderNow();
+      lospecRequestIsImport = false;
     }
 #endif
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
-    if (currentView == DesktopView::Canvas && settings.batteryDisplay) {
+    if ((currentView == DesktopView::Canvas && settings.batteryDisplay) ||
+        currentView == DesktopView::Charging) {
       const Uint32 now = SDL_GetTicks();
       if (SDL_TICKS_PASSED(now, nextBatteryRefresh)) {
         nextBatteryRefresh = now + kBatteryRefreshMs;
@@ -1960,6 +2310,16 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Canvas && desktopErasePressed,
         currentView == DesktopView::Canvas &&
             (heldKeys[SDL_SCANCODE_M] != 0 || controllerMoveHeld));
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    // Sensor polling must run even when no key arrives or the queue stays busy.
+    const bool shakeEnabled = currentView == DesktopView::Canvas &&
+        settings.shakeUndoEnabled;
+    if (zeroImu.pollShake(SDL_GetTicks(), shakeEnabled) && editor.undo()) {
+      documentDirty = !documentsMatch(editor.sketch(), savedDocumentState);
+      setDesktopStatus("Undo");
+      renderNow();
+    }
+#endif
     advanceMemoryAnimation();
     advancePaletteAnimation();
 
@@ -1976,11 +2336,28 @@ int main(int argc, char** argv) {
             ? 33
             : currentView == DesktopView::Memory ? 1 : 16;
     int eventWait = animatedView ? animationWait : -1;
+    if (currentView == DesktopView::Palette) {
+      // Rendering/output time counts toward the frame budget, rather than
+      // always adding another 16 ms after a frame has already been drawn.
+      const Uint32 elapsed = SDL_GetTicks() - paletteFrameAt;
+      eventWait = elapsed >= paletteFrameInterval ? 0 : static_cast<int>(paletteFrameInterval - elapsed);
+      if (paletteRenderPending) {
+        const Uint32 sincePresent = SDL_GetTicks() - palettePresentedAt;
+        const int remaining = sincePresent >= paletteFrameInterval
+            ? 0 : static_cast<int>(paletteFrameInterval - sincePresent);
+        eventWait = std::min(eventWait, remaining);
+      }
+    }
 #ifdef BITMAP16_LOSPEC
     if (lospecRequest.valid()) eventWait = eventWait < 0 ? 16 : std::min(16, eventWait);
 #endif
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
-    if (currentView == DesktopView::Canvas && settings.batteryDisplay) {
+    const int sensorWait = zeroImu.waitTimeout(SDL_GetTicks(), shakeEnabled);
+    if (sensorWait >= 0) {
+      eventWait = eventWait < 0 ? sensorWait : std::min(eventWait, sensorWait);
+    }
+    if ((currentView == DesktopView::Canvas && settings.batteryDisplay) ||
+        currentView == DesktopView::Charging) {
       const Uint32 now = SDL_GetTicks();
       const int remaining = SDL_TICKS_PASSED(now, nextBatteryRefresh)
           ? 0
@@ -2195,13 +2572,18 @@ int main(int argc, char** argv) {
 #ifdef BITMAP16_LOSPEC
       if (currentView == DesktopView::Palette) {
         SDL_Keycode paletteKey = SDLK_UNKNOWN;
+        if (event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSTICK) paletteKey = SDLK_i;
         if (event.cbutton.button == SDL_CONTROLLER_BUTTON_Y) paletteKey = SDLK_l;
         if (desktopLospecView) {
           if (event.cbutton.button == SDL_CONTROLLER_BUTTON_X) paletteKey = SDLK_r;
-          if (event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) paletteKey = SDLK_MINUS;
-          if (event.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) paletteKey = SDLK_PLUS;
         }
+#ifdef BITMAP16_STEAM_DECK
+        if (!desktopImportPreview && paletteKey == SDLK_UNKNOWN)
+          paletteKey = paletteFilterKey(event.cbutton.button, paletteState.filterSize, !desktopLospecView);
+#endif
         if (paletteKey != SDLK_UNKNOWN) {
+          if (event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+            paletteUndoReleaseConsumed = true;
           pushKeyEvent(paletteKey, false);
           continue;
         }
@@ -2283,6 +2665,11 @@ int main(int argc, char** argv) {
     }
     if (event.type == SDL_CONTROLLERBUTTONUP &&
         event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
+      if (paletteUndoReleaseConsumed) {
+        paletteUndoReleaseConsumed = false;
+        continue;
+      }
+      if (currentView == DesktopView::Palette) continue;
       pushKeyEvent(SDLK_z, false);
       continue;
     }
@@ -2412,7 +2799,7 @@ int main(int argc, char** argv) {
 #ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
     const bool brightnessHeld = keyboard[SDL_SCANCODE_B] != 0;
 #endif
-    const bool matrixHeld = keyboard[SDL_SCANCODE_L] != 0;
+    const bool matrixHeld = platformHasLedMatrixControls() && keyboard[SDL_SCANCODE_L] != 0;
     const bool drawHeld = mouseDrawHeld ||
         keyboard[SDL_SCANCODE_RETURN] != 0 ||
 #ifndef BITMAP16_CARDPUTER_ZERO
@@ -2430,6 +2817,8 @@ int main(int argc, char** argv) {
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_X) != 0);
     editor.setHeldActions(drawHeld, eraseHeld, moveHeld);
+    if (currentView == DesktopView::Palette && paletteExitAction != PaletteExitAction::None)
+      continue;
     const bool plusKey =
         key == SDLK_PLUS || key == SDLK_EQUALS || key == SDLK_KP_PLUS;
     const bool minusKey = key == SDLK_MINUS || key == SDLK_KP_MINUS;
@@ -2512,19 +2901,49 @@ int main(int argc, char** argv) {
       changed = true;
 #endif
 #ifdef BITMAP16_LOSPEC
-    } else if (currentView == DesktopView::Palette &&
-               !paletteState.insertionAnimating && key == SDLK_l) {
-      desktopLospecView = !desktopLospecView;
-      refreshPaletteCatalog();
+    } else if (currentView == DesktopView::Palette && !paletteState.insertionAnimating && key == SDLK_i) {
+      if (lospecRequest.valid()) {
+        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Wait for the current download");
+      } else if (enterPaletteLookup(lastPaletteLookup)) {
+        const std::string input = lastPaletteLookup;
+        lospecRequestIsImport = true;
+        lospecRequest = std::async(std::launch::async, [input, &lospecCancel]() {
+          return bitmap16::Lospec::lookup(input, lospecCancel);
+        });
+        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Looking up palette...");
+      }
+      changed = true;
+    } else if (currentView == DesktopView::Palette && !desktopLospecView && !desktopImportPreview &&
+               !paletteState.insertionAnimating &&
+               (key == SDLK_BACKSPACE || key == SDLK_DELETE)) {
+      const int selected = bitmap16::PaletteView::selectedCatalogIndex(paletteState);
+      if (selected >= NUM_PALETTES && selected < paletteCatalog.count &&
+          paletteEntries[selected].user) {
+        const auto previous = paletteState;
+        const bool deleted = workspace.deleteUserPalette(
+            static_cast<std::size_t>(selected - NUM_PALETTES));
+        refreshPaletteCatalog();
+        paletteState.filterSize = previous.filterSize;
+        paletteState.userOnly = previous.userOnly;
+        bitmap16::PaletteView::rebuildFilter(paletteState, paletteCatalog);
+        paletteState.cursor = std::max(0, std::min(previous.cursor, paletteState.filteredCount - 1));
+        paletteState.scrollPosition = static_cast<float>(paletteState.cursor);
+        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
+                      "%s", deleted ? "Palette moved to trash" : "Could not delete palette");
+      } else {
+        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
+                      "Built-in palettes cannot be deleted");
+      }
       changed = true;
     } else if (currentView == DesktopView::Palette && desktopLospecView &&
-               !paletteState.insertionAnimating && (plusKey || minusKey)) {
-      lospecMinimumLikes = std::max(0, std::min(1000,
-          lospecMinimumLikes + (plusKey ? 5 : -5)));
-      const bool saved = bitmap16::Lospec::writeMinimumLikes(workspace.root(), lospecMinimumLikes);
-      refreshPaletteCatalog();
-      if (!saved) std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
-                                "Could not save like threshold");
+               !paletteState.insertionAnimating &&
+               (key == SDLK_0 || key == SDLK_4 || key == SDLK_8 || key == SDLK_1)) {
+      pendingPaletteSize = key == SDLK_0 ? 0 : key == SDLK_4 ? 4 : key == SDLK_8 ? 8 : 16;
+      requestPaletteExit(PaletteExitAction::FilterSize);
+      changed = true;
+    } else if (currentView == DesktopView::Palette &&
+               !paletteState.insertionAnimating && (key == SDLK_b || key == SDLK_l)) {
+      requestPaletteExit(PaletteExitAction::SwitchList);
       changed = true;
     } else if (currentView == DesktopView::Palette && desktopLospecView &&
                !paletteState.insertionAnimating && key == SDLK_r) {
@@ -2538,11 +2957,11 @@ int main(int argc, char** argv) {
         std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Please wait a minute to refresh");
       } else {
         nextLospecRefreshAt = SDL_GetTicks() + 60000u;
+        lospecRequestIsImport = false;
         const auto saved = bitmap16::Lospec::savedSlugs(workspace.root());
-        const int likes = lospecMinimumLikes;
         lospecRequest = std::async(std::launch::async,
-            [likes, saved, apiKey, &lospecCancel]() {
-              return bitmap16::Lospec::downloadLatest(likes, saved, apiKey, lospecCancel);
+            [saved, apiKey, &lospecCancel]() {
+              return bitmap16::Lospec::downloadLatest(0, saved, apiKey, lospecCancel);
             });
         std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Getting newest palettes...");
       }
@@ -2552,6 +2971,17 @@ int main(int argc, char** argv) {
       desktopMoveModeActive = true;
       changed = true;
     } else if (key == SDLK_ESCAPE) {
+      if (event.type == SDL_KEYDOWN && event.key.repeat != 0) continue;
+      if (currentView == DesktopView::Palette) {
+#ifdef BITMAP16_LOSPEC
+        requestPaletteExit((desktopLospecView || desktopImportPreview)
+            ? PaletteExitAction::SwitchList : PaletteExitAction::Close);
+#else
+        requestPaletteExit(PaletteExitAction::Close);
+#endif
+        changed = true;
+        continue;
+      }
       if (currentView == DesktopView::Preview && galleryMode) {
         currentView = DesktopView::Memory;
         memoryState.cursor = galleryIndex + 1;
@@ -2726,7 +3156,7 @@ int main(int argc, char** argv) {
         (currentView == DesktopView::Canvas ||
          currentView == DesktopView::Palette)) {
       if (currentView == DesktopView::Palette) {
-        currentView = DesktopView::Canvas;
+        requestPaletteExit(PaletteExitAction::Close);
       } else {
         if (bitmap16::CanvasView::hasPaletteButton(width, height)) {
           desktopPalettePressed = true;
@@ -2878,20 +3308,18 @@ int main(int argc, char** argv) {
           performed ? 0x1800 : 0x0800,
           performed ? 30 : 110);
       changed = true;
+#ifndef BITMAP16_CARDPUTER_ZERO_DEVICE
     } else if (
         currentView == DesktopView::Canvas && key == SDLK_y &&
         settings.shakeUndoEnabled) {
       changed = editor.undo();
+#endif
     } else if (currentView == DesktopView::Canvas && key == SDLK_g) {
-#ifdef BITMAP16_CARDPUTER_ZERO
       if (!chooseGridSize()) {
         renderNow();
         continue;
       }
       changed = true;
-#else
-      changed = editor.toggleGridSize();
-#endif
       desktopCanvasViewport = {};
       char gridStatus[16] = {};
       std::snprintf(
@@ -3045,6 +3473,9 @@ int main(int argc, char** argv) {
               false,
               platformHasHelpSetting());
       changed = action != bitmap16::SettingsView::Action::None;
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+      nativeIo.setDisplayWarmth(settings.displayWarmth);
+#endif
       if (action == bitmap16::SettingsView::Action::QuitRequested) {
         if (confirmUnsavedChanges()) quitRequested = true;
       } else if (action == bitmap16::SettingsView::Action::HelpRequested) {
@@ -3139,7 +3570,7 @@ int main(int argc, char** argv) {
           static_cast<std::size_t>(memoryState.cursor - 1);
       const bool deletedActive =
           workspace.activeIndex() == static_cast<int>(deleteIndex);
-      changed = workspace.deleteSketch(deleteIndex);
+      changed = confirmSketchDeletion() && workspace.deleteSketch(deleteIndex);
       if (changed) {
         if (deletedActive) documentDirty = true;
         refreshMemoryCatalog();
@@ -3162,7 +3593,7 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Palette &&
         (key == SDLK_RETURN || key == SDLK_KP_ENTER)) {
 #ifdef BITMAP16_LOSPEC
-      if (desktopLospecView && !paletteState.insertionAnimating) {
+      if ((desktopLospecView || desktopImportPreview) && !paletteState.insertionAnimating) {
         const int selected = bitmap16::PaletteView::selectedCatalogIndex(paletteState);
         if (selected >= 0 && selected < static_cast<int>(lospecEntries.size())) {
           const auto& palette = lospecEntries[selected];
@@ -3198,21 +3629,21 @@ int main(int argc, char** argv) {
       }
     } else if (
         currentView == DesktopView::Palette &&
+#ifdef BITMAP16_LOSPEC
+        !desktopImportPreview &&
+#endif
         (key == SDLK_0 || key == SDLK_4 ||
          key == SDLK_8 || key == SDLK_1)) {
-      if (key == SDLK_0) {
-        bitmap16::PaletteView::reset(paletteState, paletteCatalog);
-      } else {
-        const uint8_t size =
-            key == SDLK_4 ? 4 : key == SDLK_8 ? 8 : 16;
-        bitmap16::PaletteView::toggleSizeFilter(
-            paletteState, paletteCatalog, size);
-      }
+      pendingPaletteSize = key == SDLK_0 ? 0 : key == SDLK_4 ? 4 : key == SDLK_8 ? 8 : 16;
+      requestPaletteExit(PaletteExitAction::FilterSize);
       changed = true;
     } else if (
-        currentView == DesktopView::Palette && key == SDLK_u) {
-      bitmap16::PaletteView::toggleUserFilter(
-          paletteState, paletteCatalog);
+        currentView == DesktopView::Palette && key == SDLK_u
+#ifdef BITMAP16_LOSPEC
+        && !desktopImportPreview
+#endif
+        ) {
+      requestPaletteExit(PaletteExitAction::FilterUser);
       changed = true;
     } else if (
         currentView == DesktopView::Preview &&

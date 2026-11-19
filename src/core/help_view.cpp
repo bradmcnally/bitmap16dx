@@ -28,6 +28,11 @@ constexpr Item kItems[] = {
     {"Color 9-16", "Fn 1-8", "Fn 1-8", 0, false, false},
     {"Next color", "C", "I", 0, false, false},
     {"Palette", "P", "P", 0, false, false},
+#ifdef BITMAP16_STEAM_DECK
+    {"Pal range", "LB/RB", "", 0, false, false},
+    {"User palettes", "Dpad Up", "", 0, false, false},
+    {"Clear filter", "Dpad Down", "", 0, false, false},
+#endif
     {"Clear", "G0", "Fn Bksp", 0, false, false},
     {"Preview", "V", "V", 0, false, false},
     {"Grid size", "G", "G", 0, false, false},
@@ -48,7 +53,7 @@ constexpr Item kItems[] = {
 #else
     {"Brightness", "B +/-", "B +/-", 1, false, false},
 #endif
-    {"Charge", "Fn B", "Ctrl B", 1, false, true},
+    {"Screensaver", "Fn B", "Ctrl B", 1, false, true},
     {"RGB on/off", "L Ok", "L Enter", 2, true, false},
     {"RGB Bright", "L +/-", "L +/-", 2, true, false},
 };
@@ -131,7 +136,7 @@ void render(
   constexpr int selectedLineHeight = 24;
   constexpr int groupGap = 8;
   const int labelX = std::max(12, canvas.width() / 20);
-  const int keyX = canvas.width() * 13 / 20;
+  const int keyX = canvas.width() * 13 / 20 - 16;
 
   if (state.cursor < state.scrollOffset) {
     state.scrollOffset = state.cursor;

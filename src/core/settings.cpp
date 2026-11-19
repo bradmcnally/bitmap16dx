@@ -42,6 +42,7 @@ Settings normalizeSettings(Settings settings) {
       clamp(settings.displayBrightness, 10, 100);
   settings.matrixBrightness =
       clamp(settings.matrixBrightness, 1, 20);
+  if (settings.displayWarmth > 3) settings.displayWarmth = 0;
   return settings;
 }
 

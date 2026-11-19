@@ -41,6 +41,17 @@ bool parseColor(const char* text, std::size_t length, uint16_t& color) {
 
 }  // namespace
 
+bool matchesSizeFilter(uint8_t paletteSize, uint8_t filter) {
+  if (paletteSize < 4 || paletteSize > 16) return false;
+  switch (filter) {
+    case 0: return true;
+    case 4: return paletteSize == 4;
+    case 8: return paletteSize >= 5 && paletteSize <= 8;
+    case 16: return paletteSize >= 9;
+    default: return false;
+  }
+}
+
 uint8_t collapseIndex(uint8_t index, uint8_t paletteSize) {
   if (index == 0 || index <= paletteSize) {
     return index;
@@ -74,7 +85,7 @@ bool parseLospecHex(const char* text, std::size_t length, Parsed& parsed) {
 
   Parsed result;
   std::size_t lineStart = 0;
-  while (lineStart < length && result.size < kColorCount) {
+  while (lineStart < length) {
     std::size_t lineEnd = lineStart;
     while (lineEnd < length && text[lineEnd] != '\n' && text[lineEnd] != '\r') {
       ++lineEnd;
@@ -101,6 +112,7 @@ bool parseLospecHex(const char* text, std::size_t length, Parsed& parsed) {
             text + contentStart,
             contentEnd - contentStart,
             color)) {
+      if (result.size >= kColorCount) return false;
       result.colors[result.size++] = color;
     }
 
@@ -111,7 +123,7 @@ bool parseLospecHex(const char* text, std::size_t length, Parsed& parsed) {
     }
   }
 
-  if (result.size != 4 && result.size != 8 && result.size != 16) {
+  if (result.size < 4 || result.size > 16) {
     return false;
   }
   for (std::size_t i = result.size; i < kColorCount; ++i) {

@@ -8,6 +8,8 @@
 
 #include <linux/fb.h>
 
+#include "core/display_warmth.h"
+
 namespace bitmap16::Zero {
 
 class NativeIo {
@@ -19,6 +21,7 @@ public:
 
   bool open();
   void present(const uint16_t* pixels, int width, int height);
+  void setDisplayWarmth(uint8_t level) { displayWarmth_ = level; }
   int pollEvent(SDL_Event* event);
   int waitEvent(SDL_Event* event, int timeoutMs);
   const Uint8* keyboardState() const { return keys_.data(); }
@@ -36,6 +39,8 @@ private:
   uint8_t* mapping_ = nullptr;
   std::size_t mappingSize_ = 0;
   bool directWrite_ = false;
+  uint8_t displayWarmth_ = 0;
+  DisplayWarmth warmthFilter_;
   fb_fix_screeninfo fixed_{};
   fb_var_screeninfo mode_{};
   std::array<Uint8, SDL_NUM_SCANCODES> keys_{};

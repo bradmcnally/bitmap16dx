@@ -42,10 +42,10 @@ launch user needs write access to `/dev/fb_lcd` (or `/dev/fb0`) and read
 access to the keypad's input event device. The brightness shortcut also
 requires write access to `/sys/class/backlight/backlight/brightness`.
 Hardware validation is still required for the keyboard mappings, battery
-reporting, the BMM150 geomagnetic sensor, and the Grove RGB matrix signal
-adapter.
+reporting, BMI270 shake undo, and the Grove RGB matrix signal adapter.
 
 ## Package and reinstall from your Mac
+
 
 After installing the build dependencies on the Zero, run these commands from
 the BitMap16 DX source folder on your Mac. Replace `pi@cardputerzero.local`
@@ -81,6 +81,32 @@ Set `BITMAP16_DATA_DIR` to use a different writable location. If
 
 ### Cardputer Zero keyboard reference
 
+**Shake undo** in Settings uses the standard Zero's BMI270 accelerometer.
+Shake the device in Canvas to undo the last edit. It uses the ADV's threshold
+above 6 g and 500 ms cooldown. Sampling continues while no keys are pressed.
+The setting is hidden automatically on the Zero Lite and whenever a usable
+accelerometer is not detected at startup. The saved preference is retained.
+
+The app discovers the BMI270 by its Linux IIO name (`bmi27` or `bmi270`),
+reads acceleration through `/sys/bus/iio/devices/iio:device*/`, and converts
+the scaled readings from m/s² to g. It needs read access to `in_accel_scale`
+and `in_accel_{x,y,z}_raw`. A range of ±8 g or ±16 g is required. If the
+image starts with a smaller range, the app selects an advertised ±8 g range
+(or ±16 g) when the scale file is writable. Otherwise it hides the setting
+and records the reason in `/tmp/bitmap16dx.log`. Configure the sensor range
+or permissions through the device image rather than running the app as root.
+The BMM150 compass sensor is not needed for shake undo. The simulator retains
+the `Y` shortcut for a simulated shake; on the physical Zero, `Y` no longer
+simulates motion.
+
+In Settings, **Warmth** cycles through **Neutral**, **Mild**, **Warm**, and
+**Warmer**. Use Left/Right or Enter to change it; the display updates immediately
+and remembers the choice. Start with Mild for a slightly cool-looking LCD.
+Neutral restores the original colors. This affects only Bitmap16DX's LCD output,
+including its UI; palettes, saved sketches, and exported PNGs keep their original
+colors. Framebuffer screenshots include the display tint. The
+desktop simulator and other applications are unaffected.
+
 Use `Ctrl` for BitMap16 DX commands such as save, undo, and export. Use
 `Fn` for shortcuts that use the Zero's arrow, function, Delete, Page Up,
 Page Down, or backlight keys.
@@ -102,10 +128,10 @@ Page Down, or backlight keys.
 | `P` | Toggle Palette. |
 | `O` | Toggle Sketches. |
 | `D` | Return to Canvas. |
-| `Ctrl+B` | Open the charging display. Press a regular key to return to Canvas. |
+| `Ctrl+B` | Open Screensaver. Press a regular key to return to Canvas. |
 | `Fn+U` / `Fn+I` | Dim / brighten the LCD when the app has access to the backlight control. |
 | Escape | Go back. In Help, return to the previous view. In a slideshow, return to Sketches. At startup, skip the splash screen. |
-| `Q` | Quit. At the unsaved-changes prompt, use `S` to save, `D` to discard, or Escape to cancel. |
+| `Q` | Quit. At the unsaved-changes prompt, use Left/Right to choose, Enter to confirm, or Escape to cancel. |
 
 #### Canvas
 
@@ -118,7 +144,7 @@ Page Down, or backlight keys.
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo. |
 | `1`–`8` / `Fn+1`–`Fn+8` | Select colors 1–8 / 9–16 when available in the current palette. |
 | `I` | Select the next color. |
-| `G` | Open Resize Canvas. Use Left and Right to select 8×8, 16×16, or 32×32, then Enter to apply or Escape to cancel. |
+| `G` | Open Resize Canvas. Use Left and Right to select 8×8, 16×16, or 32×32, then Enter to focus Apply and Enter again to confirm. Up returns to the size row; Escape cancels. |
 | `R` | Toggle rulers. |
 | `Fn+L` / `Fn+M` | Zoom in / out. Canvas starts at minimum zoom and shows the zoom level while zoomed. |
 | `Shift+F/Z/X/C` | Jump to the corresponding artwork edge while zoomed. |
@@ -131,10 +157,10 @@ Page Down, or backlight keys.
 | View | Key | Action |
 |---|---|---|
 | Sketches | Direction keys / Enter | Select and open a sketch or create one using the `+` tile. |
-| Sketches | Backspace or `Fn+Backspace` | Delete the selected saved sketch. |
+| Sketches | Backspace or `Fn+Backspace` | Open confirmation to move the selected saved sketch to trash. |
 | Sketches | `U` / `Ctrl+S` | Restore the most recently deleted sketch / duplicate the selected sketch. |
 | Palette | Left and Right / Enter | Browse and apply palettes. |
-| Palette | `4`, `8`, `1`, `U`, `0` | Filter to 4, 8, or 16 colors or user palettes, or clear all filters. |
+| Palette | `4`, `8`, `1`, `U`, `0` | Filter to 4, 5–8, or 9–16 colors or user palettes, or clear all filters. |
 | Preview and slideshow | `Fn+L` / `Fn+M` | Zoom in / out. |
 | Preview and slideshow | `1`, `2`, `3`, `4` | Choose a black, white, gray, or dark-gray background. |
 | Slideshow | Left and Right / Space | Browse saved sketches / toggle three-second auto-advance. |
@@ -143,41 +169,79 @@ The resize picker outlines the part of the canvas that will stay visible
 when shrinking. It warns if the new grid hides drawn pixels. Resize preserves
 those pixels and can be undone with `Ctrl+Z`. **Grid default** in Settings
 sets the starting size for new sketches.
+The `>` marker identifies the currently applied size. When focus moves to
+Cancel or Apply, an outline keeps the pending size visible.
+
+Dialogs use arrow-key focus and Enter to select. Save warnings start on Save;
+sketch-deletion confirmation starts on Cancel. Focused buttons have white text
+on black in light theme and black text on white in dark theme.
 
 In Settings, set **Battery display** to **Off** to hide the Canvas battery
-icon. The plug next to the battery appears while the Zero reports charging.
+icon. While the Zero reports charging, the charging symbol replaces the
+battery icon in the same status slot. The battery returns when charging stops.
 The setting defaults to **On** and persists between launches.
+Screensaver includes the floppy and skull icons and shows the charging symbol
+only while charging. Battery status continues updating while it runs.
 
 In the Zero simulator, use desktop arrows for the `Fn` arrow combinations,
 `F1`–`F8` for colors 9–16, Delete for `Fn+Backspace`, and Page Up and Page
 Down for `Fn+L` and `Fn+M`. Use `B` with `+` or `-` for simulated display
-brightness. In the RGB matrix simulator, use `L+Enter` to toggle the matrix
-and hold `L` with `+` or `-` to adjust its brightness.
+brightness. RGB matrix support, its settings, and its simulator window are
+disabled in Zero builds.
 
 See the [ADV and Zero key comparison](CONTROLS.md) for platform differences.
 
 Memory starts with a `+` tile for a new sketch, followed by saved sketches.
 The newest saved sketch opens automatically on the next launch.
 
-Copy Lospec `.hex` files containing 4, 8, or 16 colors into `palettes/`.
+Copy Lospec `.hex` files containing 4–16 colors into `palettes/`.
 Opening the Palette view reloads them. The `U` filter shows user palettes.
 The Zero supports up to 116 saved user palettes, alongside the 12 built-in
 palettes.
 
+In the local Palette view, select a user cartridge and press Backspace or
+Delete to remove it. Built-in palettes are protected. Removed palette files
+move to `trash/`; saved artwork and the current drawing retain their own
+palette colors. A deleted Lospec palette can appear in the online feed again.
+
+Deleting a sketch from Sketches opens a confirmation with **Cancel**
+selected. Use Left/Right (Zero `Z`/`C`, or controller D-pad) to choose, then
+Enter/`A` to confirm. Escape/`B` cancels. This confirmation always appears,
+regardless of the save-warning setting.
+
+### Import a palette by name or URL
+
+In either palette list, press `I` to open **Import from Lospec**. Type a
+palette slug such as `endesga-16`, or paste a full Lospec palette URL with
+`Ctrl+V` when a clipboard is available. This dialog uses the Zero's physical
+keyboard, with no on-screen keyboard. A gray example is chosen when the
+dialog opens and stays fixed; it is not submitted as input. The insertion
+cursor blinks while the text field is focused. Enter moves focus to Import;
+Enter again fetches the palette. Up returns to editing, and Escape cancels.
+The field accepts up to 2048 characters.
+
+A successful lookup opens an **Import Preview** cartridge. Enter saves and
+applies it; Escape returns to local palettes without saving. Creator credit
+is shown when Lospec supplies it. Import supports 4–16 colors
+and reports missing palettes, unsupported sizes, and connection failures.
+Lookup runs in the background, uses the public Lospec download endpoint
+without an API key, and does not replace the daily feed cache. Saved imports
+work offline like other user palettes.
+
 ### New palettes from Lospec
 
-In Palette, press `L` for Lospec, then `R` to refresh. Use `+` and `-` to
-adjust the minimum likes in steps of five (default: 10). Left/Right browse
-the same cartridges as local palettes; Enter saves the selected palette and
-applies it with the insertion animation. Press `L` to return to local palettes.
-The existing `4`, `8`, `1`, and `0` color filters also work in Lospec.
-Saved palettes are omitted from the new-palette feed.
+In Palette, press `L` for Lospec, then `R` to refresh. Left/Right browse
+all downloaded palettes in one continuous carousel; Enter saves the selected
+palette and applies it with the insertion animation. Press `L` to return to
+local palettes. Escape also returns to local Palettes; a second Escape closes
+Palettes and returns to Canvas. The `4`, `8`, and `1` filters show 4, 5–8,
+and 9–16 colors respectively;
+`0` clears the filters. These filters also work in Lospec.
+Saved palettes are omitted from the new-palette feed. There is no likes filter.
 
-The newest 20 matching palettes are shown from the fetched results. Results
-and the like threshold persist locally. Opening Lospec or changing the
-threshold uses the cache without a network request. Refresh runs in the
-background, at most once a minute, and a failed refresh keeps the previous
-cache. Saved palettes remain available offline.
+Browsing and filtering use the local cache without network requests. Refresh
+runs in the background, at most once a minute, and a failed refresh keeps the
+previous cache. Saved palettes remain available offline.
 
 For releases, use the shared [Cloudflare palette feed](../services/lospec-feed/README.md).
 Your key stays in a Cloudflare secret; app users do not need a Lospec account.
@@ -191,7 +255,8 @@ For device packaging from your Mac, set `BITMAP16_LOSPEC_FEED_URL` when
 running `platform_zero/device.sh package`. The script forwards that URL to
 the device build. The hosted feed is one request per refresh.
 
-For direct API development without hosting, put your key alone on one line
+For direct API development, configure with `-DBITMAP16_LOSPEC_FEED_URL=`
+to disable the default hosted feed, then put your key alone on one line
 in `~/.local/share/bitmap16dx/lospec-key.txt`. The build can bundle that file;
 override its location with `-DBITMAP16_LOSPEC_KEY_FILE=/absolute/path/to/key.txt`.
 Do not commit the key. Direct mode checks up to three batches of 100, stopping
@@ -209,8 +274,7 @@ cmake --build --preset zero
 ./build_zero/bitmap16dx_desktop
 ```
 
-The second window is the Grove RGB-matrix simulator. It uses the same
-single/quad-unit mapping and rotation code as the firmware.
+The Zero simulator opens only the main app window; RGB matrix support is disabled.
 
 For an isolated test that does not touch the normal workspace:
 
@@ -236,7 +300,7 @@ Recommended all-at-once test:
 5. Enter Memory and start the slideshow with `V`; test arrows, backgrounds
    1-4, `Space` autoplay, and return to the same Memory selection.
 6. Change every Settings row and restart to confirm persistence.
-7. Toggle and configure the matrix window; check 8×8, scaled 8×8 on four
-   units, 16×16 on four units, all rotations, and brightness.
-8. Test Help return navigation, Preview, `Ctrl+B` Charging, display
+7. Test palette import, 4 / 5–8 / 9–16 filters, saved-palette deletion, and
+   Escape navigation from Lospec to local Palettes to Canvas.
+8. Test Help return navigation, Preview, `Ctrl+B` Screensaver, display
    brightness, both themes, Escape behavior, and `Q` quit.

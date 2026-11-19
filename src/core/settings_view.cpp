@@ -25,6 +25,9 @@ constexpr Item kItems[] = {
 #ifdef BITMAP16_CARDPUTER_ZERO
     {"Battery display", Action::BatteryDisplayChanged},
 #endif
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    {"Warmth", Action::DisplayWarmthChanged},
+#endif
     {"Cursor", Action::CursorStyleChanged},
     {"Bluetooth", Action::BluetoothRequested},
     {"Help", Action::HelpRequested},
@@ -162,6 +165,13 @@ const char* valueFor(
       return settings.saveWarnings ? "ON" : "OFF";
     case Action::BatteryDisplayChanged:
       return settings.batteryDisplay ? "ON" : "OFF";
+    case Action::DisplayWarmthChanged:
+      switch (settings.displayWarmth) {
+        case 1: return "Mild";
+        case 2: return "Warm";
+        case 3: return "Warmer";
+        default: return "Neutral";
+      }
     case Action::CursorStyleChanged:
       return settings.cursorStyle == CursorStyle::Hand ? "HAND" : "ARROW";
     case Action::BluetoothRequested:
@@ -328,6 +338,10 @@ Action activate(
       return Action::SaveWarningsChanged;
     case Action::BatteryDisplayChanged:
       settings.batteryDisplay = !settings.batteryDisplay;
+      return action;
+    case Action::DisplayWarmthChanged:
+      settings.displayWarmth = static_cast<uint8_t>(
+          (settings.displayWarmth + 1) % 4);
       return action;
     case Action::CursorStyleChanged:
       settings.cursorStyle = settings.cursorStyle == CursorStyle::Arrow

@@ -35,8 +35,8 @@ std::filesystem::path dataRoot() {
   return std::filesystem::temp_directory_path() / "bitmap16dx";
 }
 
-// Version 4 files may include an optional trailing battery-display setting.
-std::array<uint8_t, 17> encodeSettings(const Settings& settings) {
+// Version 4 files may include trailing battery-display and LCD-warmth settings.
+std::array<uint8_t, 18> encodeSettings(const Settings& settings) {
   return {
       'B', '1', '6', 'S', 4,
       static_cast<uint8_t>(settings.theme),
@@ -51,6 +51,7 @@ std::array<uint8_t, 17> encodeSettings(const Settings& settings) {
       static_cast<uint8_t>(settings.saveWarnings ? 1 : 0),
       static_cast<uint8_t>(settings.cursorStyle),
       static_cast<uint8_t>(settings.batteryDisplay ? 1 : 0),
+      settings.displayWarmth,
   };
 }
 
@@ -81,6 +82,7 @@ bool decodeSettings(
       ? static_cast<CursorStyle>(data[15])
       : CursorStyle::Arrow;
   settings.batteryDisplay = data[4] < 4 || data.size() < 17 || data[16] != 0;
+  settings.displayWarmth = data[4] >= 4 && data.size() >= 18 ? data[17] : 0;
   settings = normalizeSettings(settings);
   return true;
 }
@@ -405,6 +407,7 @@ bool Workspace::reloadUserPalettes() {
     if (!input.bad() &&
         Palette::parseLospecHex(contents.data(), contents.size(), parsed)) {
       UserPalette palette;
+      palette.path = path;
       std::copy(
           std::begin(parsed.colors),
           std::end(parsed.colors),
@@ -439,6 +442,22 @@ bool Workspace::reloadUserPalettes() {
     }
   }
   return true;
+}
+
+bool Workspace::deleteUserPalette(std::size_t index) {
+  if (index >= userPalettes_.size()) return false;
+  const auto source = userPalettes_[index].path;
+  auto destination = root_ / "trash" / ("palette-" + source.filename().string());
+  std::error_code error;
+  int suffix = 1;
+  while (std::filesystem::exists(destination, error)) {
+    destination = root_ / "trash" /
+        ("palette-" + source.stem().string() + "-" + std::to_string(suffix++) + ".hex");
+  }
+  if (error) return false;
+  std::filesystem::rename(source, destination, error);
+  if (error) return false;
+  return reloadUserPalettes();
 }
 
 }  // namespace Desktop

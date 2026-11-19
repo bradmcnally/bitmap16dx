@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -63,7 +64,7 @@ bool parsePalette(const picojson::value& value, Palette& palette) {
       !colors.is<picojson::array>()) return false;
   result.likes = static_cast<int>(likes.get<double>());
   const auto& array = colors.get<picojson::array>();
-  if (array.size() != 4 && array.size() != 8 && array.size() != 16) {
+  if (array.size() < 4 || array.size() > 16) {
     return false;
   }
   std::string hexText;
@@ -166,6 +167,70 @@ bool parsePage(const std::string& json, Page& page) {
   return true;
 }
 
+bool lookupSlug(const std::string& input, std::string& slug) {
+  if (input.size() > 2048) return false;
+  const auto first = input.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return false;
+  std::string text = input.substr(first, input.find_last_not_of(" \t\r\n") - first + 1);
+  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  bool url = false;
+  for (const char* prefix : {"https://lospec.com/palette-list/", "http://lospec.com/palette-list/",
+       "https://www.lospec.com/palette-list/", "http://www.lospec.com/palette-list/",
+       "lospec.com/palette-list/", "www.lospec.com/palette-list/"}) {
+    if (text.compare(0, std::strlen(prefix), prefix) == 0) {
+      text.erase(0, std::strlen(prefix)); url = true; break;
+    }
+  }
+  if (url) {
+    text = text.substr(0, text.find_first_of("?#"));
+    while (!text.empty() && text.back() == '/') text.pop_back();
+    for (const char* extension : {".json", ".hex", ".csv"}) {
+      const auto length = std::strlen(extension);
+      if (text.size() > length && text.compare(text.size() - length, length, extension) == 0) {
+        text.resize(text.size() - length); break;
+      }
+    }
+  }
+  if (!validSlug(text)) return false;
+  slug = std::move(text);
+  return true;
+}
+
+bool parseLookup(const std::string& json, const std::string& slug,
+                 Palette& palette, std::string& error) {
+  picojson::value value;
+  if (json.size() > kMaximumResponseBytes || !picojson::parse(value, json).empty() ||
+      !value.is<picojson::object>() || !validSlug(slug)) {
+    error = "Invalid Lospec palette response"; return false;
+  }
+  if (value.contains("error")) { error = "Palette not found"; return false; }
+  const auto& colors = value.get("colors");
+  if (colors.is<picojson::array>()) {
+    const auto count = colors.get<picojson::array>().size();
+    if (count < 4 || count > 16) {
+      error = "Palettes need 4 to 16 colors"; return false;
+    }
+  }
+  picojson::object normalized;
+  normalized["slug"] = picojson::value(slug);
+  normalized["title"] = picojson::value(stringField(value, "name"));
+  normalized["colors"] = colors;
+  normalized["likes"] = picojson::value(0.0);
+  picojson::object user;
+  user["name"] = picojson::value(stringField(value, "author"));
+  normalized["user"] = picojson::value(user);
+  Palette result;
+  if (!parsePalette(picojson::value(normalized), result)) {
+    error = "Invalid Lospec palette colors"; return false;
+  }
+  result.likes = -1;  // Direct downloads do not include like counts.
+  palette = std::move(result);
+  error.clear();
+  return true;
+}
+
 std::vector<Palette> matching(
     const std::vector<Palette>& palettes, int minimumLikes,
     const std::vector<std::string>& saved) {
@@ -175,6 +240,19 @@ std::vector<Palette> matching(
         std::find(saved.begin(), saved.end(), palette.slug) != saved.end()) continue;
     result.push_back(palette);
     if (result.size() == kMaximumMatches) break;
+  }
+  return result;
+}
+
+std::vector<Palette> availablePalettes(
+    const std::vector<Palette>& palettes,
+    const std::vector<std::string>& saved, uint8_t colorCount) {
+  std::vector<Palette> result;
+  for (const auto& palette : palettes) {
+    if (bitmap16::Palette::matchesSizeFilter(palette.size, colorCount) &&
+        std::find(saved.begin(), saved.end(), palette.slug) == saved.end()) {
+      result.push_back(palette);
+    }
   }
   return result;
 }
@@ -236,6 +314,7 @@ static Response download(
   const CURLcode code = curl_easy_perform(curl);
   long status = 0;
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+  result.status = status;
   curl_slist_free_all(headers);
   curl_easy_cleanup(curl);
   if (cancel.load()) result.error = "Refresh cancelled";
@@ -243,6 +322,24 @@ static Response download(
   else if (status == 401 || status == 403) result.error = "Lospec access denied";
   else if (status == 429) result.error = "Lospec limit reached; try later";
   else if (status != 200) result.error = "Lospec unavailable; cached kept";
+  return result;
+}
+
+Result lookup(const std::string& input, const std::atomic_bool& cancel) {
+  Result result;
+  std::string slug;
+  if (!lookupSlug(input, slug)) {
+    result.error = "Enter a Lospec palette name or URL"; return result;
+  }
+  if (cancel.load()) { result.error = "Import cancelled"; return result; }
+  const auto response = download("https://lospec.com/palette-list/" + slug + ".json", "", cancel);
+  result.calls = 1;
+  if (response.status == 404) { result.error = "Palette not found"; return result; }
+  if (!response.error.empty()) { result.error = response.error; return result; }
+  Palette palette;
+  if (parseLookup(response.body, slug, palette, result.error)) {
+    result.palettes.push_back(std::move(palette));
+  }
   return result;
 }
 
@@ -288,17 +385,6 @@ std::string readApiKey(const std::filesystem::path& root) {
 
 bool writeApiKey(const std::filesystem::path& root, const std::string& key) {
   return validKey(key) && writeFile(root / "lospec-key.txt", key + '\n', true);
-}
-
-int readMinimumLikes(const std::filesystem::path& root) {
-  std::ifstream input(root / "lospec-likes.txt");
-  int likes = 10;
-  return input >> likes && likes >= 0 && likes <= 1000 ? likes : 10;
-}
-
-bool writeMinimumLikes(const std::filesystem::path& root, int likes) {
-  return likes >= 0 && likes <= 1000 &&
-      writeFile(root / "lospec-likes.txt", std::to_string(likes) + '\n');
 }
 
 std::vector<Palette> loadCache(const std::filesystem::path& root) {
@@ -353,7 +439,7 @@ std::vector<std::string> savedSlugs(const std::filesystem::path& root) {
 
 bool savePalette(const std::filesystem::path& root, const Palette& palette) {
   if (!validSlug(palette.slug) ||
-      (palette.size != 4 && palette.size != 8 && palette.size != 16)) return false;
+      (palette.size < 4 || palette.size > 16)) return false;
   if (isSaved(root, palette)) return true;
   std::string text = "// Lospec palette\n// Name: " + displayName(palette.title) +
       "\n// Author: " + displayName(palette.author) +

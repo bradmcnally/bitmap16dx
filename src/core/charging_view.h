@@ -8,9 +8,12 @@
 namespace bitmap16 {
 namespace ChargingView {
 
-constexpr int kItemCount = 5;
+constexpr int kItemCount = 8;
 constexpr int kBatteryItem = 3;
 constexpr int kSketchItem = 4;
+constexpr int kSaveItem = 5;
+constexpr int kSkullItem = 6;
+constexpr int kLightningItem = 7;
 
 struct Item {
   float x = 0.0f;
@@ -49,6 +52,9 @@ void initialize(
     int batteryPercent,
     bool sketchAvailable);
 void setBattery(State& state, int batteryPercent, const uint8_t* icon);
+void setDecorationIcons(
+    State& state, const uint8_t* save, const uint8_t* skull,
+    const uint8_t* chargingLightning);
 void update(State& state, int width, int height);
 void render(
     Canvas& canvas,

@@ -2,10 +2,14 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
+#include <string>
+#include <vector>
 #include <initializer_list>
 
 #include "core/app.h"
 #include "core/charging_view.h"
+#include "core/dialog_view.h"
 #include "core/clock.h"
 #include "core/canvas.h"
 #include "core/canvas_view.h"
@@ -230,6 +234,80 @@ void test_canvas_view_renders_editor_at_both_target_sizes() {
         canvas.readPixel(
             width - layout.paletteSwatchSize - 5 + 4,
             layout.gridY + layout.paletteSwatchSize + 4));
+  }
+}
+
+void test_palette_bar_shadow_follows_partial_columns() {
+  uint8_t pixels[bitmap16::kMaxGridSize][bitmap16::kMaxGridSize] = {};
+  uint16_t colors[16];
+  std::fill(std::begin(colors), std::end(colors), 0xf800);
+  for (int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(width, height));
+    const auto layout = bitmap16::CanvasView::layoutFor(width, height, 8);
+    const int swatch = layout.paletteSwatchSize;
+    const int rightX = width - swatch - 5;
+    for (int count = 9; count <= 16; ++count) {
+      bitmap16::CanvasView::State state{pixels, 8, colors, static_cast<uint8_t>(count)};
+      const bitmap16::CanvasView::Theme theme{
+          0x1111, 0x2222, 0xeeee, 0x0808, 0xffff, 0x8888, 0x4444, 0, 0xffff, false};
+      bitmap16::CanvasView::render(canvas, state, theme);
+      const int bottom = layout.gridY + (count - 8) * swatch;
+      if (bottom + 4 < height) {
+        TEST_ASSERT_EQUAL_HEX16(theme.background, canvas.readPixel(rightX + swatch / 2, bottom + 4));
+      }
+      if (count == 16) {
+        TEST_ASSERT_EQUAL_HEX16(theme.shadow, canvas.readPixel(rightX + 2, bottom + 1));
+      }
+      TEST_ASSERT_EQUAL_HEX16(theme.shadow, canvas.readPixel(rightX + swatch / 2, bottom + 1));
+      TEST_ASSERT_EQUAL_HEX16(colors[count - 1], canvas.readPixel(rightX + swatch / 2, bottom - 4));
+    }
+  }
+}
+
+void test_shared_dialogs_fit_both_sizes_and_themes() {
+  for (int width : {240, 320}) {
+    const int height = width == 240 ? 135 : 170;
+    for (bool dark : {false, true}) {
+      bitmap16::Canvas canvas;
+      TEST_ASSERT_TRUE(canvas.create(width, height));
+      const bitmap16::DialogView::Theme theme{
+          static_cast<uint16_t>(dark ? 0x0861 : 0xd69b),
+          static_cast<uint16_t>(dark ? 0xffff : 0), 0,
+          static_cast<uint16_t>(dark ? 0xd69b : 0xffff), dark};
+      canvas.fillScreen(0x1234);
+      bitmap16::DialogView::drawSave(canvas, theme, 2);
+      const int buttonX = bitmap16::DialogView::optionX(canvas, 2, 3);
+      const int buttonY = (height - 96) / 2 + 68;
+      TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(buttonX - 30, buttonY + 12));
+      TEST_ASSERT_EQUAL_HEX16(0x1234, canvas.readPixel(0, 0));
+      bitmap16::DialogView::drawDelete(canvas, theme, false);
+      const int cancelX = bitmap16::DialogView::optionX(canvas, 0, 2);
+      TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(cancelX - 30, buttonY + 12));
+      std::vector<uint16_t> happy(canvas.pixels(), canvas.pixels() + width * height);
+      bitmap16::DialogView::drawDelete(canvas, theme, true);
+      const int iconTop = (height - 96) / 2 + 12;
+      bool expressionChanged = false;
+      for (int y = iconTop; y < iconTop + 24; ++y)
+        for (int x = width / 2 - 12; x < width / 2 + 12; ++x)
+          expressionChanged |= happy[y * width + x] != canvas.readPixel(x, y);
+      TEST_ASSERT_TRUE(expressionChanged);
+      Sketch sketch = makeSketch(32);
+      sketch.pixels[31][31] = 1;
+      const auto portable = sketch;
+      canvas.fillScreen(0x1234);
+      bitmap16::DialogView::drawResize(canvas, portable, theme, 8, 1);
+      TEST_ASSERT_EQUAL_HEX16(0x1234, canvas.readPixel(0, 0));
+      TEST_ASSERT_EQUAL_HEX16(0x1234, canvas.readPixel(width - 1, height - 1));
+      const int panelHeight = width == 240 ? 127 : 140;
+      const int top = (height - panelHeight) / 2;
+      const int sizeY = top + (width == 240 ? 56 : 68);
+      TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(
+          bitmap16::DialogView::optionX(canvas, 0, 3) - 32, sizeY));
+      TEST_ASSERT_EQUAL_HEX16(theme.text, canvas.readPixel(
+          bitmap16::DialogView::optionX(canvas, 1, 2) - 30, top + panelHeight - 12));
+    }
   }
 }
 
@@ -577,7 +655,52 @@ void test_charging_view_renders_icons_sketch_and_battery_at_target_sizes() {
   }
 }
 
+void test_screensaver_decorations_and_charging_visibility() {
+  bitmap16::Canvas canvas;
+  TEST_ASSERT_TRUE(canvas.create(320, 170));
+  uint8_t icon[144];
+  std::memset(icon, 0xaa, sizeof(icon));
+  const uint8_t* icons[4] = {};
+  bitmap16::ChargingView::State state;
+  bitmap16::ChargingView::initialize(state, 320, 170, 42, icons, 70, false);
+  bitmap16::ChargingView::setDecorationIcons(state, icon, icon, icon);
+  state.items[bitmap16::ChargingView::kSaveItem].x = 10;
+  state.items[bitmap16::ChargingView::kSaveItem].y = 30;
+  state.items[bitmap16::ChargingView::kSkullItem].x = 60;
+  state.items[bitmap16::ChargingView::kSkullItem].y = 30;
+  state.items[bitmap16::ChargingView::kLightningItem].x = 110;
+  state.items[bitmap16::ChargingView::kLightningItem].y = 30;
+  const bitmap16::ChargingView::Theme theme = {0, 0, 0xffff, 0xffff};
+  bitmap16::ChargingView::render(canvas, state, theme);
+  TEST_ASSERT_EQUAL_HEX16(theme.iconLight, canvas.readPixel(10, 30));
+  TEST_ASSERT_EQUAL_HEX16(0xffff, canvas.readPixel(60, 30));
+  TEST_ASSERT_EQUAL_HEX16(0xffff, canvas.readPixel(110, 30));
+  bitmap16::ChargingView::setDecorationIcons(state, icon, icon, nullptr);
+  bitmap16::ChargingView::render(canvas, state, theme);
+  TEST_ASSERT_EQUAL_HEX16(0, canvas.readPixel(110, 30));
+  const float hiddenX = state.items[bitmap16::ChargingView::kLightningItem].x;
+  bitmap16::ChargingView::update(state, 320, 170);
+  TEST_ASSERT_EQUAL_FLOAT(hiddenX, state.items[bitmap16::ChargingView::kLightningItem].x);
+  bitmap16::ChargingView::setDecorationIcons(state, icon, icon, icon);
+  for (int frame = 0; frame < 500; ++frame) {
+    bitmap16::ChargingView::update(state, 320, 170);
+    for (int item = bitmap16::ChargingView::kSaveItem;
+         item <= bitmap16::ChargingView::kLightningItem; ++item) {
+      TEST_ASSERT_GREATER_OR_EQUAL_FLOAT(0, state.items[item].x);
+      TEST_ASSERT_LESS_OR_EQUAL_FLOAT(296, state.items[item].x);
+      TEST_ASSERT_GREATER_OR_EQUAL_FLOAT(0, state.items[item].y);
+      TEST_ASSERT_LESS_OR_EQUAL_FLOAT(146, state.items[item].y);
+    }
+  }
+}
+
 void test_palette_view_filters_navigates_and_animates_selection() {
+  TEST_ASSERT_EQUAL_INT(4, bitmap16::PaletteView::steppedSizeFilter(0, 1));
+  TEST_ASSERT_EQUAL_INT(8, bitmap16::PaletteView::steppedSizeFilter(4, 1));
+  TEST_ASSERT_EQUAL_INT(16, bitmap16::PaletteView::steppedSizeFilter(8, 1));
+  TEST_ASSERT_EQUAL_INT(0, bitmap16::PaletteView::steppedSizeFilter(16, 1));
+  TEST_ASSERT_EQUAL_INT(16, bitmap16::PaletteView::steppedSizeFilter(0, -1));
+  TEST_ASSERT_EQUAL_INT(8, bitmap16::PaletteView::steppedSizeFilter(16, -1));
   uint16_t colors[4][16] = {};
   bitmap16::PaletteView::Entry entries[4] = {
       {colors[0], "A", 4, false},
@@ -638,8 +761,8 @@ void test_palette_view_renders_carousel_at_both_target_sizes() {
         canvas, state, catalog, 0, theme, cartridge, "Ready");
 
     const int swatchX = width / 2 - 32;
-    const int swatchY = std::max(66, height / 2 - 1) - 40;
-    const int cartridgeTop = std::max(66, height / 2 - 1) - 46;
+    const int swatchY = std::max(66, height / 2 - 1) - 40 - 8;
+    const int cartridgeTop = std::max(66, height / 2 - 1) - 46 - 8;
     TEST_ASSERT_EQUAL_HEX16(
         0x3456, canvas.readPixel(width / 2, cartridgeTop));
     TEST_ASSERT_EQUAL_HEX16(colors[0][0], canvas.readPixel(
@@ -853,6 +976,60 @@ void test_palette_parser_accepts_lospec_format_and_repeats_colors() {
       parsed.colors[0]);
   TEST_ASSERT_EQUAL_HEX16(parsed.colors[0], parsed.colors[4]);
   TEST_ASSERT_EQUAL_HEX16(parsed.colors[3], parsed.colors[15]);
+}
+
+void test_all_palette_sizes_import_draw_save_and_render() {
+  for (int count = 4; count <= 16; ++count) {
+    std::string hex;
+    for (int color = 0; color < count; ++color) {
+      char line[10];
+      std::snprintf(line, sizeof(line), "%06x\n", 0x102030 + color * 0x090807);
+      hex += line;
+    }
+    bitmap16::Palette::Parsed parsed;
+    TEST_ASSERT_TRUE(bitmap16::Palette::parseLospecHex(hex.data(), hex.size(), parsed));
+    TEST_ASSERT_EQUAL_INT(count, parsed.size);
+    TEST_ASSERT_EQUAL(count == 4, bitmap16::Palette::matchesSizeFilter(count, 4));
+    TEST_ASSERT_EQUAL(count >= 5 && count <= 8, bitmap16::Palette::matchesSizeFilter(count, 8));
+    TEST_ASSERT_EQUAL(count >= 9, bitmap16::Palette::matchesSizeFilter(count, 16));
+    Editor editor;
+    editor.reset(makeSketch());
+    editor.setSelectedColor(16);
+    TEST_ASSERT_TRUE(editor.applyPalette(parsed.colors, parsed.size));
+    TEST_ASSERT_LESS_OR_EQUAL_INT(count, editor.selectedColor());
+    editor.setSelectedColor(static_cast<uint8_t>(count));
+    TEST_ASSERT_TRUE(editor.draw());
+    TEST_ASSERT_EQUAL_INT(count, editor.sketch().pixels[0][0]);
+    uint8_t bytes[bitmap16::SketchCodec::kCurrentFileSize];
+    std::size_t written = 0;
+    TEST_ASSERT_TRUE(bitmap16::SketchCodec::encode(editor.sketch(), bytes, sizeof(bytes), written) ==
+        bitmap16::SketchCodec::Result::Ok);
+    Sketch restored;
+    TEST_ASSERT_TRUE(bitmap16::SketchCodec::decode(bytes, written, restored) ==
+        bitmap16::SketchCodec::Result::Ok);
+    TEST_ASSERT_EQUAL_INT(count, restored.paletteSize);
+    TEST_ASSERT_EQUAL_INT(count, restored.pixels[0][0]);
+    TEST_ASSERT_EQUAL_MEMORY(parsed.colors, restored.paletteColors, count * sizeof(uint16_t));
+    bitmap16::Canvas canvas;
+    TEST_ASSERT_TRUE(canvas.create(320, 170));
+    bitmap16::PaletteView::Entry entry{parsed.colors, "VARIABLE", parsed.size};
+    bitmap16::PaletteView::Catalog catalog{&entry, 1};
+    bitmap16::PaletteView::State state;
+    bitmap16::PaletteView::reset(state, catalog);
+    const bitmap16::PaletteView::Theme theme{0x7777, 0xffff, 0, false};
+    bitmap16::PaletteView::render(canvas, state, catalog, -1, theme);
+    for (int color = 0; color < count; ++color) {
+      int occurrences = 0;
+      for (int y = 44; y < 104; ++y)
+        for (int x = 130; x < 190; ++x)
+          if (canvas.readPixel(x, y) == parsed.colors[color]) ++occurrences;
+      TEST_ASSERT_GREATER_THAN_INT(0, occurrences);
+    }
+  }
+  std::string oversized;
+  for (int i = 0; i < 17; ++i) oversized += "abcdef\n";
+  bitmap16::Palette::Parsed parsed;
+  TEST_ASSERT_FALSE(bitmap16::Palette::parseLospecHex(oversized.data(), oversized.size(), parsed));
 }
 
 void test_palette_parser_rejects_unsupported_count() {
@@ -1327,6 +1504,7 @@ void test_settings_normalization_preserves_valid_values() {
   settings.matrixEnabled = true;
   settings.displayBrightness = 70;
   settings.matrixBrightness = 12;
+  settings.displayWarmth = 2;
 
   const bitmap16::Settings normalized =
       bitmap16::normalizeSettings(settings);
@@ -1342,6 +1520,7 @@ void test_settings_normalization_preserves_valid_values() {
       static_cast<int>(normalized.cursorStyle));
   TEST_ASSERT_EQUAL_UINT8(70, normalized.displayBrightness);
   TEST_ASSERT_EQUAL_UINT8(12, normalized.matrixBrightness);
+  TEST_ASSERT_EQUAL_UINT8(2, normalized.displayWarmth);
 }
 
 void test_settings_normalization_repairs_invalid_values() {
@@ -1354,6 +1533,7 @@ void test_settings_normalization_repairs_invalid_values() {
   settings.cursorStyle = static_cast<bitmap16::CursorStyle>(99);
   settings.displayBrightness = 0;
   settings.matrixBrightness = 100;
+  settings.displayWarmth = 255;
 
   const bitmap16::Settings normalized =
       bitmap16::normalizeSettings(settings);
@@ -1371,6 +1551,7 @@ void test_settings_normalization_repairs_invalid_values() {
       static_cast<int>(normalized.cursorStyle));
   TEST_ASSERT_EQUAL_UINT8(10, normalized.displayBrightness);
   TEST_ASSERT_EQUAL_UINT8(20, normalized.matrixBrightness);
+  TEST_ASSERT_EQUAL_UINT8(0, normalized.displayWarmth);
 }
 
 }  // namespace
@@ -1387,6 +1568,8 @@ int main(int, char**) {
   RUN_TEST(test_canvas_view_layout_is_resolution_and_grid_aware);
   RUN_TEST(test_canvas_view_zoom_is_integer_and_follows_cursor);
   RUN_TEST(test_canvas_view_renders_editor_at_both_target_sizes);
+  RUN_TEST(test_palette_bar_shadow_follows_partial_columns);
+  RUN_TEST(test_shared_dialogs_fit_both_sizes_and_themes);
   RUN_TEST(test_canvas_draws_lines_and_rectangles);
   RUN_TEST(test_canvas_pushes_clipped_and_byte_swapped_images);
   RUN_TEST(test_canvas_draws_scaled_and_aligned_text);
@@ -1398,6 +1581,7 @@ int main(int, char**) {
   RUN_TEST(test_preview_view_zoom_is_integer_and_bounded);
   RUN_TEST(test_preview_view_renders_indexed_pixels_at_both_target_sizes);
   RUN_TEST(test_charging_view_initializes_and_bounces_within_bounds);
+  RUN_TEST(test_screensaver_decorations_and_charging_visibility);
   RUN_TEST(
       test_charging_view_renders_icons_sketch_and_battery_at_target_sizes);
   RUN_TEST(test_palette_view_filters_navigates_and_animates_selection);
@@ -1412,6 +1596,7 @@ int main(int, char**) {
   RUN_TEST(test_sketch_initialization_repeats_small_palettes);
   RUN_TEST(test_palette_parser_accepts_lospec_format_and_repeats_colors);
   RUN_TEST(test_palette_parser_rejects_unsupported_count);
+  RUN_TEST(test_all_palette_sizes_import_draw_save_and_render);
   RUN_TEST(test_codec_v3_round_trip_is_exact);
   RUN_TEST(test_codec_reads_legacy_v1_format);
   RUN_TEST(test_codec_rejects_wrong_version_and_size);

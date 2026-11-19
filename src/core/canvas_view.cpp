@@ -388,15 +388,21 @@ void render(
   const int paletteStartX =
       canvas.width() - columns * layout.paletteSwatchSize - 5;
 #endif
-  const int paletteHeight =
-      std::min<int>(8, state.paletteSize) * layout.paletteSwatchSize;
-  drawShadow(
-      canvas,
-      paletteStartX,
-      layout.gridY,
-      columns * layout.paletteSwatchSize,
-      paletteHeight,
-      theme);
+  for (int column = 0; column < columns; ++column) {
+    const int rows = std::min(8, static_cast<int>(state.paletteSize) - column * 8);
+    const int x = paletteStartX + column * layout.paletteSwatchSize;
+    const int bottom = layout.gridY + rows * layout.paletteSwatchSize;
+    canvas.fillRect(x + 2, layout.gridY + 2, layout.paletteSwatchSize,
+                    rows * layout.paletteSwatchSize, theme.shadow);
+    if (column == columns - 1) {
+      canvas.fillRect(x + layout.paletteSwatchSize, layout.gridY + 2,
+                      2, 2, theme.background);
+    }
+    if (column == 0) canvas.fillRect(x + 2, bottom, 2, 2, theme.background);
+    if (column == columns - 1 || state.paletteSize < 16) {
+      canvas.fillRect(x + layout.paletteSwatchSize, bottom, 2, 2, theme.background);
+    }
+  }
   for (int index = 0; index < state.paletteSize; ++index) {
     const int column = index / 8;
     const int row = index % 8;
@@ -439,6 +445,10 @@ void render(
         canvas.fillRect(
             x, y + layout.paletteSwatchSize - 2, 2, 2,
             theme.background);
+        if (state.paletteSize < 16) {
+          canvas.fillRect(x + layout.paletteSwatchSize - 2,
+                          y + layout.paletteSwatchSize - 2, 2, 2, theme.shadow);
+        }
       } else if (columns == 2 && index == 8) {
         canvas.fillRect(
             x + layout.paletteSwatchSize - 2, y, 2, 2,
@@ -577,11 +587,13 @@ void render(
           ? canvas.width() - icon.width - margin
           : layout.toolsX;
       const int batteryY = batteryAtTopRight ? margin : auxiliaryY;
-      drawIndexedIcon(canvas, batteryX, batteryY, icon, theme);
-      if (state.batteryCharging) {
+      if (state.batteryCharging && assets->chargingPlug.pixels != nullptr) {
         const Icon& plug = assets->chargingPlug;
         drawIndexedIcon(
-            canvas, batteryX - plug.width - 2, batteryY + 2, plug, theme);
+            canvas, batteryX + (icon.width - plug.width) / 2,
+            batteryY + (icon.height - plug.height) / 2, plug, theme);
+      } else {
+        drawIndexedIcon(canvas, batteryX, batteryY, icon, theme);
       }
     }
 

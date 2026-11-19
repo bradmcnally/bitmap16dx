@@ -25,6 +25,7 @@ class Workspace {
     std::string name;
     std::string author;
     int likes = -1;
+    std::filesystem::path path;
   };
 
   bool initialize(Editor& editor);
@@ -53,6 +54,7 @@ class Workspace {
       uint16_t background,
       std::filesystem::path& outputPath) const;
   bool reloadUserPalettes();
+  bool deleteUserPalette(std::size_t index);
   bool saveSettings() const;
 
  private:

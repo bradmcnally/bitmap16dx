@@ -25,6 +25,7 @@ test("scheduled refresh caps upstream calls and strips unrelated fields", async 
     assert.equal(new URL(url).searchParams.get("offset"), String(calls * 100));
     assert.equal(new URL(url).searchParams.get("sort"), "-publishedAt");
     assert.equal(options.headers.Authorization, `Bearer ${env.LOSPEC_API_KEY}`);
+    assert.equal(options.redirect, "manual");
     calls++;
     return Response.json({ data: [{ ...palette(calls), unrelated: "omit me" }], meta: { hasMore: true } });
   }));
@@ -57,6 +58,16 @@ test("filters malformed and unsupported palettes and removes duplicates", async 
     meta: { hasMore: false },
   })));
   assert.deepEqual(feed.data.map(item => item.slug), ["test-0"]);
+});
+
+test("keeps every palette size from four through sixteen", async () => {
+  const env = environment();
+  const sizes = [3, ...Array.from({ length: 13 }, (_, i) => i + 4), 17];
+  const feed = JSON.parse(await refreshFeed(env, async () => Response.json({
+    data: sizes.map(size => ({ ...palette(size), colors: Array(size).fill("abcdef") })),
+    meta: { hasMore: false },
+  })));
+  assert.deepEqual(feed.data.map(item => item.colors.length), sizes.slice(1, -1));
 });
 
 test("public reads never contact Lospec", async () => {

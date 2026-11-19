@@ -194,6 +194,8 @@ bool NativeIo::open() {
 
 void NativeIo::present(
     const uint16_t* pixels, int width, int height) {
+  pixels = warmthFilter_.apply(
+      pixels, static_cast<std::size_t>(width) * height, displayWarmth_);
   if (directWrite_) {
     if (static_cast<unsigned>(width) == mode_.xres &&
         static_cast<unsigned>(height) == mode_.yres &&

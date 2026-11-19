@@ -9,7 +9,7 @@ bool isSupportedGridSize(uint8_t gridSize) {
 }
 
 bool isSupportedPaletteSize(uint8_t paletteSize) {
-  return paletteSize == 4 || paletteSize == 8 || paletteSize == 16;
+  return paletteSize >= 4 && paletteSize <= 16;
 }
 
 void initializeSketch(

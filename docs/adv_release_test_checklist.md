@@ -3,7 +3,7 @@
 ## ADV Release Test Checklist
 
 Test with a freshly built ADV firmware and an SD card containing several
-8×8, 16×16, and 32×32 `.dat` sketches. Include palettes with 4, 8, and 16
+8×8, 16×16, and 32×32 `.dat` sketches. Include palettes with 4, 6, 8, 12, 14, and 16
 colors.
 
 Record the firmware version, device, SD card, and result:
@@ -57,7 +57,14 @@ Repeat the drawing checks on 8×8, 16×16, and 32×32 canvases.
 - [ ] Arrow keys move the artwork while M is held.
 - [ ] One move gesture creates one undo step.
 - [ ] Undo restores the artwork after moving it.
-- [ ] Grid-size changes preserve existing artwork correctly.
+- [ ] G opens Resize Canvas without changing the document or its dirty state.
+- [ ] Left/Right chooses a size; Enter focuses Apply; Enter again applies it.
+- [ ] Up returns from Cancel/Apply to the size choices.
+- [ ] `>` stays on the applied size and an outline marks the pending choice.
+- [ ] Cancel/Esc preserves the document, undo history, and prior zoom/viewport.
+- [ ] Shrinking warns about hidden pixels without cropping the dialog on the 240×135 screen.
+- [ ] Grid-size changes preserve existing artwork and can be undone.
+- [ ] Holding Enter after Apply does not draw a pixel behind the closing dialog.
 - [ ] Starting a new sketch resets canvas zoom and viewport position.
 
 ## 4. Canvas zoom and navigation
@@ -86,13 +93,19 @@ Test 16×16 and 32×32 artwork.
 
 - [ ] Palette menu opens from the canvas.
 - [ ] The carousel remembers the currently applied palette.
+- [ ] Cartridges enter in a center-out fade/rise/settle wave.
+- [ ] The centered cartridge lifts 8 pixels as focus moves.
+- [ ] Filters `4`, `8`, and `1` show 4, 5–8, and 9–16 colors respectively.
+- [ ] Filter changes reload the visible cartridges in place without a blank list.
+- [ ] Esc/P plays the exit animation before returning to Canvas.
+- [ ] Repeated filter changes and closing/reopening release the reload buffer without heap loss.
 - [ ] Left and right arrows browse the carousel.
 - [ ] Enter starts the cartridge insertion animation.
 - [ ] Cartridge reaches and visually inserts into the slot.
 - [ ] Animation has clear anticipation, acceleration, and weight.
 - [ ] Palette applies after the animation completes.
 - [ ] Palette menu dismisses after applying.
-- [ ] 4-, 8-, and 16-color palettes render correctly.
+- [ ] Every palette size from 4 through 16 renders correctly, including shadows around partial columns.
 - [ ] ADV palette colors remain right-aligned at the screen edge.
 - [ ] Expanding from a smaller palette restores the larger palette indices.
 - [ ] Thumbnail colors remain opaque after palette changes.
@@ -114,8 +127,8 @@ Test 16×16 and 32×32 artwork.
       changes trigger a warning.
 - [ ] Selecting New with unsaved changes shows the warning.
 - [ ] Opening another sketch with unsaved changes shows the warning.
-- [ ] S in the warning saves and then completes the requested action.
-- [ ] D in the warning discards and completes the requested action.
+- [ ] Save is focused initially; Enter saves and completes the requested action.
+- [ ] Left/Right selects Cancel, Discard, or Save; Enter on Discard completes the requested action.
 - [ ] Esc closes the warning and keeps the current sketch open.
 - [ ] No warning appears when Save warnings are OFF.
 - [ ] No warning appears immediately after a successful save.
@@ -134,7 +147,11 @@ Test 16×16 and 32×32 artwork.
 - [ ] Scrolling does not become slower after extended navigation.
 - [ ] New creates a blank sketch at the configured default size.
 - [ ] Enter opens the focused sketch.
-- [ ] Delete removes the focused sketch.
+- [ ] G0 opens a deletion confirmation with Cancel selected and the happy skull.
+- [ ] Focusing Delete changes the skull expression.
+- [ ] Enter on Cancel or Escape leaves the file and current sketch unchanged.
+- [ ] Enter on Delete removes the focused sketch and retains deletion undo.
+- [ ] Confirmation appears even when save warnings are disabled.
 - [ ] Deleting a sketch does not replace or modify the open canvas document.
 - [ ] Z restores the most recently deleted sketch.
 - [ ] Restoring a deletion does not consume or overwrite Canvas undo history.

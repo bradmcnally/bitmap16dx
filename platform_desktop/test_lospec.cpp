@@ -1,6 +1,8 @@
 #include "lospec.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -78,6 +80,32 @@ int main(int argc, char** argv) {
     renderPreview(std::string(argv[1]) + "-dark.png", true);
   }
   Page parsed;
+  std::string slug;
+  require(lookupSlug(" sweetie-16 ", slug) && slug == "sweetie-16", "Accept a short palette name");
+  require(lookupSlug("https://lospec.com/palette-list/Sweetie-16?ref=test#colors", slug) &&
+      slug == "sweetie-16", "Normalize a full Lospec URL");
+  require(lookupSlug("https://www.lospec.com/palette-list/sweetie-16.json/", slug) &&
+      slug == "sweetie-16", "Accept a direct download URL");
+  for (const auto* invalid : {"", "../secret", "https://example.com/palette-list/test",
+       "https://lospec.com.evil.test/palette-list/test", "https://lospec.com/palette-list/a/b",
+       "hello world", "https://user@lospec.com/palette-list/test"}) {
+    require(!lookupSlug(invalid, slug), "Reject invalid names and non-Lospec URLs");
+  }
+  Palette imported;
+  std::string lookupError;
+  const std::string lookupJson = "{\"name\":\"Test Four\",\"author\":\"Artist\","
+      "\"colors\":[\"574368\",\"8488d3\",\"cfd3c1\",\"f8c868\"]}";
+  require(parseLookup(lookupJson, "test-four", imported, lookupError) &&
+      imported.size == 4 && imported.title == "Test Four" && imported.author == "Artist" &&
+      imported.likes == -1, "Import direct-download format with attribution and no invented likes");
+  require(!parseLookup("{\"error\":\"file not found\"}", "missing", imported, lookupError) &&
+      lookupError == "Palette not found", "Report missing palettes");
+  require(!parseLookup("{\"name\":\"Two\",\"colors\":[\"000000\",\"ffffff\"]}",
+      "two", imported, lookupError) && lookupError == "Palettes need 4 to 16 colors",
+      "Explain unsupported palette sizes");
+  require(!parseLookup("<html>error</html>", "bad", imported, lookupError), "Reject non-JSON lookup responses");
+  require(!parseLookup("{\"name\":\"Bad\",\"colors\":[\"zzzzzz\",\"ffffff\",\"ffffff\",\"ffffff\"]}",
+      "bad", imported, lookupError), "Validate all imported colors");
   require(parsePage(page(0, 1, false), parsed), "Parse valid response");
   require(parsed.palettes.size() == 1 && parsed.palettes[0].size == 4 &&
       parsed.palettes[0].likes == 10 && parsed.palettes[0].author == "Pixel artist",
@@ -86,10 +114,10 @@ int main(int argc, char** argv) {
       bitmap16::Palette::rgb888ToRgb565(0x57, 0x43, 0x68), "RGB565 conversion");
   require(!parsePage("{bad", parsed), "Reject broken JSON");
   require(!parsePage("{\"data\":[]}", parsed), "Require pagination metadata");
-  for (const int size : {4, 8, 16, 5, 32}) {
+  for (const int size : {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 32}) {
     require(parsePage("{\"data\":[" + palette(0, 10, size) +
         "],\"meta\":{\"hasMore\":false}}", parsed), "Parse palette page");
-    require(parsed.palettes.size() == (size == 5 || size == 32 ? 0u : 1u),
+    require(parsed.palettes.size() == (size < 4 || size > 16 ? 0u : 1u),
         "Reject unsupported sizes rather than truncating");
   }
   std::string invalid = page(0, 1, false);
@@ -109,6 +137,18 @@ int main(int argc, char** argv) {
   require(result.error.empty() && result.calls == 1 && calls == 1 &&
       matching(result.palettes, 10, {}).size() == 20, "One request includes palette colors");
   require(matching(result.palettes, 11, {}).empty(), "Apply minimum likes locally");
+  auto selected = availablePalettes(result.palettes, {});
+  require(selected.size() == 100 && selected.back().slug == "test-99",
+      "Expose every cached palette in one carousel");
+  selected = availablePalettes(result.palettes, {"test-0"});
+  require(selected.size() == 99 && selected.front().slug == "test-1",
+      "Exclude saved palettes without pagination");
+  require(availablePalettes(result.palettes, {}, 3).empty(),
+      "Apply color count across the full carousel");
+  auto unliked = result.palettes;
+  unliked.front().likes = 0;
+  require(availablePalettes(unliked, {}).size() == 100,
+      "Do not filter palettes by likes");
   require(matching(result.palettes, 10, {"test-0"})[0].slug == "test-1", "Skip saved slugs");
   calls = 0;
   result = refresh(10, {}, cancel, [&](int offset) {
@@ -138,9 +178,35 @@ int main(int argc, char** argv) {
       ("bitmap16dx-lospec-test-" + std::to_string(
           std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(root / "palettes");
-  require(readMinimumLikes(root) == 10 && writeMinimumLikes(root, 25) &&
-      readMinimumLikes(root) == 25, "Persist threshold");
-  require(!writeMinimumLikes(root, -1), "Reject invalid threshold");
+  const auto sizeRoot = root / "sizes";
+  std::filesystem::create_directories(sizeRoot / "palettes");
+  std::vector<Palette> sizedPalettes;
+  for (int count = 4; count <= 16; ++count) {
+    std::string json = "{\"name\":\"Variable\",\"colors\":[";
+    for (int color = 0; color < count; ++color) {
+      if (color) json += ',';
+      json += "\"abcdef\"";
+    }
+    json += "]}";
+    Palette sized;
+    require(parseLookup(json, "size-" + std::to_string(count), sized, lookupError) &&
+        sized.size == count, "Lookup preserves every supported palette size");
+    require(savePalette(sizeRoot, sized), "Save arbitrary palette size as HEX");
+    std::ifstream input(sizeRoot / "palettes" / ("lospec-" + sized.slug + ".hex"));
+    const std::string contents((std::istreambuf_iterator<char>(input)), {});
+    bitmap16::Palette::Parsed reopened;
+    require(bitmap16::Palette::parseLospecHex(contents.data(), contents.size(), reopened) &&
+        reopened.size == count, "Saved HEX retains its exact color count");
+    // Feed entries carry a nonnegative likes count; direct lookups omit it.
+    sized.likes = 0;
+    sizedPalettes.push_back(sized);
+  }
+  require(availablePalettes(sizedPalettes, {}, 4).size() == 1 &&
+      availablePalettes(sizedPalettes, {}, 8).size() == 4 &&
+      availablePalettes(sizedPalettes, {}, 16).size() == 8,
+      "Color filters partition palettes into 4, 5-8, and 9-16");
+  require(saveCache(sizeRoot, sizedPalettes) && loadCache(sizeRoot).size() == 13,
+      "Cache round-trips every supported palette size");
   require(writeApiKey(root, "test-key") && !writeApiKey(root, "bad\nkey"), "Validate stored key");
   const auto permissions = std::filesystem::status(root / "lospec-key.txt").permissions();
   require((permissions & (std::filesystem::perms::group_read |
@@ -163,12 +229,143 @@ int main(int argc, char** argv) {
   require(loadCache(root).empty(), "Corrupt cache does not crash startup");
   std::filesystem::remove_all(root);
 
-  std::vector<bitmap16::PaletteView::Entry> entries(128);
-  bitmap16::PaletteView::Catalog catalog{entries.data(), 128};
+  std::vector<bitmap16::PaletteView::Entry> entries(300);
+  bitmap16::PaletteView::Catalog catalog{entries.data(), 300};
+  {
+    bitmap16::Lospec::Page parsed;
+    require(parsePage(page(0, 3, false), parsed), "Landing fixture");
+    std::vector<bitmap16::PaletteView::Entry> cartridges;
+    for (const auto& palette : parsed.palettes) {
+      cartridges.push_back({palette.colors.data(), palette.title.c_str(), palette.size});
+    }
+    cartridges[0].size = 5;
+    cartridges[1].size = 6;
+    cartridges[2].size = 7;
+    const bitmap16::PaletteView::Catalog landingCatalog{cartridges.data(), 3};
+    bitmap16::PaletteView::State landing;
+    bitmap16::PaletteView::reset(landing, landingCatalog);
+    landing.cursor = 1;
+    bitmap16::Canvas canvas;
+    require(canvas.create(320, 170), "Landing canvas");
+    const bitmap16::PaletteView::Theme theme{0, 0xffff, 0x7777, true};
+    landing.scrollPosition = 1.0f;
+    bitmap16::PaletteView::render(canvas, landing, landingCatalog, -1, theme, CARTRIDGE_GRAPHIC);
+    const std::vector<uint16_t> settled(canvas.pixels(), canvas.pixels() + 320 * 170);
+    for (const float approach : {0.999f, 1.001f}) {
+      landing.scrollPosition = approach;
+      bitmap16::PaletteView::render(canvas, landing, landingCatalog, -1, theme, CARTRIDGE_GRAPHIC);
+      require(std::equal(settled.begin(), settled.end(), canvas.pixels()),
+          "Side cartridges must land with the center cartridge from either direction");
+    }
+    landing.scrollPosition = 1.0f;
+    bitmap16::PaletteView::beginEntrance(landing, 320);
+    const auto drawEntrance = [&]() {
+      bitmap16::PaletteView::render(canvas, landing, landingCatalog, -1, theme, CARTRIDGE_GRAPHIC);
+    };
+    const auto visiblePixels = [&](int left, int right) {
+      int count = 0;
+      for (int y = 18; y < 132; ++y)
+        for (int x = left; x < right; ++x)
+          if (canvas.readPixel(x, y) != theme.background) ++count;
+      return count;
+    };
+    drawEntrance();
+    require(visiblePixels(20, 300) == 0, "Cartridges begin fully transparent");
+    bitmap16::PaletteView::advanceTimed(landing, 60);
+    drawEntrance();
+    require(visiblePixels(120, 200) > 0 && visiblePixels(20, 100) == 0 &&
+        visiblePixels(220, 300) == 0, "Center fades and rises before its neighbors");
+    bitmap16::PaletteView::advanceTimed(landing, 120);
+    drawEntrance();
+    require(visiblePixels(20, 100) > 0 && visiblePixels(220, 300) > 0,
+        "Entrance wave reaches both neighbors together");
+    auto partitioned = landing;
+    bitmap16::PaletteView::advanceTimed(landing, 32);
+    bitmap16::PaletteView::advanceTimed(partitioned, 16);
+    bitmap16::PaletteView::advanceTimed(partitioned, 16);
+    require(std::fabs(landing.entranceElapsedMs - partitioned.entranceElapsedMs) < 0.001f,
+        "Entrance timing is independent of frame rate");
+    require(bitmap16::PaletteView::advanceTimed(landing, 1000) ==
+        bitmap16::PaletteView::AnimationResult::Animating && !landing.entranceAnimating,
+        "Present the final entrance frame");
+    drawEntrance();
+    require(std::equal(settled.begin(), settled.end(), canvas.pixels()),
+        "Entrance settles exactly into the normal carousel");
+    bitmap16::PaletteView::beginExit(landing, 320);
+    drawEntrance();
+    require(std::equal(settled.begin(), settled.end(), canvas.pixels()),
+        "Exit begins exactly at the resting carousel");
+    auto exitPartitioned = landing;
+    bitmap16::PaletteView::advanceTimed(landing, 120);
+    bitmap16::PaletteView::advanceTimed(exitPartitioned, 60);
+    bitmap16::PaletteView::advanceTimed(exitPartitioned, 60);
+    require(std::fabs(landing.exitElapsedMs - exitPartitioned.exitElapsedMs) < 0.001f,
+        "Exit duration is independent of frame rate");
+    require(!bitmap16::PaletteView::moveCursor(landing, 1) &&
+        !bitmap16::PaletteView::beginSelection(landing), "Keep the departing list stable");
+    require(bitmap16::PaletteView::advanceTimed(landing, 1000) ==
+        bitmap16::PaletteView::AnimationResult::ExitComplete, "Exit reports completion");
+    drawEntrance();
+    require(visiblePixels(20, 300) == 0, "Every departing cartridge fades out completely");
+    landing.exitAnimating = false;
+    uint16_t replacementColors[16];
+    std::fill(std::begin(replacementColors), std::end(replacementColors), 0xf800);
+    auto replacementEntries = cartridges;
+    replacementEntries[1].colors = replacementColors;
+    replacementEntries[1].name = "RELOADED";
+    const bitmap16::PaletteView::Catalog replacementCatalog{replacementEntries.data(), 3};
+    bitmap16::PaletteView::render(canvas, landing, replacementCatalog, -1, theme, CARTRIDGE_GRAPHIC);
+    const std::vector<uint16_t> replacement(canvas.pixels(), canvas.pixels() + 320 * 170);
+    bitmap16::PaletteView::beginReload(landing, 320, settled.data());
+    bitmap16::PaletteView::render(canvas, landing, replacementCatalog, -1, theme, CARTRIDGE_GRAPHIC);
+    require(std::equal(settled.begin() + 18 * 320, settled.begin() + 157 * 320,
+                       canvas.pixels() + 18 * 320), "Reload starts with the old cartridges intact");
+    auto reloadPartitioned = landing;
+    bitmap16::PaletteView::advanceTimed(landing, 100);
+    bitmap16::PaletteView::advanceTimed(reloadPartitioned, 50);
+    bitmap16::PaletteView::advanceTimed(reloadPartitioned, 50);
+    require(std::fabs(landing.reloadElapsedMs - reloadPartitioned.reloadElapsedMs) < 0.001f,
+        "Reload timing is independent of frame rate");
+    bitmap16::PaletteView::advanceTimed(landing, 1000);
+    bitmap16::PaletteView::render(canvas, landing, replacementCatalog, -1, theme, CARTRIDGE_GRAPHIC);
+    require(!landing.reloadAnimating && landing.reloadFrame == nullptr &&
+        std::equal(replacement.begin(), replacement.end(), canvas.pixels()),
+        "Reload settles exactly into the new content and releases its snapshot");
+    bitmap16::PaletteView::toggleSizeFilter(landing, landingCatalog, 4);
+    require(landing.filteredCount == 0, "Filter can produce an empty list after exit");
+    bitmap16::PaletteView::beginExit(landing, 320);
+    require(bitmap16::PaletteView::advanceTimed(landing, 16) ==
+        bitmap16::PaletteView::AnimationResult::ExitComplete, "Empty lists finish exit immediately");
+    landing.exitAnimating = false;
+    bitmap16::PaletteView::toggleSizeFilter(landing, landingCatalog, 4);
+    bitmap16::PaletteView::selectCatalogIndex(landing, 1);
+    bitmap16::PaletteView::beginEntrance(landing, 320);
+    require(bitmap16::PaletteView::moveCursor(landing, 1) && !landing.entranceAnimating,
+        "Navigation stays responsive during entrance");
+  }
   bitmap16::PaletteView::State state;
   bitmap16::PaletteView::reset(state, catalog);
-  bitmap16::PaletteView::selectCatalogIndex(state, 127);
-  require(bitmap16::PaletteView::selectedCatalogIndex(state) == 127,
-      "Zero can reach downloaded palettes beyond the original twenty");
+  bitmap16::PaletteView::selectCatalogIndex(state, 299);
+  require(bitmap16::PaletteView::selectedCatalogIndex(state) == 299,
+      "Reach every palette in a 300-entry carousel without truncating indices");
+  bitmap16::PaletteView::State slow;
+  slow.cursor = 1;
+  auto fast = slow;
+  bitmap16::PaletteView::advanceTimed(slow, 32.0f);
+  bitmap16::PaletteView::advanceTimed(fast, 16.0f);
+  bitmap16::PaletteView::advanceTimed(fast, 16.0f);
+  require(std::fabs(slow.scrollPosition - fast.scrollPosition) < 0.00001f,
+      "Scrolling covers the same distance at different frame rates");
+  slow.scrollPosition = 0.995f;
+  require(bitmap16::PaletteView::advanceTimed(slow, 16.0f) ==
+      bitmap16::PaletteView::AnimationResult::Animating && slow.scrollPosition == 1.0f,
+      "Present the final snapped frame before becoming idle");
+  slow.insertionAnimating = true;
+  slow.insertionProgress = 0.0f;
+  fast = slow;
+  bitmap16::PaletteView::advanceTimed(slow, 100.0f);
+  for (int i = 0; i < 5; ++i) bitmap16::PaletteView::advanceTimed(fast, 20.0f);
+  require(std::fabs(slow.insertionProgress - fast.insertionProgress) < 0.00001f,
+      "Insertion duration is independent of frame rate");
   return 0;
 }

@@ -1,4 +1,5 @@
 #include "core/palette_view.h"
+#include "core/palette.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +16,86 @@ constexpr int kCartridgeHeight = 92;
 constexpr int kPaletteGap = 20;
 constexpr int kInsertionOvershoot = 13;
 constexpr float kInsertionImpactAt = 0.72f;
+
+void drawStatus(Canvas& canvas, const char* text, uint16_t color) {
+  canvas.setTextAlign(TextAlign::Left);
+  canvas.setTextSize(1);
+  canvas.setTextColor(color);
+  int x = 3;
+  const int y = canvas.height() - 11;
+  for (int index = 0; text[index] != '\0'; ++index) {
+    if (text[index] == '|') {
+      int characters = 0;
+      for (int right = index + 1; text[right] != '\0'; ++right) {
+        if (text[right] == '[' && text[right + 1] != '\0' && text[right + 2] == ']') right += 2;
+        ++characters;
+      }
+      x = canvas.width() - 3 - characters * 6;
+      continue;
+    }
+    const bool underline = text[index] == '[' && text[index + 1] != '\0' &&
+        text[index + 2] == ']';
+    const char label[] = {text[index + (underline ? 1 : 0)], '\0'};
+    canvas.drawString(label, x, y);
+    if (underline) {
+      canvas.drawFastHLine(x, y + 8, 5, color);
+      index += 2;
+    }
+    x += 6;
+  }
+}
+
+constexpr float kEntranceCartridgeMs = 480.0f;
+constexpr float kEntranceStaggerMs = 90.0f;
+constexpr float kExitCartridgeMs = 240.0f;
+constexpr float kExitStaggerMs = 65.0f;
+constexpr float kReloadFadeOutMs = 100.0f;
+constexpr float kReloadFadeInMs = 220.0f;
+constexpr float kReloadStaggerMs = 75.0f;
+
+float smoothStep(float value) {
+  value = std::max(0.0f, std::min(1.0f, value));
+  return value * value * (3.0f - 2.0f * value);
+}
+
+uint16_t blendColor(uint16_t color, uint16_t background, int alpha) {
+  const int inverse = 256 - alpha;
+  const int red = (((color >> 11) * alpha + (background >> 11) * inverse) >> 8);
+  const int green = ((((color >> 5) & 63) * alpha + ((background >> 5) & 63) * inverse) >> 8);
+  const int blue = (((color & 31) * alpha + (background & 31) * inverse) >> 8);
+  return static_cast<uint16_t>((red << 11) | (green << 5) | blue);
+}
+
+void fadeCartridge(Canvas& canvas, int x, int y, int alpha, uint16_t background) {
+  if (alpha >= 256) return;
+  const int left = std::max(0, x);
+  const int right = std::min(canvas.width(), x + kCartridgeWidth);
+  const int top = std::max(0, y);
+  const int bottom = std::min(canvas.height(), y + kCartridgeHeight);
+  for (int row = top; row < bottom; ++row) {
+    uint16_t* pixels = canvas.pixels() + row * canvas.width();
+    for (int column = left; column < right; ++column)
+      pixels[column] = blendColor(pixels[column], background, alpha);
+  }
+}
+
+void compositeReload(Canvas& canvas, const State& state, const Theme& theme) {
+  if (!state.reloadAnimating || state.reloadFrame == nullptr) return;
+  const int centerX = canvas.width() / 2;
+  for (int x = 0; x < canvas.width(); ++x) {
+    const int slot = static_cast<int>(std::lround(
+        static_cast<float>(x - centerX) / (kCartridgeWidth + kPaletteGap)));
+    const float elapsed = state.reloadElapsedMs - std::abs(slot) * kReloadStaggerMs;
+    const int oldAlpha = static_cast<int>(256 * (1.0f - smoothStep(elapsed / kReloadFadeOutMs)));
+    const int newAlpha = static_cast<int>(256 * smoothStep(
+        (elapsed - kReloadFadeOutMs) / kReloadFadeInMs));
+    for (int y = 18; y < canvas.height() - 13; ++y) {
+      const int pixel = y * canvas.width() + x;
+      const uint16_t old = blendColor(state.reloadFrame[pixel], theme.background, oldAlpha);
+      canvas.pixels()[pixel] = blendColor(canvas.pixels()[pixel], old, newAlpha);
+    }
+  }
+}
 
 float insertionEasing(float progress) {
   constexpr float kWindUpEnd = 0.23f;
@@ -150,6 +231,28 @@ void drawCartridge(
     canvas.fillRect(x + 6, y + 4, 68, 68, theme.background);
     return;
   }
+#if defined(BITMAP16_CARDPUTER_ZERO) || defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_LOSPEC)
+  if (!theme.dark) {
+    canvas.pushImage(x, y, kCartridgeWidth, kCartridgeHeight, graphic);
+    return;
+  }
+  // The source art is immutable. Prepare its dark-theme colors once, then
+  // copy clipped rows rather than remapping every pixel on every frame.
+  static uint16_t darkGraphic[kCartridgeWidth * kCartridgeHeight];
+  static const uint16_t* cachedSource = nullptr;
+  static uint16_t cachedBackground = 0;
+  if (cachedSource != graphic || cachedBackground != theme.background) {
+    for (int row = 0; row < kCartridgeHeight; ++row) {
+      for (int column = 0; column < kCartridgeWidth; ++column) {
+        darkGraphic[row * kCartridgeWidth + column] = cartridgeColor(
+            graphic[row * kCartridgeWidth + column], theme, column, row);
+      }
+    }
+    cachedSource = graphic;
+    cachedBackground = theme.background;
+  }
+  canvas.pushImage(x, y, kCartridgeWidth, kCartridgeHeight, darkGraphic);
+#else
   for (int row = 0; row < kCartridgeHeight; ++row) {
     for (int column = 0; column < kCartridgeWidth; ++column) {
       canvas.drawPixel(
@@ -162,6 +265,7 @@ void drawCartridge(
               row));
     }
   }
+#endif
 }
 
 void drawCutRect(
@@ -197,24 +301,21 @@ void drawSwatches(
     int x,
     int y,
     const Entry& entry) {
-  const int columns = entry.size == 4 ? 1 : entry.size == 8 ? 2 : 4;
-  const int rows = 4;
-  const int colorWidth = 64 / columns;
-  const int colorHeight = 64 / rows;
-  for (int index = 0; index < entry.size; ++index) {
-    const int column = entry.size == 4 ? 0 : index / rows;
-    const int row = entry.size == 4 ? index : index % rows;
-    drawCutRect(
-        canvas,
-        x + column * colorWidth,
-        y + row * colorHeight,
-        colorWidth,
-        colorHeight,
-        entry.colors[index],
-        column == 0 && row == 0,
-        column == columns - 1 && row == 0,
-        column == 0 && row == rows - 1,
-        column == columns - 1 && row == rows - 1);
+  const int columns = (entry.size + 3) / 4;
+  int index = 0;
+  for (int column = 0; column < columns; ++column) {
+    const int rows = entry.size / columns + (column < entry.size % columns ? 1 : 0);
+    const int left = column * 64 / columns;
+    const int right = (column + 1) * 64 / columns;
+    for (int row = 0; row < rows; ++row) {
+      const int top = row * 64 / rows;
+      const int bottom = (row + 1) * 64 / rows;
+      drawCutRect(canvas, x + left, y + top, right - left, bottom - top,
+                  entry.colors[index++], column == 0 && row == 0,
+                  column == columns - 1 && row == 0,
+                  column == 0 && row == rows - 1,
+                  column == columns - 1 && row == rows - 1);
+    }
   }
 }
 
@@ -231,14 +332,14 @@ void rebuildFilter(State& state, const Catalog& catalog) {
     const int count = std::max(0, std::min(kMaximumEntries, catalog.count));
     for (int index = 0; index < count; ++index) {
       const Entry& entry = catalog.entries[index];
-      if (state.filterSize != 0 && entry.size != state.filterSize) {
+      if (!Palette::matchesSizeFilter(entry.size, state.filterSize)) {
         continue;
       }
       if (state.userOnly && !entry.user) {
         continue;
       }
       state.filteredIndices[state.filteredCount++] =
-          static_cast<uint8_t>(index);
+          static_cast<CatalogIndex>(index);
     }
   }
   if (state.filteredCount == 0 || state.cursor >= state.filteredCount) {
@@ -248,7 +349,7 @@ void rebuildFilter(State& state, const Catalog& catalog) {
 }
 
 bool moveCursor(State& state, int delta) {
-  if (state.filteredCount <= 0 || state.insertionAnimating) {
+  if (state.filteredCount <= 0 || state.insertionAnimating || state.exitAnimating) {
     return false;
   }
   const int next = std::max(
@@ -256,8 +357,18 @@ bool moveCursor(State& state, int delta) {
   if (next == state.cursor) {
     return false;
   }
+  state.entranceAnimating = false;
+  state.reloadAnimating = false;
+  state.reloadFrame = nullptr;
   state.cursor = next;
   return true;
+}
+
+uint8_t steppedSizeFilter(uint8_t current, int direction) {
+  constexpr uint8_t filters[] = {0, 4, 8, 16};
+  int index = 0;
+  for (int i = 0; i < 4; ++i) if (filters[i] == current) index = i;
+  return filters[(index + (direction < 0 ? 3 : direction > 0 ? 1 : 0)) % 4];
 }
 
 bool toggleSizeFilter(
@@ -296,10 +407,51 @@ void selectCatalogIndex(State& state, int catalogIndex) {
   }
 }
 
+void beginEntrance(State& state, int viewportWidth) {
+  state.reloadAnimating = false;
+  state.reloadFrame = nullptr;
+  if (state.filteredCount <= 0 || state.insertionAnimating || state.exitAnimating) return;
+  state.entranceAnimating = true;
+  state.entranceElapsedMs = 0.0f;
+  state.entranceCenter = state.cursor;
+  state.scrollPosition = static_cast<float>(state.cursor);
+  const int visibleRadius = (viewportWidth / 2 + kCartridgeWidth / 2 - 1) /
+      (kCartridgeWidth + kPaletteGap);
+  state.entranceDurationMs = kEntranceCartridgeMs + visibleRadius * kEntranceStaggerMs;
+}
+
+void beginReload(State& state, int viewportWidth, const uint16_t* previousFrame) {
+  state.entranceAnimating = false;
+  state.exitAnimating = false;
+  state.reloadAnimating = previousFrame != nullptr;
+  state.reloadFrame = previousFrame;
+  state.reloadElapsedMs = 0.0f;
+  state.scrollPosition = static_cast<float>(state.cursor);
+  const int visibleRadius = (viewportWidth / 2 + kCartridgeWidth / 2 - 1) /
+      (kCartridgeWidth + kPaletteGap);
+  state.reloadDurationMs = kReloadFadeOutMs + kReloadFadeInMs +
+      visibleRadius * kReloadStaggerMs;
+}
+
+void beginExit(State& state, int viewportWidth) {
+  if (state.insertionAnimating || state.exitAnimating) return;
+  state.entranceAnimating = false;
+  state.exitAnimating = true;
+  state.exitElapsedMs = 0.0f;
+  state.exitCenter = static_cast<int>(std::lround(state.scrollPosition));
+  const int visibleRadius = (viewportWidth / 2 + kCartridgeWidth / 2 - 1) /
+      (kCartridgeWidth + kPaletteGap);
+  state.exitDurationMs = state.filteredCount == 0 ? 0.0f :
+      kExitCartridgeMs + visibleRadius * kExitStaggerMs;
+}
+
 bool beginSelection(State& state) {
-  if (selectedCatalogIndex(state) < 0 || state.insertionAnimating) {
+  if (selectedCatalogIndex(state) < 0 || state.insertionAnimating || state.exitAnimating) {
     return false;
   }
+  state.entranceAnimating = false;
+  state.reloadAnimating = false;
+  state.reloadFrame = nullptr;
   state.frozenScrollPosition = state.scrollPosition;
   state.insertionAnimating = true;
   state.insertionProgress = 0.0f;
@@ -310,6 +462,29 @@ AnimationResult advance(
     State& state,
     float scrollSpeed,
     float insertionSpeed) {
+  if (state.reloadAnimating) {
+    state.reloadElapsedMs = std::min(state.reloadDurationMs,
+        state.reloadElapsedMs + insertionSpeed * kInsertionDurationMs);
+    if (state.reloadElapsedMs >= state.reloadDurationMs) {
+      state.reloadAnimating = false;
+      state.reloadFrame = nullptr;
+    }
+    return AnimationResult::Animating;
+  }
+  if (state.exitAnimating) {
+    state.exitElapsedMs = std::min(state.exitDurationMs,
+        state.exitElapsedMs + insertionSpeed * kInsertionDurationMs);
+    return state.exitElapsedMs >= state.exitDurationMs
+        ? AnimationResult::ExitComplete : AnimationResult::Animating;
+  }
+  if (state.entranceAnimating) {
+    state.entranceElapsedMs += insertionSpeed * kInsertionDurationMs;
+    if (state.entranceElapsedMs >= state.entranceDurationMs) {
+      state.entranceAnimating = false;
+      state.entranceElapsedMs = state.entranceDurationMs;
+    }
+    return AnimationResult::Animating;
+  }
   if (state.insertionAnimating) {
     state.insertionProgress += insertionSpeed;
     if (state.insertionProgress >= 1.0f) {
@@ -322,10 +497,17 @@ AnimationResult advance(
       static_cast<float>(state.cursor) - state.scrollPosition;
   if (std::fabs(difference) <= 0.01f) {
     state.scrollPosition = static_cast<float>(state.cursor);
-    return AnimationResult::Idle;
+    return difference == 0.0f ? AnimationResult::Idle : AnimationResult::Animating;
   }
   state.scrollPosition += difference * scrollSpeed;
   return AnimationResult::Animating;
+}
+
+AnimationResult advanceTimed(State& state, float elapsedMs) {
+  if (elapsedMs <= 0.0f) return AnimationResult::Idle;
+  // Match the original 25% easing at 16 ms, independent of render speed.
+  const float scrollSpeed = 1.0f - std::pow(0.75f, elapsedMs / 16.0f);
+  return advance(state, scrollSpeed, elapsedMs / kInsertionDurationMs);
 }
 
 void render(
@@ -347,9 +529,11 @@ void render(
 
   char filter[20] = {};
   if (state.filterSize != 0 && state.userOnly) {
-    std::snprintf(filter, sizeof(filter), "USER+%u", state.filterSize);
+    std::snprintf(filter, sizeof(filter), "USER %s",
+                  state.filterSize == 4 ? "4" : state.filterSize == 8 ? "5-8" : "9-16");
   } else if (state.filterSize != 0) {
-    std::snprintf(filter, sizeof(filter), "%u-COLOR", state.filterSize);
+    std::snprintf(filter, sizeof(filter), "%s COLORS",
+                  state.filterSize == 4 ? "4" : state.filterSize == 8 ? "5-8" : "9-16");
   } else if (state.userOnly) {
     std::snprintf(filter, sizeof(filter), "USER");
   }
@@ -363,9 +547,10 @@ void render(
     canvas.setTextColor(theme.textSecondary);
     canvas.drawString(
         catalog.emptyMessage, canvas.width() / 2, canvas.height() / 2);
+    compositeReload(canvas, state, theme);
     if (statusMessage != nullptr) {
       canvas.setTextAlign(TextAlign::Left);
-      canvas.drawString(statusMessage, 3, canvas.height() - 11);
+      drawStatus(canvas, statusMessage, theme.text);
     }
     return;
   }
@@ -375,20 +560,56 @@ void render(
   const float scroll = state.insertionAnimating
       ? state.frozenScrollPosition
       : state.scrollPosition;
+  const int scrollPixels = static_cast<int>(std::lround(
+      scroll * (kCartridgeWidth + kPaletteGap)));
   for (int filtered = 0; filtered < state.filteredCount; ++filtered) {
     const int catalogIndex = state.filteredIndices[filtered];
     if (catalogIndex < 0 || catalogIndex >= catalog.count) {
       continue;
     }
-    const int paletteX = centerX + static_cast<int>(
-        (static_cast<float>(filtered) - scroll) *
-        (kCartridgeWidth + kPaletteGap));
+    // Round the carousel's shared offset once. Rounding each cartridge's
+    // signed displacement separately lets one neighbor move after landing.
+    const int paletteX = centerX +
+        filtered * (kCartridgeWidth + kPaletteGap) - scrollPixels;
     if (paletteX <= -kCartridgeWidth / 2 ||
         paletteX >= canvas.width() + kCartridgeWidth / 2) {
       continue;
     }
     const bool selected = filtered == state.cursor;
     int cartridgeY = centerY - kCartridgeHeight / 2;
+    const float focus = selected && state.insertionAnimating ? 1.0f :
+        std::max(0.0f, 1.0f - std::fabs(static_cast<float>(filtered) - scroll));
+    cartridgeY -= static_cast<int>(std::lround(8.0f * focus));
+    int entranceAlpha = 256;
+    if (state.reloadAnimating) {
+      const float elapsed = state.reloadElapsedMs -
+          std::abs(filtered - state.cursor) * kReloadStaggerMs - kReloadFadeOutMs;
+      cartridgeY -= static_cast<int>(std::lround(8.0f *
+          (1.0f - smoothStep(elapsed / kReloadFadeInMs))));
+    }
+    if (state.entranceAnimating) {
+      const float localMs = state.entranceElapsedMs -
+          std::abs(filtered - state.entranceCenter) * kEntranceStaggerMs;
+      if (localMs <= 0.0f) continue;
+      const float progress = std::min(1.0f, localMs / kEntranceCartridgeMs);
+      entranceAlpha = static_cast<int>(256.0f * smoothStep(localMs / 180.0f));
+      const int insertionDistance = std::max(0,
+          canvas.height() - kCartridgeHeight + kInsertionOvershoot - cartridgeY);
+      const float rise = progress < 0.45f
+          ? smoothStep(progress / 0.45f)
+          : 1.0f - smoothStep((progress - 0.45f) / 0.55f);
+      cartridgeY -= static_cast<int>(std::lround(insertionDistance * 0.32f * rise));
+    }
+    if (state.exitAnimating) {
+      const float localMs = state.exitElapsedMs -
+          std::abs(filtered - state.exitCenter) * kExitStaggerMs;
+      const float progress = smoothStep(localMs / kExitCartridgeMs);
+      entranceAlpha = static_cast<int>(256.0f * (1.0f - progress));
+      if (entranceAlpha <= 0) continue;
+      const int insertionDistance = std::max(0,
+          canvas.height() - kCartridgeHeight + kInsertionOvershoot - cartridgeY);
+      cartridgeY -= static_cast<int>(std::lround(insertionDistance * 0.32f * progress));
+    }
     if (selected && state.insertionAnimating) {
       const float easedProgress = insertionEasing(state.insertionProgress);
       const int insertionDistance = std::max(
@@ -405,21 +626,23 @@ void render(
       std::snprintf(
           label,
           sizeof(label),
-          "%s%s%s",
+          "%s%s%.30s (%u)",
           catalogIndex == activeCatalogIndex ? "> " : "",
           entry.user ? "* " : "",
-          entry.name == nullptr ? "UNTITLED" : entry.name);
+          entry.name == nullptr ? "UNTITLED" : entry.name, entry.size);
       canvas.setTextAlign(TextAlign::Center);
-      canvas.setTextColor(theme.text);
+      canvas.setTextColor(blendColor(theme.text, theme.background, entranceAlpha));
       canvas.drawString(
           label, centerX, centerY + kCartridgeHeight / 2 + 6);
-      if (entry.likes >= 0 && canvas.height() >= 170) {
+      if ((entry.likes >= 0 || (entry.author != nullptr && entry.author[0] != '\0')) &&
+          canvas.height() >= 170) {
         char details[48] = {};
-        std::snprintf(details, sizeof(details), "%.28s  %d likes",
+        if (entry.likes >= 0) std::snprintf(details, sizeof(details), "%.28s  %d likes",
                       entry.author == nullptr || entry.author[0] == '\0'
                           ? "Lospec" : entry.author,
                       entry.likes);
-        canvas.setTextColor(theme.textSecondary);
+        else std::snprintf(details, sizeof(details), "by %.40s", entry.author);
+        canvas.setTextColor(blendColor(theme.textSecondary, theme.background, entranceAlpha));
         canvas.drawString(details, centerX, centerY + kCartridgeHeight / 2 + 18);
       }
     }
@@ -439,20 +662,23 @@ void render(
         theme,
         cartridgeGraphic);
     if (entry.colors != nullptr &&
-        (entry.size == 4 || entry.size == 8 || entry.size == 16)) {
+        (entry.size >= 4 && entry.size <= 16)) {
       drawSwatches(
           canvas,
           paletteX - kCartridgeWidth / 2 + 8,
           cartridgeY + 6,
           entry);
     }
+    fadeCartridge(canvas, paletteX - kCartridgeWidth / 2, cartridgeY,
+                  entranceAlpha, theme.background);
   }
 
+  compositeReload(canvas, state, theme);
   if (statusMessage != nullptr && statusMessage[0] != '\0') {
     canvas.setTextAlign(TextAlign::Left);
     canvas.setTextSize(1);
     canvas.setTextColor(theme.text);
-    canvas.drawString(statusMessage, 3, canvas.height() - 11);
+    drawStatus(canvas, statusMessage, theme.text);
   }
 }
 

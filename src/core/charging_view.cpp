@@ -138,11 +138,20 @@ void setBattery(State& state, int batteryPercent, const uint8_t* icon) {
   state.items[kBatteryItem].icon = icon;
 }
 
+void setDecorationIcons(
+    State& state, const uint8_t* save, const uint8_t* skull,
+    const uint8_t* chargingLightning) {
+  state.items[kSaveItem].icon = save;
+  state.items[kSkullItem].icon = skull;
+  state.items[kLightningItem].icon = chargingLightning;
+}
+
 void update(State& state, int width, int height) {
-  const int activeCount = state.sketchAvailable
-      ? kItemCount
-      : kItemCount - 1;
-  for (int i = 0; i < activeCount; ++i) {
+  const auto active = [&](int index) {
+    return index == kSketchItem ? state.sketchAvailable : state.items[index].icon != nullptr;
+  };
+  for (int i = 0; i < kItemCount; ++i) {
+    if (!active(i)) continue;
     Item& item = state.items[i];
     item.x += item.dx;
     item.y += item.dy;
@@ -166,8 +175,10 @@ void update(State& state, int width, int height) {
     }
   }
 
-  for (int first = 0; first < activeCount; ++first) {
-    for (int second = first + 1; second < activeCount; ++second) {
+  for (int first = 0; first < kItemCount; ++first) {
+    if (!active(first)) continue;
+    for (int second = first + 1; second < kItemCount; ++second) {
+      if (!active(second)) continue;
       const int threshold =
           first == kSketchItem || second == kSketchItem ? 30 : 16;
       Item& a = state.items[first];
@@ -195,12 +206,10 @@ void render(
     return;
   }
   canvas.fillScreen(theme.background);
-  const int activeCount = state.sketchAvailable && sketch != nullptr
-      ? kItemCount
-      : kItemCount - 1;
-  for (int i = 0; i < activeCount; ++i) {
+  for (int i = 0; i < kItemCount; ++i) {
     if (i == kSketchItem) {
-      drawSketch(canvas, state.items[i], *sketch);
+      if (state.sketchAvailable && sketch != nullptr)
+        drawSketch(canvas, state.items[i], *sketch);
     } else {
       drawIcon(canvas, state.items[i], theme);
     }

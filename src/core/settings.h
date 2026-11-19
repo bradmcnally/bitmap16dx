@@ -34,6 +34,7 @@ struct Settings {
   uint8_t displayBrightness = 80;
   uint8_t matrixBrightness = 5;
   bool batteryDisplay = true;
+  uint8_t displayWarmth = 0;
 };
 
 Settings normalizeSettings(Settings settings);

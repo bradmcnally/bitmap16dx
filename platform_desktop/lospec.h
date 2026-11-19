@@ -29,9 +29,14 @@ struct Page {
   bool hasMore = false;
 };
 
+std::vector<Palette> availablePalettes(
+    const std::vector<Palette>& palettes,
+    const std::vector<std::string>& savedSlugs, uint8_t colorCount = 0);
+
 struct Response {
   std::string body;
   std::string error;
+  long status = 0;
 };
 
 struct Result {
@@ -43,6 +48,10 @@ struct Result {
 // The transport seam keeps pagination, validation and filtering testable offline.
 using FetchPage = std::function<Response(int offset)>;
 bool parsePage(const std::string& json, Page& page);
+bool lookupSlug(const std::string& input, std::string& slug);
+bool parseLookup(const std::string& json, const std::string& slug,
+                 Palette& palette, std::string& error);
+Result lookup(const std::string& input, const std::atomic_bool& cancel);
 std::vector<Palette> matching(
     const std::vector<Palette>& palettes,
     int minimumLikes,
@@ -61,8 +70,6 @@ Result downloadLatest(
 
 std::string readApiKey(const std::filesystem::path& root);
 bool writeApiKey(const std::filesystem::path& root, const std::string& key);
-int readMinimumLikes(const std::filesystem::path& root);
-bool writeMinimumLikes(const std::filesystem::path& root, int likes);
 std::vector<Palette> loadCache(const std::filesystem::path& root);
 bool saveCache(
     const std::filesystem::path& root, const std::vector<Palette>& palettes);

@@ -46,6 +46,7 @@ int main() {
   first.settings().defaultGridSize = 16;
   first.settings().matrixEnabled = true;
   first.settings().batteryDisplay = false;
+  first.settings().displayWarmth = 2;
   if (!first.saveSettings()) return 3;
 
   bitmap16::Editor restoredEditor;
@@ -58,7 +59,8 @@ int main() {
       restored.settings().cursorStyle != bitmap16::CursorStyle::Hand ||
       restored.settings().defaultGridSize != 16 ||
       !restored.settings().matrixEnabled ||
-      restored.settings().batteryDisplay) {
+      restored.settings().batteryDisplay ||
+      restored.settings().displayWarmth != 2) {
     return 5;
   }
   if (!restored.openSketch(0, restoredEditor) ||
@@ -176,14 +178,44 @@ int main() {
     return 13;
   }
 
-  // Existing version 4 files end after the cursor style.
+  restoredEditor.applyPalette(restored.userPalettes()[0].colors.data(), 4);
+  if (!restored.saveSketch(restoredEditor, true)) return 14;
+  const auto beforePaletteDelete = restoredEditor.sketch();
+  if (!restored.deleteUserPalette(0) || restored.userPalettes().size() != 1 ||
+      std::filesystem::exists(root / "palettes" / "lospec-sample.hex") ||
+      !std::filesystem::exists(root / "trash" / "palette-lospec-sample.hex") ||
+      restored.deleteUserPalette(99)) {
+    return 14;
+  }
+  for (int color = 0; color < 16; ++color) {
+    if (restoredEditor.sketch().paletteColors[color] != beforePaletteDelete.paletteColors[color]) return 15;
+  }
+  bitmap16::Editor reopenedEditor;
+  bitmap16::Desktop::Workspace reopened;
+  if (!reopened.initialize(reopenedEditor) || !reopened.openSketch(0, reopenedEditor)) return 16;
+  for (int color = 0; color < 16; ++color) {
+    if (reopenedEditor.sketch().paletteColors[color] != beforePaletteDelete.paletteColors[color]) return 16;
+  }
+
+  // Older version 4 files with the battery option default to neutral warmth.
   const auto settingsPath = root / "settings.bin";
+  std::filesystem::resize_file(settingsPath, 17, error);
+  bitmap16::Editor previousEditor;
+  bitmap16::Desktop::Workspace previous;
+  if (error || !previous.initialize(previousEditor) ||
+      previous.settings().batteryDisplay ||
+      previous.settings().displayWarmth != 0) {
+    return 17;
+  }
+
+  // Existing version 4 files can also end after the cursor style.
   std::filesystem::resize_file(settingsPath, 16, error);
   bitmap16::Editor legacyEditor;
   bitmap16::Desktop::Workspace legacy;
   if (error || !legacy.initialize(legacyEditor) ||
       !legacy.settings().batteryDisplay ||
-      legacy.settings().theme != bitmap16::ThemeId::Dark) {
+      legacy.settings().theme != bitmap16::ThemeId::Dark ||
+      legacy.settings().displayWarmth != 0) {
     return 12;
   }
   if (std::getenv("BITMAP16_KEEP_TEST_DATA") == nullptr) {

@@ -34,6 +34,7 @@ add_executable(bitmap16dx_desktop
   src/core/canvas.cpp
   src/core/canvas_view.cpp
   src/core/charging_view.cpp
+  src/core/dialog_view.cpp
   src/core/help_view.cpp
   src/core/memory_view.cpp
   src/core/led_mapping.cpp
@@ -54,7 +55,7 @@ target_compile_definitions(bitmap16dx_desktop PRIVATE
 )
 if(BITMAP16_CARDPUTER_ZERO)
   target_compile_definitions(
-    bitmap16dx_desktop PRIVATE BITMAP16_CARDPUTER_ZERO=1)
+    bitmap16dx_desktop PRIVATE BITMAP16_CARDPUTER_ZERO=1 ENABLE_LED_MATRIX=0)
 endif()
 if(BITMAP16_CARDPUTER_ZERO OR BITMAP16_STEAM_DECK)
   target_compile_definitions(bitmap16dx_desktop PRIVATE BITMAP16_LOSPEC=1)
@@ -62,7 +63,7 @@ if(BITMAP16_CARDPUTER_ZERO OR BITMAP16_STEAM_DECK)
   find_package(Threads REQUIRED)
   set(BITMAP16_LOSPEC_KEY_FILE "$ENV{HOME}/.local/share/bitmap16dx/lospec-key.txt"
       CACHE FILEPATH "Local release key file (never committed)")
-  set(BITMAP16_LOSPEC_FEED_URL "" CACHE STRING
+  set(BITMAP16_LOSPEC_FEED_URL "https://bitmap16dx-palettes.brad-9f9.workers.dev/palettes.json" CACHE STRING
       "Optional HTTPS URL of a shared cached Lospec feed")
   set(BITMAP16_LOSPEC_KEY_BYTES "")
   if(NOT BITMAP16_LOSPEC_FEED_URL AND EXISTS "${BITMAP16_LOSPEC_KEY_FILE}")
@@ -85,14 +86,21 @@ if(BITMAP16_CARDPUTER_ZERO OR BITMAP16_STEAM_DECK)
   target_link_libraries(bitmap16dx_lospec PUBLIC CURL::libcurl Threads::Threads)
   target_link_libraries(bitmap16dx_desktop PRIVATE bitmap16dx_lospec)
   if(NOT MSVC)
-    target_compile_options(bitmap16dx_lospec PRIVATE -Wall -Wextra -Werror)
+    # GCC can report optimizer warnings from the vendored PicoJSON templates
+    # even with the header marked SYSTEM. Keep those visible without blocking
+    # the device's release build; other application targets retain -Werror.
+    target_compile_options(bitmap16dx_lospec PRIVATE -Wall -Wextra)
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      target_compile_options(bitmap16dx_lospec PRIVATE -Werror)
+    endif()
   endif()
 endif()
 if(BITMAP16_CARDPUTER_ZERO_DEVICE)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "The Cardputer Zero device preset requires Linux. Use the zero preset for simulation.")
   endif()
-  target_sources(bitmap16dx_desktop PRIVATE platform_zero/native_io.cpp)
+  target_sources(bitmap16dx_desktop PRIVATE
+    platform_zero/native_io.cpp platform_zero/imu.cpp src/core/shake_detector.cpp)
   target_compile_definitions(
     bitmap16dx_desktop PRIVATE BITMAP16_CARDPUTER_ZERO_DEVICE=1)
 endif()
@@ -102,6 +110,30 @@ if(BITMAP16_STEAM_DECK)
 endif()
 
 if(BUILD_TESTING)
+  if(UNIX)
+    add_executable(bitmap16dx_zero_imu_test
+      platform_zero/test_imu.cpp platform_zero/imu.cpp src/core/shake_detector.cpp
+      src/core/editor.cpp src/core/sketch.cpp src/core/palette.cpp
+      src/core/settings_view.cpp src/core/settings.cpp src/core/canvas.cpp)
+    target_include_directories(bitmap16dx_zero_imu_test PRIVATE src)
+    target_compile_definitions(bitmap16dx_zero_imu_test PRIVATE
+      BITMAP16_CARDPUTER_ZERO=1 BITMAP16_CARDPUTER_ZERO_DEVICE=1)
+    target_compile_options(bitmap16dx_zero_imu_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME zero_imu COMMAND bitmap16dx_zero_imu_test)
+  endif()
+  add_executable(bitmap16dx_display_warmth_test
+    platform_desktop/test_display_warmth.cpp
+    src/core/canvas.cpp
+    src/core/settings.cpp
+    src/core/settings_view.cpp
+  )
+  target_include_directories(bitmap16dx_display_warmth_test PRIVATE src)
+  target_compile_definitions(bitmap16dx_display_warmth_test PRIVATE
+    BITMAP16_CARDPUTER_ZERO=1 BITMAP16_CARDPUTER_ZERO_DEVICE=1)
+  if(NOT MSVC)
+    target_compile_options(bitmap16dx_display_warmth_test PRIVATE -Wall -Wextra -Werror)
+  endif()
+  add_test(NAME display_warmth COMMAND bitmap16dx_display_warmth_test)
   add_executable(bitmap16dx_history_test
     platform_desktop/test_history.cpp
     src/core/canvas.cpp

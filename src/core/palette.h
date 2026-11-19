@@ -13,6 +13,8 @@ struct Parsed {
   uint8_t size = 0;
 };
 
+bool matchesSizeFilter(uint8_t paletteSize, uint8_t filter);
+
 uint8_t collapseIndex(uint8_t index, uint8_t paletteSize);
 uint16_t colorForIndex(
     const uint16_t* colors,

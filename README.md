@@ -18,12 +18,14 @@ channeling the vibe of 2000s handheld game consoles.
 - Built-in 16, 8, and 4-color palettes
   - Palette swapping preserves indexed artwork when moving between smaller
     and larger palettes
-  - Import Lospec `.hex` palettes from SD card
+  - Import Lospec `.hex` palettes containing any number of colors from 4 through 16
+  - Zero and Steam Deck: browse a shared daily Lospec feed or import by name/URL
+  - Color filters group palettes into 4, 5–8, and 9–16 colors
   - StampS3A LED displays currently selected color
 - Export `.png` files to `bitmap16dx/exports/` at 128×128 or logical size
 - Light and dark themes
 - Preview/gallery mode
-- Charging screensaver mode
+- Screensaver with animated icons and artwork; Zero shows live charging status
 - Shake-to-undo
 - Display mirroring with Puzzle Unit 8×8 RGB LED Matrix modules (WS2812E)
 
@@ -49,8 +51,10 @@ channeling the vibe of 2000s handheld game consoles.
 3. Power cycle your Cardputer
 4. Access custom palettes in the Palette Menu
 
-BitMap16 DX supports 4-, 8-, and 16-color palettes, with a maximum of 32
-palettes total (12 built-in and up to 20 custom).
+Current source builds support every palette size from **4 through 16 colors**,
+retaining the palette's actual color count. The ADV supports up to 32 palettes
+(12 built-in and 20 custom); Zero and Steam Deck support the 12 built-in
+palettes plus up to 116 saved user palettes.
 
 ## How to Use
 
@@ -74,7 +78,7 @@ For the Cardputer Zero, see the [complete keyboard reference](platform_zero/READ
 | `1-8` | Quick color selection (colors 1-8) |
 | `fn` + `1-8` | Quick color selection (colors 9-16) |
 | `C` | **C**ycle to next color |
-| `G` | Cycle the 8×8, 16×16, and 32×32 **g**rid |
+| `G` | Open Resize Canvas; choose a size, then select Apply |
 | `+` / `-` | Zoom canvas in/out at integer pixel scales |
 | `fn` + `Arrow keys` | While zoomed, jump to that edge of the artwork |
 | `R` | Toggle viewport-centered **r**ulers |
@@ -91,7 +95,7 @@ For the Cardputer Zero, see the [complete keyboard reference](platform_zero/READ
 | `O` | **O**pen Sketches Menu |
 | `V` | Open Pre**v**iew Mode |
 | `B` + `+/-` | Adjust **b**rightness |
-| `FN` + `B` | Charging Mode |
+| `FN` + `B` | Screensaver |
 | `L` + `Ok` | RGB Matrix on/off |
 | `L` + `+/-` | RGB Matrix brightness |
 
@@ -113,11 +117,59 @@ For the Cardputer Zero, see the [complete keyboard reference](platform_zero/READ
 | `←`/`→` | Navigate palettes |
 | `ok`/`enter` | Select palette |
 | `esc` | Dismiss |
-| `4` | Toggle 4-color filter |
-| `8` | Toggle 8-color filter |
-| `1` | Toggle 16-color filter|
+| `4` | Toggle the 4-color filter |
+| `8` | Toggle the 5–8-color filter |
+| `1` | Toggle the 9–16-color filter |
 | `U` | Toggle custom user palettes filter (can be combined with 4/8/16 filters) |
 | `0` | Clear all filters |
+
+### Online palettes on Zero and Steam Deck
+
+On Zero, press `I` in Palettes to **Import from Lospec**, or `L` to
+**Browse Lospec**. On Steam Deck, use `L3` to import and `Y` to browse.
+
+- The browser shows the shared feed's newest palettes with 4–16 colors in one
+  continuous cartridge carousel. Saved Lospec palettes are omitted; there is
+  no likes threshold. Browse and filter offline after downloading the feed.
+- The shared feed refreshes once daily and checks up to 300 newest palettes.
+  Refresh the app's copy with `R` on Zero or `X` on Steam Deck. Browsing and
+  filtering make no additional network requests.
+- Import accepts a palette slug such as `endesga-16` or a full Lospec palette
+  URL. Zero uses its physical keyboard; Steam Deck uses the SteamOS system
+  keyboard (Steam + X) or a physical keyboard. The empty field shows a gray example chosen each time it opens.
+- Enter moves focus from the text field to Import; Enter again
+  fetches the palette. Up returns to editing, `Ctrl+V` pastes when available,
+  and Escape cancels. The insertion cursor blinks while the field is focused.
+- A successful lookup opens a cartridge preview. Enter / `A` saves and applies
+  it; Escape / `B` returns to local Palettes without saving.
+- Escape / `B` navigates **Lospec → local Palettes → Canvas**, one press per step.
+- Steam Deck: LB/RB cycles color-range filters, D-pad Up toggles local user
+  palettes, and D-pad Down clears filters.
+- Backspace/Delete on Zero or `X` on Steam Deck moves a saved user palette to
+  trash. Built-in palettes are protected. Artwork stores its own colors, so
+  deleting a palette does not change existing sketches.
+
+The focused cartridge rises 8 pixels as it reaches the center. Opening
+Palettes uses a center-out entrance wave; switching lists or filters reloads
+cartridges in place. Each cartridge shows its actual color count.
+The ADV uses the same entrance, focus, filter-reload, and exit animations for
+its local palette collection.
+
+Players do not need API keys. See the [Zero guide](platform_zero/README.md),
+[Steam Deck guide](platform_steamdeck/README.md), and
+[shared Cloudflare feed setup](services/lospec-feed/README.md) for details.
+
+### Dialogs
+
+Move focus with arrows / D-pad, select with Enter / `A`, and cancel with
+Escape / `B`. Save warnings default to Save; sketch deletion defaults to
+Cancel and always asks for confirmation.
+
+On ADV and Zero, `G` opens Resize Canvas; on Steam Deck, use L3 or L4.
+Left/Right chooses a size; Enter / `A` moves to Apply, then another press confirms. Up returns to the size row. The `>` marker stays
+on the applied size, while an outline marks the pending size when focus moves
+to the buttons. Shrinking hides pixels outside the new grid without erasing
+them, and resizing can be undone.
 
 ### Sketches Menu *(O)*
 
@@ -130,7 +182,7 @@ For the Cardputer Zero, see the [complete keyboard reference](platform_zero/READ
 | `ok`/`enter` | Load selected sketch |
 | `V` | Open slideshow **v**iew |
 | `esc` | Dismiss |
-| `g0` button | Delete focused sketch |
+| `g0` button | Confirm deletion of the focused sketch (Cancel selected initially) |
 | `Z` | Restore the most recently deleted sketch |
 | `fn` + `S` | Duplicate the focused sketch |
 
@@ -269,7 +321,12 @@ cmake --build --preset zero
 ```
 
 The simulator persists sketches, exports, settings, and custom palettes under
-`~/.local/share/bitmap16dx`. It also opens an RGB-matrix simulation window.
+`~/.local/share/bitmap16dx`. The desktop ADV simulator also opens an RGB-matrix
+simulation window. RGB matrix support and its controls are disabled for Zero
+and Steam Deck builds.
+
+Icons are embedded directly in `src/icons.h`, `src/screensaver_icons.h`, and
+`src/core/dialog_artwork.h`; no separate icon files are needed at runtime.
 
 ### Steam Deck development build
 

@@ -34,6 +34,7 @@ enum class Action : uint8_t {
   HelpRequested,
   QuitRequested,
   BatteryDisplayChanged,
+  DisplayWarmthChanged,
 };
 
 struct State {

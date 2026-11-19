@@ -21,7 +21,7 @@ if [[ $mode == package ]]; then
   trap 'rm -f "$download"; rm -rf "$release_config"' EXIT
   mkdir -p "$release_config/build_zero_device"
   release_key=${BITMAP16_LOSPEC_KEY_FILE:-"$HOME/.local/share/bitmap16dx/lospec-key.txt"}
-  feed_url=${BITMAP16_LOSPEC_FEED_URL:-}
+  feed_url=${BITMAP16_LOSPEC_FEED_URL-https://bitmap16dx-palettes.brad-9f9.workers.dev/palettes.json}
   printf '%s' "$feed_url" >"$release_config/build_zero_device/lospec-feed-url.txt"
   if [[ -z $feed_url && -f $release_key ]]; then
     cp "$release_key" "$release_config/build_zero_device/lospec-key.txt"
@@ -30,7 +30,7 @@ if [[ $mode == package ]]; then
     : >"$release_config/build_zero_device/lospec-key.txt"
   fi
 
-  tar --no-xattrs -C "$repo" -cf - \
+  tar --format=ustar --no-xattrs -C "$repo" -cf - \
     CMakeLists.txt CMakePresets.json \
     platform_desktop platform_zero src third_party \
     -C "$release_config" build_zero_device/lospec-key.txt build_zero_device/lospec-feed-url.txt |

@@ -197,12 +197,22 @@ void Canvas::pushImage(
   if (pixels_ == nullptr || image == nullptr || width <= 0 || height <= 0) {
     return;
   }
-  for (int sourceY = 0; sourceY < height; ++sourceY) {
-    for (int sourceX = 0; sourceX < width; ++sourceX) {
-      uint16_t color =
-          image[static_cast<std::size_t>(sourceY) * width + sourceX];
-      if (swapBytes) color = swap16(color);
-      drawPixel(x + sourceX, y + sourceY, color);
+  const int left = static_cast<int>(std::max<int64_t>(0, x));
+  const int top = static_cast<int>(std::max<int64_t>(0, y));
+  const int right = static_cast<int>(std::min<int64_t>(width_, static_cast<int64_t>(x) + width));
+  const int bottom = static_cast<int>(std::min<int64_t>(height_, static_cast<int64_t>(y) + height));
+  if (right <= left || bottom <= top) return;
+  const std::size_t columns = static_cast<std::size_t>(right - left);
+  for (int row = top; row < bottom; ++row) {
+    const auto* source = image + static_cast<std::size_t>(static_cast<int64_t>(row) - y) * width +
+        static_cast<std::size_t>(static_cast<int64_t>(left) - x);
+    auto* destination = pixels_ + static_cast<std::size_t>(row) * width_ + left;
+    if (!swapBytes) {
+      std::memcpy(destination, source, columns * sizeof(uint16_t));
+    } else {
+      for (std::size_t column = 0; column < columns; ++column) {
+        destination[column] = swap16(source[column]);
+      }
     }
   }
 }

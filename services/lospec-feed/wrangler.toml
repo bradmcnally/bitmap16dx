@@ -3,9 +3,8 @@ main = "worker.mjs"
 compatibility_date = "2026-11-17"
 
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["0 0 * * *"]
 
 [[kv_namespaces]]
 binding = "PALETTES"
-# Replace with the ID printed by: npx wrangler kv namespace create PALETTES
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "d256019e48d8426797ba347a5fc8d68a"

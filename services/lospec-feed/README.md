@@ -4,11 +4,11 @@ This Cloudflare Worker serves `/palettes.json` to both Zero and Steam builds.
 The app needs only that public HTTPS URL. Store your Lospec key in the Worker,
 not in a distributed app.
 
-A scheduled refresh runs every six hours, checking up to three pages of 100
-newest palettes from Lospec. That is at most 12 Lospec requests per day,
-plus any admin refreshes. The Worker keeps 4-, 8-, and 16-color palettes,
-preserving names, creators, colors, likes, and newest-first order. Likes are
-filtered on the device, so changing the threshold does not call Lospec.
+A scheduled refresh runs once a day at midnight UTC, checking up to three pages of 100
+newest palettes from Lospec. That is at most 3 Lospec requests per day,
+plus any admin refreshes. The Worker keeps palettes with 4–16 colors,
+preserving names, creators, colors, likes, and newest-first order. There is no likes threshold.
+The app browses all cached matches in one carousel without additional requests.
 Public requests read a shared KV snapshot and never call Lospec. If any
 upstream page fails, the previous snapshot stays available.
 
@@ -72,7 +72,10 @@ BITMAP16_LOSPEC_FEED_URL=https://YOUR-WORKER.workers.dev/palettes.json \
 ```
 
 When a feed URL is configured, the build excludes any local release key.
-The direct API mode remains available for development without hosting.
+The default app build uses the deployed feed at
+`https://bitmap16dx-palettes.brad-9f9.workers.dev/palettes.json`.
+To use direct API development without hosting, configure with
+`-DBITMAP16_LOSPEC_FEED_URL=`.
 
 ## Verify locally
 
