@@ -208,7 +208,7 @@ void completionRespectsViewAndAnimation() {
   require(b.poll(true) == PaletteBrowser::Update::Changed, "Entrance does not block completion");
 }
 
-void importSavesBeforeApplyingAndCanFinishAfterLeaving() {
+void importPreviewsBeforeSavingOrApplying() {
   Fixture f;
   Downloads d;
   PaletteBrowser b(f.workspace, f.editor, d.adapter());
@@ -218,12 +218,29 @@ void importSavesBeforeApplyingAndCanFinishAfterLeaving() {
   b.importPalette("imported");
   require(d.lookupCalls == 1 && d.lastInput == "imported", "Lookup uses submitted name");
   d.finish({item});
-  require(b.poll(false) == PaletteBrowser::Update::Imported,
-          "Import completes after leaving the palette view");
-  require(bitmap16::Lospec::isSaved(f.root, item) && f.editor.sketch().paletteSize == 6 && !b.online(),
-          "Successful import saves, applies and returns to local mode");
-  require(f.editor.sketch().pixels[2][3] == 1 && f.editor.undo() &&
-          f.editor.sketch().paletteSize == 16, "Import preserves artwork and participates in editor undo");
+  require(b.poll(false) == PaletteBrowser::Update::PreviewReady && b.preview(),
+          "Lookup opens a preview even when completion occurs after leaving");
+  require(b.catalog().count == 1 && std::string(b.catalog().title) == "IMPORT PREVIEW" &&
+          b.catalog().entries[0].size == 6 && std::string(b.catalog().entries[0].author) == "Artist",
+          "Preview shows the returned cartridge, color count, and author");
+  require(!bitmap16::Lospec::isSaved(f.root, item) && f.editor.sketch().paletteSize == 16,
+          "Lookup alone neither saves nor applies");
+  b.request(PaletteBrowser::Action::FilterSize, f.frame, 100, 4);
+  b.refresh(100);
+  require(b.catalog().count == 1 && b.state().filteredCount == 1 && d.latestCalls == 0,
+          "Filters and refresh cannot replace the preview");
+  b.request(PaletteBrowser::Action::SwitchList, f.frame, 100);
+  settle(b);
+  require(!b.preview() && !b.online() && !bitmap16::Lospec::isSaved(f.root, item) &&
+          f.editor.sketch().paletteSize == 16, "Cancel returns to local palettes without changing artwork");
+  b.importPalette("imported");
+  d.finish({item});
+  require(b.poll(true) == PaletteBrowser::Update::PreviewReady && b.select(),
+          "Confirming the preview applies its cartridge");
+  require(bitmap16::Lospec::isSaved(f.root, item) && f.editor.sketch().paletteSize == 6 &&
+          f.editor.sketch().pixels[2][3] == 1 && f.editor.undo() &&
+          f.editor.sketch().paletteSize == 16, "Confirmed import saves and supports undo");
+  b.open();
   b.importPalette("missing");
   d.finish();
   require(b.poll(true) == PaletteBrowser::Update::Changed && std::string(b.status()) == "Palette not found",
@@ -233,6 +250,28 @@ void importSavesBeforeApplyingAndCanFinishAfterLeaving() {
   b.poll(true);
   require(std::string(b.status()) == "Offline" && f.editor.sketch().paletteSize == 16,
           "Lookup errors leave the sketch unchanged");
+}
+
+void previewCancellationRestoresTheFeed() {
+  Fixture f;
+  const auto feed = palette("feed", 6);
+  const auto imported = palette("lookup", 12);
+  cache(f, {feed});
+  Downloads d;
+  PaletteBrowser b(f.workspace, f.editor, d.adapter());
+  browse(b, f);
+  b.request(PaletteBrowser::Action::FilterSize, f.frame, 100, 8);
+  settle(b);
+  b.importPalette("lookup");
+  d.finish({imported});
+  require(b.poll(true) == PaletteBrowser::Update::PreviewReady && b.preview(), "Preview from the feed");
+  b.request(PaletteBrowser::Action::SwitchList, f.frame, 100);
+  settle(b);
+  require(!b.preview() && b.online() && b.catalog().count == 1 &&
+          b.state().filterSize == 8 && !bitmap16::Lospec::isSaved(f.root, imported),
+          "Cancel restores the source feed and its filter without saving the lookup");
+  require(b.select() && f.editor.sketch().paletteSize == 6 &&
+          bitmap16::Lospec::isSaved(f.root, feed), "Feed cartridges still apply directly");
 }
 
 void saveFailureBlocksImportAndFeedSelection() {
@@ -245,9 +284,10 @@ void saveFailureBlocksImportAndFeedSelection() {
   std::filesystem::create_directory(f.root / "palettes" / "lospec-blocked.hex");
   b.importPalette("blocked");
   d.finish({item});
-  require(b.poll(true) == PaletteBrowser::Update::Changed &&
+  require(b.poll(true) == PaletteBrowser::Update::PreviewReady && !b.select() &&
           std::string(b.status()) == "Could not save palette" && f.editor.sketch().paletteSize == 16,
           "Failed import save cannot apply a palette");
+  b.open();
   browse(b, f);
   require(!b.select() && !b.state().insertionAnimating && f.editor.sketch().paletteSize == 16,
           "Failed feed save cannot begin selection or apply a palette");
@@ -276,16 +316,18 @@ void capacityAndCatalogOwnership() {
           "Catalog owns local strings and colors across Workspace reloads");
   b.importPalette("new");
   d.finish({fresh});
-  b.poll(true);
+  require(b.poll(true) == PaletteBrowser::Update::PreviewReady && !b.select(),
+          "Full storage still permits preview, but confirmation fails");
   require(std::string(b.status()) == "Local palette storage is full" &&
           !bitmap16::Lospec::isSaved(f.root, fresh) && f.editor.sketch().paletteSize == 16,
           "Full storage blocks new imports without changing artwork");
+  b.open();
   browse(b, f);
   require(!b.select() && f.editor.sketch().paletteSize == 16,
           "Full storage also blocks applying a new feed entry");
   b.importPalette("already-saved");
   d.finish({saved});
-  require(b.poll(true) == PaletteBrowser::Update::Imported && f.editor.sketch().paletteSize == 4,
+  require(b.poll(true) == PaletteBrowser::Update::PreviewReady && b.select() && f.editor.sketch().paletteSize == 4,
           "An already saved slug can be imported at capacity");
 }
 
@@ -372,11 +414,12 @@ int main() {
   browsingAutomaticallyLoadsAndRetriesAnEmptyFeed();
   cooldownWrapsAndIncludesFailures();
   completionRespectsViewAndAnimation();
-  importSavesBeforeApplyingAndCanFinishAfterLeaving();
+  importPreviewsBeforeSavingOrApplying();
+  previewCancellationRestoresTheFeed();
   saveFailureBlocksImportAndFeedSelection();
   capacityAndCatalogOwnership();
   localDeletionPreservesFiltersAndSketch();
   cacheFailuresPreserveOfflineBrowsing();
   cancellationWaitsForWorkerLifetime();
-  std::cout << "10 palette browser scenarios passed\n";
+  std::cout << "11 palette browser scenarios passed\n";
 }

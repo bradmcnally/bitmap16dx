@@ -1,4 +1,5 @@
 #include "native_io.h"
+#include "symbol_keys.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -310,8 +311,10 @@ int NativeIo::pollEvent(SDL_Event* event) {
       }
       continue;
     }
-    const SDL_Scancode scan = scanCode(input.code);
-    if (scan == SDL_SCANCODE_UNKNOWN) continue;
+    const char symbol = symbolForKey(input.code);
+    const SDL_Scancode scan = symbol != 0
+        ? SDL_GetScancodeFromKey(static_cast<SDL_Keycode>(symbol)) : scanCode(input.code);
+    if (scan == SDL_SCANCODE_UNKNOWN && symbol == 0) continue;
 
     const bool pressed = input.value != 0;
     const bool repeat = input.value == 2;
@@ -331,8 +334,13 @@ int NativeIo::pollEvent(SDL_Event* event) {
             SDL_GetTicks() + kRepeatDelayMs;
       }
     }
-    keys_[scan] = pressed;
+    if (scan != SDL_SCANCODE_UNKNOWN) keys_[scan] = pressed;
     fillKeyEvent(event, scan, pressed, repeat);
+    if (symbol != 0) {
+      event->key.keysym.sym = static_cast<SDL_Keycode>(symbol);
+      // Sym already chooses the exact printed character.
+      event->key.keysym.mod &= ~KMOD_SHIFT;
+    }
     return 1;
   }
 

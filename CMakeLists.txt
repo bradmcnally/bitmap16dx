@@ -144,6 +144,9 @@ if(BUILD_TESTING)
   add_executable(bitmap16dx_zero_esc_test platform_zero/tests/test_esc_hold.cpp)
   target_include_directories(bitmap16dx_zero_esc_test PRIVATE platform_zero)
   add_test(NAME zero_escape_hold COMMAND bitmap16dx_zero_esc_test)
+  add_executable(bitmap16dx_zero_symbols_test platform_zero/tests/test_symbol_keys.cpp)
+  target_include_directories(bitmap16dx_zero_symbols_test PRIVATE platform_zero)
+  add_test(NAME zero_symbol_keys COMMAND bitmap16dx_zero_symbols_test)
   if(UNIX)
     add_executable(bitmap16dx_zero_imu_test
       platform_zero/tests/test_imu.cpp platform_zero/imu.cpp src/core/shake_detector.cpp

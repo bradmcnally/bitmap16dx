@@ -83,9 +83,9 @@ See [Using Bitmap16 DX](../README.md#using-bitmap16-dx) for the shared workflow.
 ### Import a palette by name or URL
 
 In Palettes, press `L3` (keyboard `I`) to import a palette slug such as
-`endesga-16` or a full Lospec palette URL. A successful import saves and
-applies the palette immediately. Palettes with 4–16 colors are supported,
-and saved imports remain available offline.
+`endesga-16` or a full Lospec palette URL. Review the returned palette, then
+press Enter / `A` to save and apply it, or Escape / `B` to return to the palette
+list. Palettes with 4–16 colors are supported; saved imports remain available offline.
 
 ### Lospec palettes
 
