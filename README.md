@@ -62,7 +62,7 @@ Changing palettes preserves the arrangement of your pixels.
 
 Add custom palettes using Lospec `.hex` files with 4–16 colors. Zero and
 Steam Deck also let you browse the Lospec feed or import a palette by name or
-URL. Successful imports save and apply the palette. The feed refreshes locally
+URL. Review a lookup result before saving and applying it. The feed refreshes locally
 on the first visit each day; cached palettes remain available offline.
 See your platform guide for controls and palette folder locations.
 

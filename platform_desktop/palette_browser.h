@@ -21,7 +21,7 @@ namespace Desktop {
 class PaletteBrowser {
  public:
   enum class Action { SwitchList, FilterSize, FilterUser, Close };
-  enum class Update { None, Changed, Imported };
+  enum class Update { None, Changed, PreviewReady };
 #ifdef BITMAP16_LOSPEC
   struct Downloads {
     std::function<std::future<Lospec::Result>(
@@ -39,7 +39,8 @@ class PaletteBrowser {
   const PaletteView::Catalog& catalog() const { return catalog_; }
   int activeIndex() const;
   const char* status() const;
-  bool online() const { return online_; }
+  bool online() const { return online_ || preview_; }
+  bool preview() const { return preview_; }
   bool closing() const { return closing_; }
   bool pending() const;
 
@@ -66,11 +67,13 @@ class PaletteBrowser {
   std::string title_;
   std::string status_;
   bool online_ = false;
+  bool preview_ = false;
   bool closing_ = false;
 #ifdef BITMAP16_LOSPEC
   Downloads downloads_;
   std::vector<Lospec::Palette> cache_;
   std::vector<Lospec::Palette> onlineEntries_;
+  std::vector<Lospec::Palette> previewEntries_;
   std::atomic_bool cancel_{false};
   std::future<Lospec::Result> request_;
   bool importing_ = false;

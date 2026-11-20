@@ -76,6 +76,7 @@ int PaletteBrowser::activeIndex() const {
 }
 
 void PaletteBrowser::open() {
+  preview_ = false;
   online_ = false;
   closing_ = false;
   reload();
@@ -84,7 +85,19 @@ void PaletteBrowser::open() {
 void PaletteBrowser::reload() {
   entries_.clear();
 #ifdef BITMAP16_LOSPEC
-  if (online_) {
+  if (preview_) {
+    for (const auto& palette : previewEntries_) {
+      entries_.push_back({palette.colors.data(), palette.title.c_str(), palette.size,
+                         false, palette.author.c_str(), palette.likes});
+    }
+    title_ = "IMPORT PREVIEW";
+    catalog_.emptyMessage = "NO IMPORTED PALETTE";
+#ifdef BITMAP16_STEAM_DECK
+    status_ = "B:Cancel|A:Apply";
+#else
+    status_ = "Esc:Cancel|OK:Apply";
+#endif
+  } else if (online_) {
     onlineEntries_ = Lospec::availablePalettes(
         cache_, Lospec::savedSlugs(workspace_.root()), onlineFilter_);
     for (const auto& palette : onlineEntries_) {
@@ -123,7 +136,7 @@ void PaletteBrowser::reload() {
   catalog_.title = title_.c_str();
   PaletteView::reset(state_, catalog_);
 #ifdef BITMAP16_LOSPEC
-  if (online_ && onlineFilter_ != 0)
+  if (online_ && !preview_ && onlineFilter_ != 0)
     PaletteView::toggleSizeFilter(state_, catalog_, onlineFilter_);
 #endif
   const int active = activeIndex();
@@ -132,6 +145,7 @@ void PaletteBrowser::reload() {
 
 void PaletteBrowser::request(Action action, const Canvas& frame, uint32_t now, uint8_t size) {
   if (closing_ || state_.insertionAnimating) return;
+  if (preview_ && action != Action::Close && action != Action::SwitchList) return;
   if (action == Action::Close) {
     closing_ = true;
     if (!state_.entranceAnimating && !state_.reloadAnimating)
@@ -141,10 +155,15 @@ void PaletteBrowser::request(Action action, const Canvas& frame, uint32_t now, u
   reloadFrame_.assign(frame.pixels(), frame.pixels() + frame.width() * frame.height());
 #ifdef BITMAP16_LOSPEC
   if (action == Action::SwitchList) {
-    online_ = !online_;
-    reload();
-    if (online_ && !Lospec::cacheFreshOn(workspace_.root(), Lospec::currentLocalDay()))
-      refresh(now);
+    if (preview_) {
+      preview_ = false;
+      reload();
+    } else {
+      online_ = !online_;
+      reload();
+      if (online_ && !Lospec::cacheFreshOn(workspace_.root(), Lospec::currentLocalDay()))
+        refresh(now);
+    }
   } else if (online_ && action == Action::FilterSize) {
     onlineFilter_ = onlineFilter_ == size ? 0 : size;
     reload();
@@ -177,8 +196,9 @@ bool PaletteBrowser::select() {
   if (closing_) return false;
   const int selected = PaletteView::selectedCatalogIndex(state_);
 #ifdef BITMAP16_LOSPEC
-  if (online_ && !state_.insertionAnimating && selected >= 0 &&
-      selected < static_cast<int>(onlineEntries_.size()) && !save(onlineEntries_[selected])) {
+  const auto& remoteEntries = preview_ ? previewEntries_ : onlineEntries_;
+  if ((online_ || preview_) && !state_.insertionAnimating && selected >= 0 &&
+      selected < static_cast<int>(remoteEntries.size()) && !save(remoteEntries[selected])) {
     return false;
   }
 #endif
@@ -191,7 +211,7 @@ bool PaletteBrowser::select() {
 
 void PaletteBrowser::deleteSelection() {
   const int selected = PaletteView::selectedCatalogIndex(state_);
-  if (online_ || selected < NUM_PALETTES || selected >= catalog_.count || !entries_[selected].user) {
+  if (online_ || preview_ || selected < NUM_PALETTES || selected >= catalog_.count || !entries_[selected].user) {
     status_ = "Built-in palettes cannot be deleted";
     return;
   }
@@ -216,6 +236,7 @@ bool PaletteBrowser::pending() const {
 
 void PaletteBrowser::refresh(uint32_t now) {
 #ifdef BITMAP16_LOSPEC
+  if (preview_) return;
   const auto key = Lospec::readApiKey(workspace_.root());
   if (pending()) {
     status_ = "Getting newest palettes...";
@@ -277,15 +298,15 @@ PaletteBrowser::Update PaletteBrowser::poll(bool visible) {
   if (!result.error.empty()) {
     if (online_ || importing) status_ = result.error;
   } else if (importing) {
-    reload();
     if (result.palettes.empty()) {
       status_ = "Palette not found";
-    } else if (save(result.palettes.front())) {
-      const auto& palette = result.palettes.front();
-      editor_.applyPalette(palette.colors.data(), palette.size);
-      online_ = false;
+    } else {
+      previewEntries_ = std::move(result.palettes);
+      previewEntries_.resize(1);
+      preview_ = true;
+      closing_ = false;
       reload();
-      return Update::Imported;
+      return Update::PreviewReady;
     }
   } else {
     const bool cached = Lospec::saveCache(workspace_.root(), result.palettes);

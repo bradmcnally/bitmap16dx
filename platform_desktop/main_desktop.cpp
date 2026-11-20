@@ -1878,9 +1878,11 @@ int main(int argc, char** argv) {
     SDL_PumpEvents();
 #ifdef BITMAP16_LOSPEC
     const auto paletteUpdate = paletteBrowser.poll(currentView == DesktopView::Palette);
-    if (paletteUpdate == bitmap16::Desktop::PaletteBrowser::Update::Imported) {
-      currentView = DesktopView::Canvas;
-      setDesktopStatus("Palette imported");
+    if (paletteUpdate == bitmap16::Desktop::PaletteBrowser::Update::PreviewReady) {
+      currentView = DesktopView::Palette;
+      // The preview is a new list even when lookup began in the palette view.
+      paletteWasVisible = false;
+      paletteHasPresented = false;
       renderNow();
     } else if (paletteUpdate == bitmap16::Desktop::PaletteBrowser::Update::Changed &&
                currentView == DesktopView::Palette) {

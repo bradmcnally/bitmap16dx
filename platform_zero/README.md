@@ -126,9 +126,12 @@ The setting defaults to **On** and persists between launches.
 ### Import a palette by name or URL
 
 In either palette list, press `I` to import a palette slug such as
-`endesga-16` or a full Lospec palette URL. A successful import saves and
-applies the palette immediately. Palettes with 4–16 colors are supported,
-and saved imports remain available offline.
+`endesga-16` or a full Lospec palette URL. Review the returned palette, then
+press Enter to save and apply it, or Escape to return to the palette
+list. Palettes with 4–16 colors are supported; saved imports remain available offline.
+
+Use `Sym+R` for `-`, `Sym+B` for `.`, and `Sym+N` for `/` when entering a
+palette name or URL.
 
 ### New palettes from Lospec
 
