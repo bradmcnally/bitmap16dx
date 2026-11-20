@@ -1,6 +1,7 @@
 #include "core/help_view.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace bitmap16 {
 namespace HelpView {
@@ -18,45 +19,49 @@ struct Item {
 
 constexpr Item kItems[] = {
     {"Cursor", "Arrows", "F Z X C", 0, false, false},
-    {"Edge jump", "Fn edge", "Shift dir", 0, false, false},
     {"Draw", "Ok", "Enter", 0, false, false},
     {"Erase", "Del", "Backspace", 0, false, false},
     {"Fill", "F", "Ctrl F", 0, false, false},
     {"Erase fill", "Fn F", "E", 0, false, false},
     {"Move", "M arrows", "M + FZXC", 0, false, false},
-    {"Color 1-8", "1-8", "1-8", 0, false, false},
-    {"Color 9-16", "Fn 1-8", "Fn 1-8", 0, false, false},
-    {"Next color", "C", "I", 0, false, false},
-    {"Palette", "P", "P", 0, false, false},
-#ifdef BITMAP16_STEAM_DECK
-    {"Pal range", "LB/RB", "", 0, false, false},
-    {"User palettes", "Dpad Up", "", 0, false, false},
-    {"Clear filter", "Dpad Down", "", 0, false, false},
-#endif
+    {"Undo", "Z", "Ctrl Z", 0, false, false},
+    {"Redo", "Fn Z", "Ctrl Y", 0, false, false},
     {"Clear", "G0", "Fn Bksp", 0, false, false},
-    {"Preview", "V", "V", 0, false, false},
-    {"Grid size", "G", "G", 0, false, false},
-#ifdef BITMAP16_CARDPUTER_ZERO
-    {"Zoom in/out", "", "Fn+L/M", 0, false, false},
+#ifndef BITMAP16_STEAM_DECK
+    {"Zoom", "+/-", "Fn+L/M", 1, false, false},
 #endif
-    {"Grid ruler", "R", "R", 0, false, false},
-    {"Open", "O", "O", 1, false, false},
-    {"Undo", "Z", "Ctrl Z", 1, false, false},
-    {"Redo", "Fn Z", "Ctrl Y", 1, false, false},
-    {"Save", "S", "Ctrl S", 1, false, false},
-    {"Save as", "Fn S", "Shift S", 1, false, false},
-    {"Settings", "T", "T", 1, false, false},
-    {"Export", "X", "Ctrl X", 1, false, false},
-    {"Logical PNG", "Fn X", "Ctrl L", 1, false, false},
+    {"Edge jump", "Fn edge", "Shift dir", 1, false, false},
+    {"Grid size", "G", "G", 1, false, false},
+    {"Grid ruler", "R", "R", 1, false, false},
+    {"Color 1-8", "1-8", "1-8", 2, false, false},
+    {"Color 9-16", "Fn 1-8", "Fn 1-8", 2, false, false},
+    {"Next color", "C", "I", 2, false, false},
+    {"Palette", "P", "P", 2, false, false},
+#ifdef BITMAP16_STEAM_DECK
+    {"Pal range", "LB/RB", "", 2, false, false},
+    {"User palettes", "Dpad Up", "", 2, false, false},
+    {"Clear filter", "Dpad Down", "", 2, false, false},
+#endif
+    {"Open", "O", "O", 3, false, false},
+    {"Save", "S", "Ctrl S", 3, false, false},
+    {"Save as", "Fn S", "Shift S", 3, false, false},
+    {"Export", "X", "Ctrl X", 3, false, false},
+    {"Native PNG", "Fn X", "Ctrl L", 3, false, false},
+    {"Preview", "V", "V", 4, false, false},
+    {"Settings", "T", "T", 4, false, false},
+    {"Screensaver", "Fn B", "Ctrl B", 4, false, true},
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
-    {"Brightness", "B +/-", "Fn U/I", 1, false, false},
+    {"Brightness", "B +/-", "Fn U/I", 5, false, false},
+    {"Home", "", "Esc 3s", 5, false, false},
 #else
-    {"Brightness", "B +/-", "B +/-", 1, false, false},
+    {"Brightness", "B +/-", "B +/-", 5, false, false},
 #endif
-    {"Screensaver", "Fn B", "Ctrl B", 1, false, true},
-    {"RGB on/off", "L Ok", "L Enter", 2, true, false},
-    {"RGB Bright", "L +/-", "L +/-", 2, true, false},
+    {"RGB on/off", "L Ok", "L Enter", 5, true, false},
+    {"RGB Bright", "L +/-", "L +/-", 5, true, false},
 };
+
+constexpr const char* kGroupNames[] = {
+    "DRAW", "CANVAS", "COLOR", "SKETCHES & FILES", "VIEWS", "DEVICE"};
 
 const Item& visibleItem(
     int index,
@@ -123,13 +128,16 @@ void render(
   canvas.setTextAlign(TextAlign::Left);
   canvas.setTextSize(1);
   canvas.setTextColor(theme.text);
-  canvas.drawString("HELP", 4, 4);
-
   const int totalItems =
       itemCount(includeLedMatrixControls, includeBatteryControls);
   state.cursor = std::max(0, std::min(totalItems - 1, state.cursor));
   state.scrollOffset =
       std::max(0, std::min(state.cursor, state.scrollOffset));
+  canvas.drawString("HELP > ", 4, 4);
+  canvas.drawString(
+      kGroupNames[visibleItem(
+          state.cursor, includeLedMatrixControls, includeBatteryControls).group],
+      4 + 7 * 6, 4);
 
   constexpr int startY = 18;
   constexpr int lineHeight = 14;
@@ -188,7 +196,9 @@ void render(
 #ifdef BITMAP16_CARDPUTER_ZERO
     keyLabel = item.zeroKey;
 #else
-    if (includeCtrlDraw && &item == &kItems[2]) keyLabel = "Ok/Ctrl";
+    if (includeCtrlDraw && std::strcmp(item.label, "Draw") == 0) {
+      keyLabel = "Ok/Ctrl";
+    }
 #endif
     canvas.drawString(keyLabel, keyX, textY);
     y += selected ? selectedLineHeight : lineHeight;

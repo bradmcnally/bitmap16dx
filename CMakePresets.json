@@ -16,7 +16,7 @@
       "name": "zero",
       "displayName": "Cardputer Zero Simulator (320x170)",
       "inherits": "desktop",
-      "binaryDir": "${sourceDir}/build_zero",
+      "binaryDir": "${sourceDir}/build_zero_simulator",
       "cacheVariables": {
         "BITMAP16_DEFAULT_WIDTH": "320",
         "BITMAP16_DEFAULT_HEIGHT": "170",

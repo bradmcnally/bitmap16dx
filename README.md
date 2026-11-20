@@ -1,13 +1,13 @@
 # BitMap16 DX
 
-**[ADV](platform_adv/README.md) · [Zero](platform_zero/README.md) · [Steam / Steam Deck — coming soon](platform_steamdeck/README.md)**
-
 BitMap16 DX is a tiny pixel-art sketchbook for Cardputer ADV and Cardputer Zero,
-channeling the vibe of 2000s handheld game consoles. Steam / Steam Deck is coming soon.
+channeling the vibe of 2000s handheld game consoles. Steam coming soon.
 
-![Logo](img/bitmap16dx.png)
-![Drawing](img/drawing.png)
-![Sketches](img/sketches_latest.png)
+![Logo](docs/images/bitmap16dx.png)
+![Drawing](docs/images/drawing.png)
+![Sketches](docs/images/sketches_latest.png)
+
+**[ADV](platform_adv/README.md) · [Zero](platform_zero/README.md) · [Steam — coming soon](platform_steamdeck/README.md)**
 
 ## Features
 
@@ -30,7 +30,7 @@ channeling the vibe of 2000s handheld game consoles. Steam / Steam Deck is comin
 - Shake-to-undo (ADV/Zero)
 - Display mirroring with Puzzle Unit 8×8 RGB LED Matrix modules (WS2812E) (ADV)
 
-![Drawing](img/photo_drawing.jpg)
+![Drawing](docs/images/photo_drawing.jpg)
 
 ## Choose your platform
 
@@ -38,9 +38,9 @@ Each guide covers installation, first launch, controls, everyday use, and troubl
 
 | Platform guide | Contents |
 |---|---|
-| [M5Stack Cardputer ADV →](platform_adv/README.md) | Firmware, SD card setup, keyboard controls, RGB matrix |
+| [Cardputer ADV →](platform_adv/README.md) | Firmware, SD card setup, keyboard controls, RGB matrix |
 | [Cardputer Zero →](platform_zero/README.md) | Installation, keyboard controls, Lospec, device settings |
-| [Steam / Steam Deck →](platform_steamdeck/README.md) — coming soon | Development build setup and controls |
+| [Steam →](platform_steamdeck/README.md) | *Coming soon* Development build setup and controls |
 
 ## Using Bitmap16 DX
 
@@ -60,7 +60,7 @@ Open Palettes, browse the cartridges, and apply one to your drawing. Filter
 by 4, 5–8, or 9–16 colors, or show only your saved user palettes.
 Changing palettes preserves the arrangement of your pixels.
 
-All three platforms accept Lospec `.hex` palettes with 4–16 colors. Zero and
+Add custom palettes using Lospec `.hex` files with 4–16 colors. Zero and
 Steam Deck also let you browse the Lospec feed or import a palette by name or
 URL. Successful imports save and apply the palette. The feed refreshes locally
 on the first visit each day; cached palettes remain available offline.
@@ -78,8 +78,8 @@ change existing artwork.
 
 ### Export and customize
 
-Export saves a PNG in the app's `exports/` folder. Choose a scaled 128×128 image
-or the original canvas size. Your platform guide explains where to find files.
+Export saves a scaled 128×128 PNG or a Native PNG at the original canvas size.
+Your platform guide explains where to find the files.
 
 Settings includes the theme, default canvas size, and export format, alongside
 options for your device. Open Help for the controls available on your platform.
@@ -98,4 +98,5 @@ in its platform guide. Steam / Steam Deck is coming soon.
 
 See the [development guide](docs/development.md) for source builds, packaging,
 simulators, and validation, and the [Cloudflare feed setup](services/lospec-feed/README.md)
-for hosting the palette feed.
+for hosting the palette feed. Zero packaging and submission instructions are
+in the [store release guide](platform_zero/STORE.md).

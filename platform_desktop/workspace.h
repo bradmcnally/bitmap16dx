@@ -31,6 +31,7 @@ class Workspace {
   bool initialize(Editor& editor);
 
   const std::filesystem::path& root() const { return root_; }
+  const std::filesystem::path& configRoot() const { return configRoot_; }
   const Settings& settings() const { return settings_; }
   Settings& settings() { return settings_; }
   const std::vector<Sketch>& sketches() const { return sketches_; }
@@ -63,6 +64,7 @@ class Workspace {
   bool writeSketch(const std::filesystem::path& path, const Sketch& sketch);
 
   std::filesystem::path root_;
+  std::filesystem::path configRoot_;
   std::vector<std::filesystem::path> sketchPaths_;
   std::vector<Sketch> sketches_;
   std::vector<UserPalette> userPalettes_;

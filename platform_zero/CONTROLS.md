@@ -18,6 +18,11 @@ the full list by view.
 - `Fn+Backspace`, received as Delete, replaces the ADV's G0 action. Its result
   depends on the current view.
 
+## Navigation
+
+On Zero, tap Escape to go back. Hold Escape for three seconds to return HOME;
+release before the countdown finishes to stay in the app.
+
 ## Canvas
 
 | Function | Cardputer ADV keys | Cardputer Zero keys |

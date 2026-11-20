@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 
@@ -180,11 +181,11 @@ bool NativeIo::open() {
     SDL_Log("Zero keypad open failed: %s", std::strerror(errno));
     return false;
   }
-  if (ioctl(keyboard_, EVIOCGRAB, 1UL) < 0) {
-    SDL_Log("Zero keypad grab failed: %s", std::strerror(errno));
-    return false;
-  }
-  backlightEventType_ = SDL_RegisterEvents(1);
+  // The launcher shares evdev to detect its hold-Esc HOME shortcut.
+  // An exclusive grab prevents its watchdog from seeing the key.
+  backlightEventType_ = SDL_RegisterEvents(2);
+  if (backlightEventType_ == static_cast<Uint32>(-1)) return false;
+  homeEventType_ = backlightEventType_ + 1;
   const char* directWrite = SDL_getenv("BITMAP16_FB_WRITE");
   directWrite_ = directWrite == nullptr || std::strcmp(directWrite, "0") != 0;
   SDL_Log("Zero LCD output: %s", directWrite_ ? "direct write" : "mapped");
@@ -192,7 +193,57 @@ bool NativeIo::open() {
   return true;
 }
 
-void NativeIo::present(
+void NativeIo::present(const uint16_t* pixels, int width, int height) {
+  if (escHold_.homeRequested()) return;
+  frameWidth_ = width;
+  frameHeight_ = height;
+  lastFrame_.assign(pixels, pixels + std::size_t{static_cast<unsigned>(width)} * height);
+  redrawEscCountdown();
+}
+
+void NativeIo::redrawEscCountdown() {
+  if (lastFrame_.empty() || escHold_.homeRequested()) return;
+  if (countdown_ == 0) {
+    writeFrame(lastFrame_.data(), frameWidth_, frameHeight_);
+    return;
+  }
+  if ((countdownFrame_.width() != frameWidth_ || countdownFrame_.height() != frameHeight_) &&
+      !countdownFrame_.create(frameWidth_, frameHeight_)) return;
+  std::copy(lastFrame_.begin(), lastFrame_.end(), countdownFrame_.pixels());
+  // Match the regular centered status line, replacing the footer while held.
+  const uint16_t background = countdownFrame_.readPixel(0, frameHeight_ - 1);
+  const int red = ((background >> 11) & 31) * 255 / 31;
+  const int green = ((background >> 5) & 63) * 255 / 63;
+  const int blue = (background & 31) * 255 / 31;
+  const uint16_t text = (red * 30 + green * 59 + blue * 11) / 100 >= 128
+      ? 0x0000 : 0xffff;
+  countdownFrame_.fillRect(0, frameHeight_ - 13, frameWidth_, 13, background);
+  countdownFrame_.setTextColor(text);
+  countdownFrame_.setTextSize(1);
+  countdownFrame_.setTextAlign(TextAlign::Center);
+  char label[24];
+  std::snprintf(label, sizeof(label), "Exit in %d", countdown_);
+  countdownFrame_.drawString(label, frameWidth_ / 2, frameHeight_ - 11);
+  writeFrame(countdownFrame_.pixels(), frameWidth_, frameHeight_);
+}
+
+bool NativeIo::updateEsc(SDL_Event* event) {
+  const Uint32 now = SDL_GetTicks();
+  escHold_.update(now);
+  if (escHold_.homeRequested()) {
+    *event = {};
+    event->type = homeEventType_;
+    return true;
+  }
+  const int countdown = escHold_.secondsRemaining(now);
+  if (countdown != countdown_) {
+    countdown_ = countdown;
+    redrawEscCountdown();
+  }
+  return false;
+}
+
+void NativeIo::writeFrame(
     const uint16_t* pixels, int width, int height) {
   pixels = warmthFilter_.apply(
       pixels, static_cast<std::size_t>(width) * height, displayWarmth_);
@@ -242,6 +293,7 @@ void NativeIo::present(
 }
 
 int NativeIo::pollEvent(SDL_Event* event) {
+  if (updateEsc(event)) return 1;
   if (SDL_PollEvent(event)) return 1;
   input_event input{};
   constexpr auto eventSize = static_cast<ssize_t>(sizeof(input));
@@ -263,6 +315,11 @@ int NativeIo::pollEvent(SDL_Event* event) {
 
     const bool pressed = input.value != 0;
     const bool repeat = input.value == 2;
+    if (scan == SDL_SCANCODE_ESCAPE) {
+      if (repeat) continue;
+      escHold_.setPressed(pressed, SDL_GetTicks());
+      if (updateEsc(event)) return 1;
+    }
     const auto direction =
         std::find(kDirectionKeys.begin(), kDirectionKeys.end(), scan);
     if (direction != kDirectionKeys.end()) {

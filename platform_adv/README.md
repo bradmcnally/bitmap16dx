@@ -1,15 +1,9 @@
 # Cardputer ADV guide
 
-**[ADV](../platform_adv/README.md) · [Zero](../platform_zero/README.md) · [Steam / Steam Deck — coming soon](../platform_steamdeck/README.md)**
-
-[All platforms](../README.md#choose-your-platform) · [Install](#install) ·
-[First launch](#first-launch) · [Controls](#controls) · [Using the app](#using-the-app) ·
-[Troubleshooting](#troubleshooting)
-
 ## Install
 
 Download the ADV firmware from [GitHub Releases](https://github.com/bradmcnally/bitmap16dx/releases)
-and flash it to your Cardputer ADV. To build and upload from source, see the
+or [M5Launcher](https://bmorcelli.github.io/Launcher/) and flash it to your Cardputer ADV. To build and upload from source, see the
 [development guide](../docs/development.md#build-and-install-the-adv-firmware).
 
 ## First launch
@@ -29,9 +23,9 @@ and flash it to your Cardputer ADV. To build and upload from source, see the
 
 ### Drawing Mode
 
-![Drawing Interface Link](../img/drawing_link.png)
-![32x](../img/32x.png)
-![Drawing Interface Zoom](../img/zoom.png)
+![Drawing Interface Link](../docs/images/drawing_link.png)
+![32x](../docs/images/32x.png)
+![Drawing Interface Zoom](../docs/images/zoom.png)
 
 
 | Key | Function |
@@ -56,7 +50,7 @@ and flash it to your Cardputer ADV. To build and upload from source, see the
 | `S` | **S**ave sketch (update current or create new) |
 | `FN` + `S` | **S**ave as new sketch (always creates new file) |
 | `X` | E**x**port PNG (128×128 scaled) |
-| `FN` + `X` | Export PNG at its logical grid size |
+| `FN` + `X` | Export Native PNG at the original canvas size |
 | `H` | Open **h**elp screen (key commands) |
 | `P` | Open **P**alette Menu |
 | `O` | **O**pen Sketches Menu |
@@ -92,8 +86,8 @@ and flash it to your Cardputer ADV. To build and upload from source, see the
 
 ### Sketches Menu *(O)*
 
-![Sketches Menu](../img/sketches.png)
-![Sketches Menu](../img/sketches_dark.png)
+![Sketches Menu](../docs/images/sketches.png)
+![Sketches Menu](../docs/images/sketches_dark.png)
 
 | Key | Function |
 |-----|----------|
@@ -126,7 +120,7 @@ See [Using Bitmap16 DX](../README.md#using-bitmap16-dx) for the drawing, sketche
 and export workflow.
 
 ### Custom palettes
-![Available Palettes](../img/palettes.png)
+![Available Palettes](../docs/images/palettes.png)
 1. Download `.hex` palette files from [Lospec](https://lospec.com/palette-list)
 2. Copy to `/bitmap16dx/palettes/` on your SD card
 3. Power cycle your Cardputer
@@ -151,8 +145,8 @@ Palettes can contain **4 through 16 colors**. The ADV supports up to 32 palettes
   - Show the currently selected palette color
   - Override the palette color with a red low-battery warning at 10%
 
-![Sketches](../img/photo_sketches.jpg)
-![Palettes](../img/photo_palettes.jpg)
+![Sketches](../docs/images/photo_sketches.jpg)
+![Palettes](../docs/images/photo_palettes.jpg)
 
 ## RGB LED Matrix mirroring
 
@@ -167,22 +161,22 @@ currently visible in the canvas viewport.
 ### Quad Matrix (16x16)
 
 <p>
-<img src="../img/photo_clamshell_open.jpg" height="300">
-<img src="../img/photo_clamshell_detail.jpg" height="300">
+<img src="../docs/images/photo_clamshell_open.jpg" height="300">
+<img src="../docs/images/photo_clamshell_detail.jpg" height="300">
 </p>
 
 ### Single Matrix (8x8)
 
 <p>
-<img src="../img/photo_singleLEDMatrix.jpg" height="300">
-<img src="../img/photo_singleLEDMatrix_detail.jpg" height="300">
+<img src="../docs/images/photo_singleLEDMatrix.jpg" height="300">
+<img src="../docs/images/photo_singleLEDMatrix_detail.jpg" height="300">
 </p>
 
 ### Technic Panel Board
 
 <p>
-<img src="../img/photo_techplate1.jpg" height="300">
-<img src="../img/photo_techplate2.jpg" height="300">
+<img src="../docs/images/photo_techplate1.jpg" height="300">
+<img src="../docs/images/photo_techplate2.jpg" height="300">
 </p>
 
 A Cardputer-sized prototype board with Lego Technic-compatible mounting holes. Designed for snapping peripherals — like the RGB matrix modules — into modular, reconfigurable layouts.
@@ -197,3 +191,7 @@ A Cardputer-sized prototype board with Lego Technic-compatible mounting holes. D
   in RGB Matrix settings.
 
 For firmware validation, see the [ADV release checklist](../docs/adv_release_test_checklist.md).
+
+## Hardware reference
+
+[Cardputer ADV dimensional template (PDF)](hardware/cardputer-ADV-template.pdf)

@@ -178,6 +178,9 @@ int main(int argc, char** argv) {
       ("bitmap16dx-lospec-test-" + std::to_string(
           std::chrono::steady_clock::now().time_since_epoch().count()));
   std::filesystem::create_directories(root / "palettes");
+  require(!cacheFreshOn(root, "2026-11-19"), "Missing cache needs a daily refresh");
+  std::ofstream(root / "lospec-cache.json") << page(0, 1, false);
+  require(!cacheFreshOn(root, "2026-11-19"), "Legacy cache needs a dated refresh");
   const auto sizeRoot = root / "sizes";
   std::filesystem::create_directories(sizeRoot / "palettes");
   std::vector<Palette> sizedPalettes;
@@ -213,6 +216,10 @@ int main(int argc, char** argv) {
       std::filesystem::perms::others_read)) == std::filesystem::perms::none,
       "Keep local key private");
   require(parsePage(page(0, 3, false), parsed) && saveCache(root, parsed.palettes), "Save cache");
+  require(saveCache(root, parsed.palettes, "2026-11-19"), "Persist local refresh date");
+  require(cacheFreshOn(root, "2026-11-19"), "Same-day cache stays fresh after reopening");
+  require(!cacheFreshOn(root, "2026-11-20"), "Next local day needs a refresh");
+  require(!cacheFreshOn(root, ""), "Unknown local date cannot mark cache fresh");
   const auto cached = loadCache(root);
   require(cached.size() == 3 && cached[0].hex == parsed.palettes[0].hex &&
       cached[0].author == "Pixel artist", "Round-trip exact colors and attribution offline");
@@ -227,6 +234,8 @@ int main(int argc, char** argv) {
       colors.size == 4 && colors.colors[0] == cached[0].colors[0], "Reuse existing palette importer");
   std::ofstream(root / "lospec-cache.json") << "incomplete";
   require(loadCache(root).empty(), "Corrupt cache does not crash startup");
+  require(!cacheFreshOn(root, "2026-11-19"), "Corrupt cache needs a refresh");
+  require(currentLocalDay().size() == 10, "Local refresh date uses a calendar day");
   std::filesystem::remove_all(root);
 
   std::vector<bitmap16::PaletteView::Entry> entries(300);

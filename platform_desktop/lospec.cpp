@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <cstring>
 #include <fstream>
 #include <iterator>
@@ -393,8 +394,34 @@ std::vector<Palette> loadCache(const std::filesystem::path& root) {
   return page.palettes;
 }
 
+std::string currentLocalDay() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+#ifdef _WIN32
+  if (localtime_s(&local, &now) != 0) return {};
+#else
+  if (localtime_r(&now, &local) == nullptr) return {};
+#endif
+  char day[11] = {};
+  std::strftime(day, sizeof(day), "%Y-%m-%d", &local);
+  return day;
+}
+
+bool cacheFreshOn(const std::filesystem::path& root, const std::string& day) {
+  if (day.empty()) return false;
+  const auto json = readFile(root / "lospec-cache.json", kMaximumResponseBytes);
+  Page page;
+  if (!parsePage(json, page)) return false;
+  picojson::value document;
+  if (!picojson::parse(document, json).empty()) return false;
+  if (!document.get("meta").is<picojson::object>()) return false;
+  const auto& stored = document.get("meta").get("localRefreshDay");
+  return stored.is<std::string>() && stored.get<std::string>() == day;
+}
+
 bool saveCache(
-    const std::filesystem::path& root, const std::vector<Palette>& palettes) {
+    const std::filesystem::path& root, const std::vector<Palette>& palettes,
+    const std::string& day) {
   picojson::array data;
   for (const auto& palette : palettes) {
     picojson::object object;
@@ -413,6 +440,7 @@ bool saveCache(
   document["data"] = picojson::value(data);
   picojson::object meta;
   meta["hasMore"] = picojson::value(false);
+  meta["localRefreshDay"] = picojson::value(day);
   document["meta"] = picojson::value(meta);
   return writeFile(root / "lospec-cache.json", picojson::value(document).serialize());
 }

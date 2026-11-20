@@ -16,6 +16,11 @@ bool write(
     const Sketch& sketch,
     bool scaled,
     ExportFormat format);
+bool writeRgba(
+    const std::filesystem::path& path,
+    const std::vector<uint8_t>& rgba,
+    int width,
+    int height);
 bool writeRgb(
     const std::filesystem::path& path,
     const std::vector<uint8_t>& rgb,

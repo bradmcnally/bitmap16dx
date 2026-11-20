@@ -5,24 +5,44 @@ Run commands from the repository root unless a section says otherwise.
 
 ## Project structure
 
-```
+```text
 bitmap16dx/
-├── platformio.ini          # PlatformIO configuration
-├── CMakeLists.txt          # SDL development builds
-├── platform_adv/          # ADV manual and platform resources
-├── platform_desktop/       # Shared desktop/Steam Deck/Zero SDL shell
-├── platform_steamdeck/     # Steam Deck packaging and sideload files
-├── platform_zero/          # Cardputer Zero simulator/runtime files
+├── README.md               # Overview and platform guides
+├── CMakeLists.txt          # Desktop, Zero, and Steam Deck builds
+├── CMakePresets.json       # Build presets
+├── platformio.ini          # ADV firmware build
+├── app-builder.json        # Zero store metadata and package version
 ├── src/
-│   ├── main.cpp            # Cardputer ADV application
-│   ├── core/               # Shared editor, views, codecs, and settings
-│   ├── platform_adv/       # ADV hardware adapters
-│   ├── palettes.h          # Built-in palette definitions
-│   ├── icons.h             # UI icons
-│   └── boot_image.h        # Splash screen
-├── test/                   # Native shared-core tests
-└── docs/                   # Porting and release validation documents
+│   ├── main.cpp            # ADV entry point
+│   ├── core/               # Shared editor and UI
+│   └── platform_adv/       # ADV hardware adapters
+├── platform_adv/           # ADV manual and hardware references
+├── platform_desktop/       # Shared SDL runtime
+│   └── tests/              # Desktop and persistence tests
+├── platform_zero/          # Zero device input, display, and sensors
+│   ├── launcher/           # Launcher entry, icon, and startup script
+│   ├── store/              # Store icon and screenshots
+│   ├── tools/              # Store checks and asset generation
+│   ├── tests/              # Zero input and sensor tests
+│   └── device.sh           # Build and install over SSH
+├── platform_steamdeck/     # Steam Deck guide and controller layout
+├── test/test_core/         # PlatformIO shared-core tests
+├── palettes/               # Bundled palette source files
+├── services/lospec-feed/   # Cloudflare palette feed
+├── third_party/            # External library sources and licenses
+└── docs/
+    ├── development.md      # Build and validation instructions
+    ├── images/             # Manual screenshots, photos, and video
+    └── plans/              # Future platform plans
 ```
+
+Generated output goes into `build/desktop`, `build_zero_simulator`,
+`build_zero_device`, and `build_steamdeck`. PlatformIO uses `.pio/`.
+Older local outputs are kept under `build/archive`, `build/releases`, or
+`build_zero_device/archive`; they are not part of the source repository.
+
+For planned iPhone and iPad support, see the [iOS plan](plans/ios.md).
+
 
 ## Build and install the ADV firmware
 
@@ -57,7 +77,7 @@ cmake --build --preset desktop
 
 cmake --preset zero
 cmake --build --preset zero
-./build_zero/bitmap16dx_desktop
+./build_zero_simulator/bitmap16dx_desktop
 ```
 
 The simulator persists sketches, exports, settings, and custom palettes under
@@ -81,6 +101,9 @@ See [the Steam Deck sideload guide](../platform_steamdeck/README.md) for the
 controller layout and copy/run instructions.
 
 ## Zero build and packaging
+
+For store metadata, assets, validation, and submission, see the
+[Zero store release guide](../platform_zero/STORE.md).
 
 ### Build on Cardputer Zero
 
@@ -132,7 +155,7 @@ with your Zero's username and IP address if needed.
 ```
 
 The first command builds on the Zero and saves the resulting package locally
-as `build_zero_device/bitmap16dx_arm64.deb`. Run it again when the source
+as `build_zero_device/bitmap16dx_<version>_arm64.deb`. Run it again when the source
 changes. The second command copies and reinstalls the cached package, including
 rebuilds with the same version. Quit BitMap16 DX before installing and reopen
 it from HOME afterward.
@@ -162,12 +185,14 @@ build does not bundle or send a Lospec key.
 
 ## Complete simulator validation
 
+For device and release checks, use the [QA checklist](QA_CHECKLIST.md).
+
 Build and launch the 320×170 Zero simulator:
 
 ```sh
 cmake --preset zero
 cmake --build --preset zero
-./build_zero/bitmap16dx_desktop
+./build_zero_simulator/bitmap16dx_desktop
 ```
 
 The Zero simulator opens only the main app window; RGB matrix support is disabled.
@@ -176,7 +201,7 @@ For an isolated test that does not touch the normal workspace:
 
 ```sh
 BITMAP16_DATA_DIR=/tmp/bitmap16dx-zero-test \
-  ./build_zero/bitmap16dx_desktop
+  ./build_zero_simulator/bitmap16dx_desktop
 ```
 
 Recommended all-at-once test:

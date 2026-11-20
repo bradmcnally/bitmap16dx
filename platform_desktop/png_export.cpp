@@ -138,37 +138,38 @@ bool write(
   return output.good();
 }
 
-bool writeRgb(
+static bool writePixels(
     const std::filesystem::path& path,
     const std::vector<uint8_t>& rgb,
     int width,
-    int height) {
+    int height,
+    std::size_t channels) {
   if (width <= 0 || height <= 0 ||
       rgb.size() !=
-          static_cast<std::size_t>(width) * height * 3u) {
+          static_cast<std::size_t>(width) * height * channels) {
     return false;
   }
 
   std::vector<uint8_t> raw;
   raw.reserve(
       static_cast<std::size_t>(height) *
-      (static_cast<std::size_t>(width) * 3u + 1u));
+      (static_cast<std::size_t>(width) * channels + 1u));
   for (int y = 0; y < height; ++y) {
     raw.push_back(0);
     const std::size_t start =
-        static_cast<std::size_t>(y) * width * 3u;
+        static_cast<std::size_t>(y) * width * channels;
     raw.insert(
         raw.end(),
         rgb.begin() + static_cast<std::ptrdiff_t>(start),
         rgb.begin() + static_cast<std::ptrdiff_t>(
-                          start + static_cast<std::size_t>(width) * 3u));
+                          start + static_cast<std::size_t>(width) * channels));
   }
 
   std::vector<uint8_t> png = {137, 80, 78, 71, 13, 10, 26, 10};
   std::vector<uint8_t> header;
   append32(header, static_cast<uint32_t>(width));
   append32(header, static_cast<uint32_t>(height));
-  header.insert(header.end(), {8, 2, 0, 0, 0});
+  header.insert(header.end(), {8, static_cast<uint8_t>(channels == 4 ? 6 : 2), 0, 0, 0});
   appendChunk(png, {'I', 'H', 'D', 'R'}, header);
   appendChunk(png, {'I', 'D', 'A', 'T'}, deflateStored(raw));
   appendChunk(png, {'I', 'E', 'N', 'D'}, {});
@@ -178,6 +179,16 @@ bool writeRgb(
       reinterpret_cast<const char*>(png.data()),
       static_cast<std::streamsize>(png.size()));
   return output.good();
+}
+
+bool writeRgb(const std::filesystem::path& path, const std::vector<uint8_t>& rgb,
+              int width, int height) {
+  return writePixels(path, rgb, width, height, 3);
+}
+
+bool writeRgba(const std::filesystem::path& path, const std::vector<uint8_t>& rgba,
+               int width, int height) {
+  return writePixels(path, rgba, width, height, 4);
 }
 
 }  // namespace PngExport

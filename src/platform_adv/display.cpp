@@ -36,7 +36,6 @@ bool Display::init() {
   }
 
   ensureBacklightConfigured();
-  M5Cardputer.Display.fillScreen(0x0000);
   return true;
 }
 

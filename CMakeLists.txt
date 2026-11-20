@@ -110,19 +110,22 @@ if(BITMAP16_STEAM_DECK)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(bitmap16dx_zero_esc_test platform_zero/tests/test_esc_hold.cpp)
+  target_include_directories(bitmap16dx_zero_esc_test PRIVATE platform_zero)
+  add_test(NAME zero_escape_hold COMMAND bitmap16dx_zero_esc_test)
   if(UNIX)
     add_executable(bitmap16dx_zero_imu_test
-      platform_zero/test_imu.cpp platform_zero/imu.cpp src/core/shake_detector.cpp
+      platform_zero/tests/test_imu.cpp platform_zero/imu.cpp src/core/shake_detector.cpp
       src/core/editor.cpp src/core/sketch.cpp src/core/palette.cpp
       src/core/settings_view.cpp src/core/settings.cpp src/core/canvas.cpp)
-    target_include_directories(bitmap16dx_zero_imu_test PRIVATE src)
+    target_include_directories(bitmap16dx_zero_imu_test PRIVATE src platform_zero)
     target_compile_definitions(bitmap16dx_zero_imu_test PRIVATE
       BITMAP16_CARDPUTER_ZERO=1 BITMAP16_CARDPUTER_ZERO_DEVICE=1)
     target_compile_options(bitmap16dx_zero_imu_test PRIVATE -Wall -Wextra -Werror)
     add_test(NAME zero_imu COMMAND bitmap16dx_zero_imu_test)
   endif()
   add_executable(bitmap16dx_display_warmth_test
-    platform_desktop/test_display_warmth.cpp
+    platform_desktop/tests/test_display_warmth.cpp
     src/core/canvas.cpp
     src/core/settings.cpp
     src/core/settings_view.cpp
@@ -135,7 +138,7 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME display_warmth COMMAND bitmap16dx_display_warmth_test)
   add_executable(bitmap16dx_history_test
-    platform_desktop/test_history.cpp
+    platform_desktop/tests/test_history.cpp
     src/core/canvas.cpp
     src/core/canvas_view.cpp
     src/core/editor.cpp
@@ -145,7 +148,7 @@ if(BUILD_TESTING)
   target_include_directories(bitmap16dx_history_test PRIVATE src)
   add_test(NAME editor_history COMMAND bitmap16dx_history_test)
   add_executable(bitmap16dx_workspace_test
-    platform_desktop/test_workspace.cpp
+    platform_desktop/tests/test_workspace.cpp
     platform_desktop/png_export.cpp
     platform_desktop/steam_screenshot.cpp
     platform_desktop/workspace.cpp
@@ -166,11 +169,12 @@ if(BUILD_TESTING)
   add_test(NAME workspace_persistence COMMAND bitmap16dx_workspace_test)
   if(BITMAP16_CARDPUTER_ZERO OR BITMAP16_STEAM_DECK)
     if(BITMAP16_CARDPUTER_ZERO)
-      target_compile_definitions(bitmap16dx_workspace_test PRIVATE BITMAP16_CARDPUTER_ZERO=1)
+      target_compile_definitions(bitmap16dx_workspace_test PRIVATE
+        BITMAP16_CARDPUTER_ZERO=1 BITMAP16_CARDPUTER_ZERO_DEVICE=1)
     else()
       target_compile_definitions(bitmap16dx_workspace_test PRIVATE BITMAP16_STEAM_DECK=1)
     endif()
-    add_executable(bitmap16dx_lospec_test platform_desktop/test_lospec.cpp
+    add_executable(bitmap16dx_lospec_test platform_desktop/tests/test_lospec.cpp
       platform_desktop/png_export.cpp src/core/canvas.cpp src/core/palette_view.cpp
       src/core/sketch.cpp)
     target_compile_definitions(bitmap16dx_lospec_test PRIVATE BITMAP16_LOSPEC=1)
@@ -194,35 +198,54 @@ else()
   target_compile_options(bitmap16dx_desktop PRIVATE -Wall -Wextra -Werror)
 endif()
 
+if(BITMAP16_CARDPUTER_ZERO AND NOT BITMAP16_CARDPUTER_ZERO_DEVICE)
+  add_executable(bitmap16dx_store_assets EXCLUDE_FROM_ALL
+    platform_zero/tools/store_assets.cpp platform_desktop/png_export.cpp
+    src/core/canvas.cpp src/core/canvas_view.cpp src/core/palette_view.cpp
+    src/core/palette.cpp src/core/sketch.cpp)
+  target_include_directories(bitmap16dx_store_assets PRIVATE src platform_desktop)
+  target_compile_definitions(bitmap16dx_store_assets PRIVATE BITMAP16_CARDPUTER_ZERO=1)
+endif()
+
 if(BITMAP16_CARDPUTER_ZERO_DEVICE)
   install(
     TARGETS bitmap16dx_desktop
     RUNTIME DESTINATION share/APPLaunch/apps/bitmap16dx
   )
   install(
-    PROGRAMS platform_zero/run_bitmap16dx.sh
+    PROGRAMS platform_zero/launcher/run_bitmap16dx.sh
     DESTINATION share/APPLaunch/bin
     RENAME bitmap16dx
   )
   install(
-    FILES platform_zero/bitmap16dx.desktop
+    FILES platform_zero/launcher/bitmap16dx.desktop
     DESTINATION share/APPLaunch/applications
   )
   install(
-    FILES platform_zero/bitmap16dx.png
+    FILES platform_zero/launcher/bitmap16dx.png
     DESTINATION share/APPLaunch/share/images
     RENAME bitmap16dx.png
   )
+  install(FILES LICENSE DESTINATION share/doc/bitmap16dx RENAME copyright)
   install(FILES third_party/picojson/picojson.h
     DESTINATION share/doc/bitmap16dx/licenses RENAME picojson-license.h)
 
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+     CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/app-builder.json")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app-builder.json" BITMAP16_STORE_MANIFEST)
+    string(JSON BITMAP16_STORE_VERSION GET "${BITMAP16_STORE_MANIFEST}" version)
+    if(NOT BITMAP16_STORE_VERSION MATCHES "^([0-9]+[.][0-9]+[.][0-9]+)-([0-9]+)$")
+      message(FATAL_ERROR "Store version must be major.minor.patch-revision")
+    endif()
+    set(CPACK_PACKAGE_VERSION "${CMAKE_MATCH_1}")
+    set(CPACK_DEBIAN_PACKAGE_RELEASE "${CMAKE_MATCH_2}")
     set(CPACK_GENERATOR DEB)
     set(CPACK_PACKAGE_NAME bitmap16dx)
-    set(CPACK_PACKAGE_VERSION 0.8.0)
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
-        "Portable pixel sketch station for Cardputer Zero")
-    set(CPACK_PACKAGE_CONTACT "BitMap16 DX contributors")
+        "Pixel-art sketchbook for Cardputer Zero")
+    set(CPACK_PACKAGE_CONTACT "Brad McNally")
     set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE arm64)
     set(CPACK_DEBIAN_PACKAGE_SECTION APPLaunch)
@@ -232,6 +255,6 @@ if(BITMAP16_CARDPUTER_ZERO_DEVICE)
     include(CPack)
   else()
     message(STATUS
-      "Cardputer Zero DEB packaging is enabled only on an ARM64 host")
+      "Cardputer Zero DEB packaging requires a Linux ARM64 target")
   endif()
 endif()

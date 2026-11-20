@@ -81,7 +81,7 @@ To use direct API development without hosting, configure with
 
 ```sh
 node --test services/lospec-feed/worker.test.mjs
-ctest --test-dir build_zero --output-on-failure
+ctest --test-dir build_zero_simulator --output-on-failure
 ```
 
 The Worker tests use simulated Lospec responses and KV storage. They verify

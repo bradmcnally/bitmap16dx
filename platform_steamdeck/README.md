@@ -1,12 +1,6 @@
 # Steam Deck guide
 
-**[ADV](../platform_adv/README.md) · [Zero](../platform_zero/README.md) · [Steam / Steam Deck — coming soon](../platform_steamdeck/README.md)**
-
 Steam / Steam Deck is coming soon. This guide covers the development build.
-
-[All platforms](../README.md#choose-your-platform) · [Install](#install) ·
-[First launch](#first-launch) · [Controls](#controls) · [Using the app](#using-the-app) ·
-[Troubleshooting](#troubleshooting)
 
 ## Install
 

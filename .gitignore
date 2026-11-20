@@ -19,6 +19,7 @@ Thumbs.db
 # Build outputs
 build/
 build_zero/
+build_zero_simulator/
 build_zero_device/
 build_steamdeck/
 *.bin
@@ -44,16 +45,21 @@ palette_picker.html
 convert_battery_icons.py
 build.sh
 claude.md
-tools/
+/tools/
 devlog/
 
 # Local porting notes (the release checklist remains tracked)
 docs/PORTING_PLAN.md
 docs/notes.md
 
-# Folders with source assets (not needed to build)
+# Local source assets and working notes
 assets/
 reference/
 ux/
 docs/*
 !docs/development.md
+!docs/QA_CHECKLIST.md
+!docs/images/
+!docs/images/**
+!docs/plans/
+!docs/plans/**

@@ -71,8 +71,11 @@ Result downloadLatest(
 std::string readApiKey(const std::filesystem::path& root);
 bool writeApiKey(const std::filesystem::path& root, const std::string& key);
 std::vector<Palette> loadCache(const std::filesystem::path& root);
+std::string currentLocalDay();
+bool cacheFreshOn(const std::filesystem::path& root, const std::string& day);
 bool saveCache(
-    const std::filesystem::path& root, const std::vector<Palette>& palettes);
+    const std::filesystem::path& root, const std::vector<Palette>& palettes,
+    const std::string& day = currentLocalDay());
 bool isSaved(const std::filesystem::path& root, const Palette& palette);
 std::vector<std::string> savedSlugs(const std::filesystem::path& root);
 bool savePalette(const std::filesystem::path& root, const Palette& palette);

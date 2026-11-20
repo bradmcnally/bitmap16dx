@@ -26,8 +26,10 @@ int main() {
   std::filesystem::remove_all(root, error);
 #ifdef _WIN32
   _putenv_s("BITMAP16_DATA_DIR", root.string().c_str());
+  _putenv_s("BITMAP16_CONFIG_DIR", "");
 #else
   setenv("BITMAP16_DATA_DIR", root.string().c_str(), 1);
+  unsetenv("BITMAP16_CONFIG_DIR");
 #endif
 
   bitmap16::Editor firstEditor;
@@ -218,6 +220,42 @@ int main() {
       legacy.settings().displayWarmth != 0) {
     return 12;
   }
+#ifdef BITMAP16_CARDPUTER_ZERO
+  // Configuration is separate from artwork and does not import old data-folder settings.
+  const auto config = root / "config";
+#ifdef _WIN32
+  _putenv_s("BITMAP16_CONFIG_DIR", config.string().c_str());
+#else
+  setenv("BITMAP16_CONFIG_DIR", config.string().c_str(), 1);
+#endif
+  bitmap16::Editor configuredEditor;
+  bitmap16::Desktop::Workspace configured;
+  if (!configured.initialize(configuredEditor) || configured.configRoot() != config ||
+      configured.settings().theme != bitmap16::Settings{}.theme ||
+      std::filesystem::exists(config / "settings.bin") ||
+      !std::filesystem::is_regular_file(root / "settings.bin")) return 18;
+  configured.settings().theme = bitmap16::ThemeId::Dark;
+  if (!configured.saveSettings()) return 19;
+  bitmap16::Desktop::Workspace preferred;
+  if (!preferred.initialize(configuredEditor) ||
+      preferred.settings().theme != bitmap16::ThemeId::Dark) return 20;
+#endif
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  // Device exports belong in the user's visible Pictures folder.
+  const auto deviceHome = root / "device-home";
+  std::filesystem::create_directories(deviceHome, error);
+  if (error) return 21;
+  unsetenv("BITMAP16_DATA_DIR");
+  unsetenv("XDG_DATA_HOME");
+  setenv("HOME", deviceHome.string().c_str(), 1);
+  bitmap16::Editor deviceEditor;
+  bitmap16::Desktop::Workspace deviceWorkspace;
+  std::filesystem::path deviceExport;
+  if (!deviceWorkspace.initialize(deviceEditor) ||
+      !deviceWorkspace.exportSketch(deviceEditor.sketch(), true, deviceExport) ||
+      deviceExport != deviceHome / "Pictures" / "BitMap16DX" / "export-0001.png" ||
+      !std::filesystem::is_regular_file(deviceExport)) return 21;
+#endif
   if (std::getenv("BITMAP16_KEEP_TEST_DATA") == nullptr) {
     std::filesystem::remove_all(root, error);
   }

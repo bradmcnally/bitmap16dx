@@ -57,6 +57,7 @@ namespace {
 
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
 bitmap16::Zero::NativeIo nativeIo;
+bool zeroHomeRequested = false;
 bitmap16::Zero::Imu zeroImu;
 #endif
 
@@ -70,7 +71,14 @@ const Uint8* keyboardState() {
 
 int waitEvent(SDL_Event* event, int timeout = -1) {
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
-  return nativeIo.waitEvent(event, timeout);
+  const int available = nativeIo.waitEvent(event, timeout);
+  if (available && (nativeIo.isHomeEvent(*event) ||
+                   (event->type == SDL_QUIT && nativeIo.escapeHeld()))) {
+    zeroHomeRequested = true;
+    *event = {};
+    event->type = SDL_QUIT;
+  }
+  return available;
 #else
   return timeout < 0 ? SDL_WaitEvent(event)
                      : SDL_WaitEventTimeout(event, timeout);
@@ -104,7 +112,6 @@ Uint32 previewLabelUntil = 0;
 char previewLabel[20] = {};
 #ifdef BITMAP16_LOSPEC
 bool desktopLospecView = false;
-bool desktopImportPreview = false;
 char desktopPaletteStatus[64] = "[I]mport|Browse [L]ospec";
 #endif
 
@@ -595,7 +602,7 @@ bool showBootScreen(
     SDL_Texture* texture,
     SDL_Renderer* renderer,
     uint8_t brightness) {
-  constexpr Uint32 kBootDurationMs = 2500u;
+  constexpr Uint32 kBootDurationMs = 1000u;
   constexpr const char* kVersion = "v0.8.0";
   const int imageX = (canvas.width() - BOOT_IMAGE_WIDTH) / 2;
   const int imageY = (canvas.height() - BOOT_IMAGE_HEIGHT) / 2;
@@ -1050,7 +1057,6 @@ int main(int argc, char** argv) {
   std::vector<bitmap16::Lospec::Palette> lospecCache =
       bitmap16::Lospec::loadCache(workspace.root());
   std::vector<bitmap16::Lospec::Palette> lospecEntries;
-  std::vector<bitmap16::Lospec::Palette> importedPalettes;
   bool lospecRequestIsImport = false;
   std::string lastPaletteLookup;
   uint8_t lospecSizeFilter = 0;
@@ -1087,22 +1093,7 @@ int main(int argc, char** argv) {
   };
   const auto refreshPaletteCatalog = [&]() {
 #ifdef BITMAP16_LOSPEC
-    if (desktopImportPreview) {
-      lospecEntries = importedPalettes;
-      paletteEntries.clear();
-      for (const auto& palette : lospecEntries) {
-        paletteEntries.push_back({palette.colors.data(), palette.title.c_str(), palette.size,
-                                  false, palette.author.c_str(), palette.likes});
-      }
-      paletteCatalog.title = "IMPORT PREVIEW";
-      paletteCatalog.emptyMessage = "NO IMPORTED PALETTE";
-      std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
-#ifdef BITMAP16_STEAM_DECK
-                    "A: save and apply  B: cancel  L3: lookup");
-#else
-                    "Enter: save and apply  Esc: cancel  I: lookup");
-#endif
-    } else if (desktopLospecView) {
+    if (desktopLospecView) {
       lospecEntries = bitmap16::Lospec::availablePalettes(
           lospecCache, bitmap16::Lospec::savedSlugs(workspace.root()), lospecSizeFilter);
       paletteEntries.clear();
@@ -1110,10 +1101,10 @@ int main(int argc, char** argv) {
         paletteEntries.push_back({palette.colors.data(), palette.title.c_str(),
             palette.size, false, palette.author.c_str(), palette.likes});
       }
-      std::snprintf(lospecTitle, sizeof(lospecTitle), "LOSPEC (%zu)", lospecEntries.size());
+      std::snprintf(lospecTitle, sizeof(lospecTitle), "PALETTES > LOSPEC (%zu)", lospecEntries.size());
       paletteCatalog.title = lospecTitle;
       paletteCatalog.emptyMessage = lospecCache.empty()
-          ? "PRESS R TO GET PALETTES" : "NO NEW MATCHES";
+          ? "NO CACHED PALETTES" : "NO NEW MATCHES";
       std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus),
 #ifdef BITMAP16_STEAM_DECK
                     "L3:Import");
@@ -1352,12 +1343,37 @@ int main(int argc, char** argv) {
   uint8_t pendingPaletteSize = 0;
   PaletteExitAction paletteExitAction = PaletteExitAction::None;
   std::vector<uint16_t> paletteReloadFrame;
+#ifdef BITMAP16_LOSPEC
+  const auto refreshLospecFeed = [&]() {
+    const std::string apiKey = bitmap16::Lospec::readApiKey(workspace.root());
+    if (lospecRequest.valid()) {
+      std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Getting newest palettes...");
+    } else if (!bitmap16::Lospec::usesSharedFeed() && apiKey.empty()) {
+      std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Lospec key missing in build");
+    } else if (nextLospecRefreshAt != 0 &&
+               !SDL_TICKS_PASSED(SDL_GetTicks(), nextLospecRefreshAt)) {
+      std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Please wait a minute to refresh");
+    } else {
+      nextLospecRefreshAt = SDL_GetTicks() + 60000u;
+      lospecRequestIsImport = false;
+      const auto saved = bitmap16::Lospec::savedSlugs(workspace.root());
+      lospecRequest = std::async(std::launch::async,
+          [saved, apiKey, &lospecCancel]() {
+            return bitmap16::Lospec::downloadLatest(0, saved, apiKey, lospecCancel);
+          });
+      std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Getting newest palettes...");
+    }
+  };
+#endif
   const auto replacePaletteList = [&](PaletteExitAction action) {
 #ifdef BITMAP16_LOSPEC
     if (action == PaletteExitAction::SwitchList) {
-      desktopLospecView = desktopImportPreview ? false : !desktopLospecView;
-      desktopImportPreview = false;
+      desktopLospecView = !desktopLospecView;
       refreshPaletteCatalog();
+      if (desktopLospecView &&
+          !bitmap16::Lospec::cacheFreshOn(workspace.root(), bitmap16::Lospec::currentLocalDay())) {
+        refreshLospecFeed();
+      }
     } else if (desktopLospecView && action == PaletteExitAction::FilterSize) {
       lospecSizeFilter = lospecSizeFilter == pendingPaletteSize ? 0 : pendingPaletteSize;
       refreshPaletteCatalog();
@@ -1483,9 +1499,6 @@ int main(int argc, char** argv) {
         paletteState.insertionAnimating = false;
         paletteCompletionAt = 0;
         currentView = DesktopView::Canvas;
-#ifdef BITMAP16_LOSPEC
-        desktopImportPreview = false;
-#endif
         renderNow();
       }
     } else if (result != bitmap16::PaletteView::AnimationResult::Idle) {
@@ -2039,6 +2052,9 @@ int main(int argc, char** argv) {
   Uint32 nextBatteryRefresh = SDL_GetTicks() + kBatteryRefreshMs;
 #endif
   while (running) {
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    if (zeroHomeRequested) break;
+#endif
     SDL_PumpEvents();
 #ifdef BITMAP16_LOSPEC
     if (lospecRequest.valid() &&
@@ -2049,10 +2065,27 @@ int main(int argc, char** argv) {
             std::future_status::ready) {
       auto result = lospecRequest.get();
       if (result.error.empty() && lospecRequestIsImport) {
-        importedPalettes = std::move(result.palettes);
-        desktopImportPreview = true;
-        desktopLospecView = false;
+        workspace.reloadUserPalettes();
         refreshPaletteCatalog();
+        if (result.palettes.empty()) {
+          std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Palette not found");
+        } else {
+          const auto& palette = result.palettes.front();
+          if (workspace.userPalettes().size() >= bitmap16::Desktop::kMaximumUserPalettes &&
+              !bitmap16::Lospec::isSaved(workspace.root(), palette)) {
+            std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Local palette storage is full");
+          } else if (!bitmap16::Lospec::savePalette(workspace.root(), palette)) {
+            std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Could not save palette");
+          } else {
+            editor.applyPalette(palette.colors.data(), palette.size);
+            documentDirty = !documentsMatch(editor.sketch(), savedDocumentState);
+            desktopLospecView = false;
+            refreshPaletteCatalog();
+            currentView = DesktopView::Canvas;
+            setDesktopStatus("Palette imported");
+            renderNow();
+          }
+        }
       } else if (result.error.empty()) {
         const bool cached = bitmap16::Lospec::saveCache(workspace.root(), result.palettes);
         lospecCache = std::move(result.palettes);
@@ -2381,6 +2414,9 @@ int main(int argc, char** argv) {
     }
 #endif
     const int eventAvailable = waitEvent(&event, eventWait);
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    if (zeroHomeRequested) break;
+#endif
     if (eventAvailable == 0) {
       if (currentView == DesktopView::Charging) {
         bitmap16::ChargingView::update(chargingState, width, height);
@@ -2578,7 +2614,7 @@ int main(int argc, char** argv) {
           if (event.cbutton.button == SDL_CONTROLLER_BUTTON_X) paletteKey = SDLK_r;
         }
 #ifdef BITMAP16_STEAM_DECK
-        if (!desktopImportPreview && paletteKey == SDLK_UNKNOWN)
+        if (paletteKey == SDLK_UNKNOWN)
           paletteKey = paletteFilterKey(event.cbutton.button, paletteState.filterSize, !desktopLospecView);
 #endif
         if (paletteKey != SDLK_UNKNOWN) {
@@ -2913,7 +2949,7 @@ int main(int argc, char** argv) {
         std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Looking up palette...");
       }
       changed = true;
-    } else if (currentView == DesktopView::Palette && !desktopLospecView && !desktopImportPreview &&
+    } else if (currentView == DesktopView::Palette && !desktopLospecView &&
                !paletteState.insertionAnimating &&
                (key == SDLK_BACKSPACE || key == SDLK_DELETE)) {
       const int selected = bitmap16::PaletteView::selectedCatalogIndex(paletteState);
@@ -2947,24 +2983,7 @@ int main(int argc, char** argv) {
       changed = true;
     } else if (currentView == DesktopView::Palette && desktopLospecView &&
                !paletteState.insertionAnimating && key == SDLK_r) {
-      const std::string apiKey = bitmap16::Lospec::readApiKey(workspace.root());
-      if (lospecRequest.valid()) {
-        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Getting newest palettes...");
-      } else if (!bitmap16::Lospec::usesSharedFeed() && apiKey.empty()) {
-        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Lospec key missing in build");
-      } else if (nextLospecRefreshAt != 0 &&
-                 !SDL_TICKS_PASSED(SDL_GetTicks(), nextLospecRefreshAt)) {
-        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Please wait a minute to refresh");
-      } else {
-        nextLospecRefreshAt = SDL_GetTicks() + 60000u;
-        lospecRequestIsImport = false;
-        const auto saved = bitmap16::Lospec::savedSlugs(workspace.root());
-        lospecRequest = std::async(std::launch::async,
-            [saved, apiKey, &lospecCancel]() {
-              return bitmap16::Lospec::downloadLatest(0, saved, apiKey, lospecCancel);
-            });
-        std::snprintf(desktopPaletteStatus, sizeof(desktopPaletteStatus), "Getting newest palettes...");
-      }
+      refreshLospecFeed();
       changed = true;
 #endif
     } else if (key == SDLK_m && currentView == DesktopView::Canvas) {
@@ -2974,7 +2993,7 @@ int main(int argc, char** argv) {
       if (event.type == SDL_KEYDOWN && event.key.repeat != 0) continue;
       if (currentView == DesktopView::Palette) {
 #ifdef BITMAP16_LOSPEC
-        requestPaletteExit((desktopLospecView || desktopImportPreview)
+        requestPaletteExit(desktopLospecView
             ? PaletteExitAction::SwitchList : PaletteExitAction::Close);
 #else
         requestPaletteExit(PaletteExitAction::Close);
@@ -3593,7 +3612,7 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Palette &&
         (key == SDLK_RETURN || key == SDLK_KP_ENTER)) {
 #ifdef BITMAP16_LOSPEC
-      if ((desktopLospecView || desktopImportPreview) && !paletteState.insertionAnimating) {
+      if (desktopLospecView && !paletteState.insertionAnimating) {
         const int selected = bitmap16::PaletteView::selectedCatalogIndex(paletteState);
         if (selected >= 0 && selected < static_cast<int>(lospecEntries.size())) {
           const auto& palette = lospecEntries[selected];
@@ -3629,20 +3648,13 @@ int main(int argc, char** argv) {
       }
     } else if (
         currentView == DesktopView::Palette &&
-#ifdef BITMAP16_LOSPEC
-        !desktopImportPreview &&
-#endif
         (key == SDLK_0 || key == SDLK_4 ||
          key == SDLK_8 || key == SDLK_1)) {
       pendingPaletteSize = key == SDLK_0 ? 0 : key == SDLK_4 ? 4 : key == SDLK_8 ? 8 : 16;
       requestPaletteExit(PaletteExitAction::FilterSize);
       changed = true;
     } else if (
-        currentView == DesktopView::Palette && key == SDLK_u
-#ifdef BITMAP16_LOSPEC
-        && !desktopImportPreview
-#endif
-        ) {
+        currentView == DesktopView::Palette && key == SDLK_u) {
       requestPaletteExit(PaletteExitAction::FilterUser);
       changed = true;
     } else if (

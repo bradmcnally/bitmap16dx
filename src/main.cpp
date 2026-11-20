@@ -3084,10 +3084,10 @@ void showBootScreen() {
   // Underline the H (first character, 6px wide)
   M5Cardputer.Display.drawLine(helpX, helpY + 9, helpX + 5, helpY + 9, TFT_WHITE);
 
-  // Wait for ESC key (`) press to continue, or timeout after 5 seconds
+  // Wait for ESC key (`) press to continue, or timeout after 1 second
   bool waiting = true;
   unsigned long startTime = millis();
-  const unsigned long timeout = 2500; // 2.5 second timeout
+  const unsigned long timeout = 1000; // 1 second timeout
 
   while (waiting) {
     M5Cardputer.update();

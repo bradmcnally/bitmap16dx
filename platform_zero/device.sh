@@ -11,7 +11,12 @@ mode=$1
 device=$2
 repo=$(cd "$(dirname "$0")/.." && pwd)
 package_dir="$repo/build_zero_device"
-package_name=bitmap16dx_arm64.deb
+version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$repo/app-builder.json")
+if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+  printf 'Invalid package version in app-builder.json\n' >&2
+  exit 1
+fi
+package_name="bitmap16dx_${version}_arm64.deb"
 package="$package_dir/$package_name"
 
 if [[ $mode == package ]]; then
@@ -31,7 +36,7 @@ if [[ $mode == package ]]; then
   fi
 
   tar --format=ustar --no-xattrs -C "$repo" -cf - \
-    CMakeLists.txt CMakePresets.json \
+    CMakeLists.txt CMakePresets.json LICENSE app-builder.json \
     platform_desktop platform_zero src third_party \
     -C "$release_config" build_zero_device/lospec-key.txt build_zero_device/lospec-feed-url.txt |
     ssh -T "$device" '
@@ -54,7 +59,10 @@ if [[ $mode == package ]]; then
     ' >"$download"
 
   ar -t "$download" >/dev/null
-  mv -f "$download" "$package"
+  staged_package="$release_config/$package_name"
+  mv "$download" "$staged_package"
+  python3 "$repo/platform_zero/tools/check_store.py" --deb "$staged_package"
+  mv -f "$staged_package" "$package"
   printf 'Package ready: %s\n' "$package"
 else
   if [[ ! -f $package ]]; then
@@ -62,6 +70,6 @@ else
     exit 1
   fi
 
-  scp "$package" "$device:$package_name"
-  ssh -t "$device" 'sudo apt install --reinstall "$HOME/bitmap16dx_arm64.deb"'
+  scp "$package" "$device:/tmp/bitmap16dx-install.deb"
+  ssh -t "$device" 'sudo apt install --reinstall /tmp/bitmap16dx-install.deb'
 fi

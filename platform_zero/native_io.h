@@ -9,6 +9,9 @@
 #include <linux/fb.h>
 
 #include "core/display_warmth.h"
+#include "core/canvas.h"
+#include "esc_hold.h"
+#include <vector>
 
 namespace bitmap16::Zero {
 
@@ -25,15 +28,28 @@ public:
   int pollEvent(SDL_Event* event);
   int waitEvent(SDL_Event* event, int timeoutMs);
   const Uint8* keyboardState() const { return keys_.data(); }
+  bool isHomeEvent(const SDL_Event& event) const { return event.type == homeEventType_; }
+  bool escapeHeld() const { return escHold_.pressed(); }
   bool isBacklightEvent(const SDL_Event& event) const {
     return event.type == backlightEventType_;
   }
 
 private:
+  void writeFrame(const uint16_t* pixels, int width, int height);
+  void redrawEscCountdown();
+  bool updateEsc(SDL_Event* event);
+
   void fillKeyEvent(
       SDL_Event* event, SDL_Scancode scan, bool pressed, bool repeat) const;
 
   Uint32 backlightEventType_ = static_cast<Uint32>(-1);
+  Uint32 homeEventType_ = static_cast<Uint32>(-1);
+  EscHold escHold_;
+  int countdown_ = 0;
+  std::vector<uint16_t> lastFrame_;
+  Canvas countdownFrame_;
+  int frameWidth_ = 0;
+  int frameHeight_ = 0;
   int framebuffer_ = -1;
   int keyboard_ = -1;
   uint8_t* mapping_ = nullptr;

@@ -35,6 +35,35 @@ std::filesystem::path dataRoot() {
   return std::filesystem::temp_directory_path() / "bitmap16dx";
 }
 
+std::filesystem::path settingsRoot(const std::filesystem::path& data) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+  const char* overrideConfig = std::getenv("BITMAP16_CONFIG_DIR");
+  if (overrideConfig != nullptr && overrideConfig[0] != '\0') return overrideConfig;
+  // Keep isolated test/data workspaces self-contained unless explicitly overridden.
+  const char* overrideData = std::getenv("BITMAP16_DATA_DIR");
+  if (overrideData != nullptr && overrideData[0] != '\0') return data;
+  const char* config = std::getenv("XDG_CONFIG_HOME");
+  if (config != nullptr && config[0] != '\0') return std::filesystem::path(config) / "bitmap16dx";
+  const char* home = std::getenv("HOME");
+  if (home != nullptr && home[0] != '\0') return std::filesystem::path(home) / ".config" / "bitmap16dx";
+#endif
+  return data;
+}
+
+std::filesystem::path exportRoot(const std::filesystem::path& data) {
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  // An isolated test workspace keeps its exports with the test data.
+  const char* overrideRoot = std::getenv("BITMAP16_DATA_DIR");
+  if (overrideRoot == nullptr || overrideRoot[0] == '\0') {
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && home[0] != '\0') {
+      return std::filesystem::path(home) / "Pictures" / "BitMap16DX";
+    }
+  }
+#endif
+  return data / "exports";
+}
+
 // Version 4 files may include trailing battery-display and LCD-warmth settings.
 std::array<uint8_t, 18> encodeSettings(const Settings& settings) {
   return {
@@ -110,6 +139,7 @@ uint64_t sketchSequence(const std::filesystem::path& path) {
 
 bool Workspace::initialize(Editor& editor) {
   root_ = dataRoot();
+  configRoot_ = settingsRoot(root_);
   std::error_code error;
   std::filesystem::create_directories(root_ / "sketches", error);
   if (error) return false;
@@ -118,6 +148,8 @@ bool Workspace::initialize(Editor& editor) {
   std::filesystem::create_directories(root_ / "palettes", error);
   if (error) return false;
   std::filesystem::create_directories(root_ / "trash", error);
+  if (error) return false;
+  std::filesystem::create_directories(configRoot_, error);
   if (error) return false;
   loadSettings();
   reloadUserPalettes();
@@ -130,7 +162,7 @@ bool Workspace::initialize(Editor& editor) {
 
 bool Workspace::loadSettings() {
   settings_ = normalizeSettings(Settings{});
-  std::ifstream input(root_ / "settings.bin", std::ios::binary);
+  std::ifstream input(configRoot_ / "settings.bin", std::ios::binary);
   if (!input) return false;
   const std::vector<uint8_t> data(
       (std::istreambuf_iterator<char>(input)),
@@ -141,7 +173,7 @@ bool Workspace::loadSettings() {
 bool Workspace::saveSettings() const {
   const auto data = encodeSettings(settings_);
   std::ofstream output(
-      root_ / "settings.bin", std::ios::binary | std::ios::trunc);
+      configRoot_ / "settings.bin", std::ios::binary | std::ios::trunc);
   output.write(
       reinterpret_cast<const char*>(data.data()),
       static_cast<std::streamsize>(data.size()));
@@ -356,12 +388,16 @@ bool Workspace::exportSketch(
     const Sketch& sketch,
     bool scaled,
     std::filesystem::path& outputPath) const {
+  const std::filesystem::path directory = exportRoot(root_);
+  std::error_code error;
+  std::filesystem::create_directories(directory, error);
+  if (error) return false;
   int next = 1;
   do {
     std::ostringstream name;
     name << "export-" << std::setw(4) << std::setfill('0') << next++
          << ".png";
-    outputPath = root_ / "exports" / name.str();
+    outputPath = directory / name.str();
   } while (std::filesystem::exists(outputPath));
   return PngExport::write(
       outputPath, sketch, scaled, settings_.exportFormat);
