@@ -10,7 +10,7 @@ or its [Cardputer Zero Store listing](https://cardputer.cc/#/apps/16DX)
 If you download the ARM64 Debian package from GitHub, install it on the Zero:
 
 ```sh
-sudo dpkg -i bitmap16dx_0.8.0-1_arm64.deb
+sudo dpkg -i bitmap16dx_0.9.0-1_arm64.deb
 ```
 
 To create the package from source or update over SSH, follow the
@@ -118,9 +118,6 @@ palette colors. A deleted Lospec palette can appear in the online feed again.
 
 Enable **Shake undo** in Settings to undo an edit by shaking the Zero.
 This option is available on devices with a supported accelerometer.
-
-**Warmth** adjusts the LCD color temperature: Neutral, Mild, Warm, or Warmer.
-It changes the display's appearance without changing saved artwork or exports.
 
 In Settings, set **Battery display** to **Off** to hide the Canvas battery
 icon. While the Zero reports charging, the charging symbol replaces the

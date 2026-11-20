@@ -19,6 +19,22 @@ option(BITMAP16_CARDPUTER_ZERO
 option(BITMAP16_STEAM_DECK
        "Build the fullscreen Steam Deck SDL runtime" OFF)
 
+if(BITMAP16_STEAM_DECK AND (BITMAP16_CARDPUTER_ZERO OR BITMAP16_CARDPUTER_ZERO_DEVICE))
+  message(FATAL_ERROR "Choose either the Steam Deck or Cardputer Zero target, not both")
+endif()
+
+# SDL targets share the store manifest's application version. ADV firmware
+# keeps its separate release version.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/app-builder.json")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app-builder.json" BITMAP16_STORE_MANIFEST)
+string(JSON BITMAP16_STORE_VERSION GET "${BITMAP16_STORE_MANIFEST}" version)
+if(NOT BITMAP16_STORE_VERSION MATCHES "^([0-9]+[.][0-9]+[.][0-9]+)-([0-9]+)$")
+  message(FATAL_ERROR "Store version must be major.minor.patch-revision")
+endif()
+set(BITMAP16_APP_VERSION "${CMAKE_MATCH_1}")
+set(BITMAP16_PACKAGE_REVISION "${CMAKE_MATCH_2}")
+
 find_package(SDL2 CONFIG QUIET)
 if(NOT SDL2_FOUND)
   find_package(PkgConfig REQUIRED)
@@ -27,6 +43,7 @@ endif()
 
 add_executable(bitmap16dx_desktop
   platform_desktop/main_desktop.cpp
+  platform_desktop/palette_browser.cpp
   platform_desktop/matrix_simulator.cpp
   platform_desktop/png_export.cpp
   platform_desktop/steam_screenshot.cpp
@@ -44,6 +61,7 @@ add_executable(bitmap16dx_desktop
   src/core/editor.cpp
   src/core/palette.cpp
   src/core/sketch.cpp
+  src/core/sketch_workflow.cpp
   src/core/sketch_codec.cpp
   src/core/settings.cpp
 )
@@ -52,6 +70,7 @@ target_include_directories(bitmap16dx_desktop PRIVATE src)
 target_compile_definitions(bitmap16dx_desktop PRIVATE
   BITMAP16_DEFAULT_WIDTH=${BITMAP16_DEFAULT_WIDTH}
   BITMAP16_DEFAULT_HEIGHT=${BITMAP16_DEFAULT_HEIGHT}
+  BITMAP16_APP_VERSION="${BITMAP16_APP_VERSION}"
 )
 if(BITMAP16_CARDPUTER_ZERO)
   target_compile_definitions(
@@ -110,6 +129,18 @@ if(BITMAP16_STEAM_DECK)
 endif()
 
 if(BUILD_TESTING)
+  if(BITMAP16_STEAM_DECK)
+    add_executable(bitmap16dx_steamdeck_help_test
+      platform_desktop/tests/test_steamdeck_help.cpp src/core/help_view.cpp src/core/canvas.cpp)
+    target_include_directories(bitmap16dx_steamdeck_help_test PRIVATE src)
+    target_compile_definitions(bitmap16dx_steamdeck_help_test PRIVATE BITMAP16_STEAM_DECK=1)
+    add_test(NAME steamdeck_help COMMAND bitmap16dx_steamdeck_help_test)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+      add_test(NAME steamdeck_update_install COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/platform_steamdeck/tests/test_update_and_build.py")
+    endif()
+  endif()
   add_executable(bitmap16dx_zero_esc_test platform_zero/tests/test_esc_hold.cpp)
   target_include_directories(bitmap16dx_zero_esc_test PRIVATE platform_zero)
   add_test(NAME zero_escape_hold COMMAND bitmap16dx_zero_esc_test)
@@ -167,6 +198,16 @@ if(BUILD_TESTING)
       bitmap16dx_workspace_test PRIVATE -Wall -Wextra -Werror)
   endif()
   add_test(NAME workspace_persistence COMMAND bitmap16dx_workspace_test)
+  add_executable(bitmap16dx_sketch_workflow_test
+    platform_desktop/tests/test_sketch_workflow.cpp
+    platform_desktop/workspace.cpp platform_desktop/png_export.cpp platform_desktop/steam_screenshot.cpp
+    src/core/sketch_workflow.cpp src/core/editor.cpp src/core/palette.cpp
+    src/core/settings.cpp src/core/sketch.cpp src/core/sketch_codec.cpp)
+  target_include_directories(bitmap16dx_sketch_workflow_test PRIVATE src platform_desktop)
+  if(NOT MSVC)
+    target_compile_options(bitmap16dx_sketch_workflow_test PRIVATE -Wall -Wextra -Werror)
+  endif()
+  add_test(NAME sketch_replacement_workflow COMMAND bitmap16dx_sketch_workflow_test)
   if(BITMAP16_CARDPUTER_ZERO OR BITMAP16_STEAM_DECK)
     if(BITMAP16_CARDPUTER_ZERO)
       target_compile_definitions(bitmap16dx_workspace_test PRIVATE
@@ -183,6 +224,26 @@ if(BUILD_TESTING)
     endif()
     target_link_libraries(bitmap16dx_lospec_test PRIVATE bitmap16dx_lospec)
     add_test(NAME lospec_palettes COMMAND bitmap16dx_lospec_test)
+    add_executable(bitmap16dx_palette_browser_test
+      platform_desktop/tests/test_palette_browser.cpp
+      platform_desktop/palette_browser.cpp
+      platform_desktop/workspace.cpp
+      platform_desktop/png_export.cpp
+      platform_desktop/steam_screenshot.cpp
+      src/core/editor.cpp src/core/sketch.cpp src/core/sketch_codec.cpp
+      src/core/settings.cpp src/core/canvas.cpp src/core/palette_view.cpp)
+    target_compile_definitions(bitmap16dx_palette_browser_test PRIVATE BITMAP16_LOSPEC=1)
+    if(BITMAP16_CARDPUTER_ZERO)
+      target_compile_definitions(bitmap16dx_palette_browser_test PRIVATE BITMAP16_CARDPUTER_ZERO=1)
+    else()
+      target_compile_definitions(bitmap16dx_palette_browser_test PRIVATE BITMAP16_STEAM_DECK=1)
+    endif()
+    if(NOT MSVC)
+      target_compile_options(bitmap16dx_palette_browser_test PRIVATE -Wall -Wextra -Werror)
+    endif()
+    target_link_libraries(bitmap16dx_palette_browser_test PRIVATE bitmap16dx_lospec)
+    add_test(NAME palette_browser_workflow COMMAND bitmap16dx_palette_browser_test)
+    set_tests_properties(palette_browser_workflow PROPERTIES TIMEOUT 15)
   endif()
 endif()
 
@@ -232,15 +293,8 @@ if(BITMAP16_CARDPUTER_ZERO_DEVICE)
 
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
      CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/app-builder.json")
-    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app-builder.json" BITMAP16_STORE_MANIFEST)
-    string(JSON BITMAP16_STORE_VERSION GET "${BITMAP16_STORE_MANIFEST}" version)
-    if(NOT BITMAP16_STORE_VERSION MATCHES "^([0-9]+[.][0-9]+[.][0-9]+)-([0-9]+)$")
-      message(FATAL_ERROR "Store version must be major.minor.patch-revision")
-    endif()
-    set(CPACK_PACKAGE_VERSION "${CMAKE_MATCH_1}")
-    set(CPACK_DEBIAN_PACKAGE_RELEASE "${CMAKE_MATCH_2}")
+    set(CPACK_PACKAGE_VERSION "${BITMAP16_APP_VERSION}")
+    set(CPACK_DEBIAN_PACKAGE_RELEASE "${BITMAP16_PACKAGE_REVISION}")
     set(CPACK_GENERATOR DEB)
     set(CPACK_PACKAGE_NAME bitmap16dx)
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY

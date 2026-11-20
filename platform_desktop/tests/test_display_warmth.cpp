@@ -50,35 +50,19 @@ int main() {
   require(filter.apply(source.data(), source.size(), 1)[65535] == white[1],
           "Changing back to mild must refresh the cached channel tables");
 
-  int warmthRow = -1;
   const int count = bitmap16::SettingsView::itemCount(false, false, false);
   for (int row = 0; row < count; ++row) {
     bitmap16::Settings settings;
     bitmap16::SettingsView::State state;
     state.cursor = row;
-    if (bitmap16::SettingsView::activate(state, settings, false, false, false) ==
-        bitmap16::SettingsView::Action::DisplayWarmthChanged) {
-      warmthRow = row;
-      break;
-    }
-  }
-  require(warmthRow >= 0, "Zero device Settings must expose Warmth");
-  bitmap16::Settings settings;
-  bitmap16::SettingsView::State state;
-  state.cursor = warmthRow;
-  for (uint8_t expected : {1, 2, 3, 0, 1}) {
-    require(bitmap16::SettingsView::activate(state, settings, false, false, false) ==
+    require(bitmap16::SettingsView::activate(state, settings, false, false, false) !=
                 bitmap16::SettingsView::Action::DisplayWarmthChanged,
-            "Warmth activation returned the wrong action");
-    require(settings.displayWarmth == expected,
-            "Warmth must cycle from neutral through three strengths and back");
+            "Production Settings must hide beta Warmth");
   }
-  bitmap16::Canvas canvas;
-  require(canvas.create(320, 170), "Cannot allocate the device Settings view");
-  bitmap16::SettingsView::render(canvas, state, settings, {}, false, false, false);
+  bitmap16::Settings settings;
   settings.displayWarmth = 255;
   require(bitmap16::normalizeSettings(settings).displayWarmth == 0,
           "Invalid persisted warmth must reset to neutral");
-  std::cout << "Display warmth: all RGB565 colors, canvas isolation, settings cycle and reset passed.\n";
+  std::cout << "Display warmth: RGB565 filtering, hidden production setting, and persisted-value reset passed.\n";
   return 0;
 }

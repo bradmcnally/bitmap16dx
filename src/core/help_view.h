@@ -24,6 +24,11 @@ bool moveCursor(
     int delta,
     bool includeLedMatrixControls,
     bool includeBatteryControls);
+bool moveGroup(
+    State& state,
+    int delta,
+    bool includeLedMatrixControls,
+    bool includeBatteryControls);
 void render(
     Canvas& canvas,
     State& state,

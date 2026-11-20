@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - v0.8.0
+ * BitMap16 DX - v0.9.0
  *
  * Working pixel sketch station for Cardputer ADV!
  *
@@ -67,6 +67,8 @@
 #include "core/canvas_view.h"
 #include "core/charging_view.h"
 #include "core/dialog_view.h"
+#include "core/editor.h"
+#include "core/sketch_workflow.h"
 #include <cstring>
 #include "core/help_view.h"
 #include "core/led_mapping.h"
@@ -78,7 +80,6 @@
 #include "core/settings_view.h"
 #include "core/shake_detector.h"
 #include "core/sketch_codec.h"
-#include "core/sketch_history.h"
 #include "platform_adv/clock.h"
 #include "platform_adv/display.h"
 #include "platform_adv/filesystem.h"
@@ -119,7 +120,7 @@ bitmap16::ShakeDetector shakeDetector;
 
 
 // Firmware version displayed on boot screen
-const char* FIRMWARE_VERSION = "v0.8.0";
+const char* FIRMWARE_VERSION = "v0.9.0";
 
 // File format version for sketch files
 // Version 1: gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 290 bytes
@@ -133,25 +134,19 @@ const int SKETCH_FILE_SIZE_V3 = bitmap16::SketchCodec::kCurrentFileSize;
 // Canvas size in logical pixels
 const int MAX_currentGridSize = bitmap16::kMaxGridSize;
 
-struct EditorState {
-  int gridSize = 8;
-  int cellSize = 16;
-  int cursorX = 0;
-  int cursorY = 0;
-  int lastCursorScreenX = -1;
-  int lastCursorScreenY = -1;
+// The shared Editor owns the live sketch, cursor, selected color and history.
+bitmap16::Editor editor;
+
+struct CanvasViewState {
   bool moveModeActive = false;
-  uint8_t canvas[MAX_currentGridSize][MAX_currentGridSize] = {};
-  uint8_t selectedColor = 1;
   bool rulersVisible = false;
   bool drawPressed = false;
   bool erasePressed = false;
   bool fillPressed = false;
   bitmap16::CanvasView::Viewport viewport;
-  bitmap16::SketchHistory history;
 };
 
-EditorState editorState;
+CanvasViewState canvasViewState;
 
 // ============================================================================
 // ICON DATA
@@ -351,27 +346,28 @@ char btNotifyMsg[32] = "";
 using Sketch = bitmap16::Sketch;
 
 struct DocumentState {
-  Sketch sketch;
   bool isNew = true;
   String filename;
 };
 
 DocumentState documentState;
 bool focusNewestSketchOnNextMemoryOpen = false;
-bool documentDirty = false;
 bool saveWarningsEnabled = true;
+using SketchAction = bitmap16::SketchWorkflow::Action;
+using SketchChoice = bitmap16::SketchWorkflow::Choice;
+using SketchResult = bitmap16::SketchWorkflow::Result;
 
-enum class PendingDocumentAction : uint8_t {
-  None,
-  NewSketch,
-  OpenSketch,
+class AdvSketchStorage final : public bitmap16::SketchWorkflow::Storage {
+ public:
+  bool save(bool asNew) override;
+  bool create() override;
+  bool open(const std::string& key) override;
+  std::string currentKey() const override;
 };
 
-PendingDocumentAction pendingDocumentAction =
-    PendingDocumentAction::None;
-int pendingSketchIndex = -1;
-bool saveWarningVisible = false;
-int saveWarningChoice = 2;
+AdvSketchStorage sketchStorage;
+bitmap16::SketchWorkflow sketchWorkflow(
+    editor, sketchStorage, bitmap16::SketchWorkflow::DirtyPolicy::SinceLastSave);
 bool deleteWarningVisible = false;
 bool deleteWarningSelected = false;
 int deleteWarningSketch = -1;
@@ -567,32 +563,6 @@ void setStatusMessage(const char* message) {
 // SKETCH HELPER FUNCTIONS
 // ============================================================================
 
-/**
- * Initialize the active sketch with default values
- * Sets up an empty canvas with the default SWEETIE-16 palette
- */
-void initializeActiveSketch() {
-  // Clear pixel data (all transparent)
-  for (int y = 0; y < MAX_currentGridSize; y++) {
-    for (int x = 0; x < MAX_currentGridSize; x++) {
-      documentState.sketch.pixels[y][x] = 0;
-    }
-  }
-
-  // Use default grid size from settings, 16-color palette
-  documentState.sketch.gridSize = defaultGridSize;
-  documentState.sketch.paletteSize = 16;
-
-  // Copy the default palette (first palette in catalog: SWEETIE-16)
-  for (int i = 0; i < 16; i++) {
-    documentState.sketch.paletteColors[i] = pgm_read_word(&allPalettes[0][i]);
-  }
-
-  documentState.sketch.isEmpty = true;
-  documentState.isNew = true;
-  documentState.filename = "";
-}
-
 // ============================================================================
 // SD CARD FUNCTIONS
 // ============================================================================
@@ -624,36 +594,6 @@ bool initSDCard() {
   return true;
 }
 
-bitmap16::Sketch toPortableSketch(const Sketch& source) {
-  bitmap16::Sketch result;
-  result.gridSize = source.gridSize;
-  result.paletteSize = source.paletteSize;
-  result.isEmpty = source.isEmpty;
-  for (int i = 0; i < 16; ++i) {
-    result.paletteColors[i] = source.paletteColors[i];
-  }
-  for (int y = 0; y < MAX_currentGridSize; ++y) {
-    for (int x = 0; x < MAX_currentGridSize; ++x) {
-      result.pixels[y][x] = source.pixels[y][x];
-    }
-  }
-  return result;
-}
-
-void fromPortableSketch(const bitmap16::Sketch& source, Sketch& destination) {
-  destination.gridSize = source.gridSize;
-  destination.paletteSize = source.paletteSize;
-  destination.isEmpty = source.isEmpty;
-  for (int i = 0; i < 16; ++i) {
-    destination.paletteColors[i] = source.paletteColors[i];
-  }
-  for (int y = 0; y < MAX_currentGridSize; ++y) {
-    for (int x = 0; x < MAX_currentGridSize; ++x) {
-      destination.pixels[y][x] = source.pixels[y][x];
-    }
-  }
-}
-
 bool readSketchFile(const char* path, Sketch& sketch) {
   uint8_t data[bitmap16::SketchCodec::kCurrentFileSize];
   std::size_t bytesRead = 0;
@@ -661,20 +601,15 @@ bool readSketchFile(const char* path, Sketch& sketch) {
     return false;
   }
 
-  bitmap16::Sketch decoded;
-  if (bitmap16::SketchCodec::decode(data, bytesRead, decoded) !=
-      bitmap16::SketchCodec::Result::Ok) {
-    return false;
-  }
-  fromPortableSketch(decoded, sketch);
-  return true;
+  return bitmap16::SketchCodec::decode(data, bytesRead, sketch) ==
+      bitmap16::SketchCodec::Result::Ok;
 }
 
 bool writeSketchFile(const char* path, const Sketch& sketch) {
   uint8_t data[bitmap16::SketchCodec::kCurrentFileSize];
   std::size_t bytesWritten = 0;
   if (bitmap16::SketchCodec::encode(
-          toPortableSketch(sketch),
+          sketch,
           data,
           sizeof(data),
           bytesWritten) != bitmap16::SketchCodec::Result::Ok) {
@@ -815,7 +750,7 @@ bool findHighestSketchCounter(
  *
  * Returns true if successful, false if failed
  */
-bool saveActiveSketchToSD() {
+bool saveActiveSketchToSD(bool asNew) {
   if (!sdCardAvailable && !initSDCard()) {
     setStatusMessage(StatusMsg::SD_NOT_READY);
     return false;
@@ -836,7 +771,7 @@ bool saveActiveSketchToSD() {
   // Every successful save receives the newest sequence number so the Memory
   // view's filename ordering also reflects most-recently-saved order.
   const bool replacingExisting =
-      documentState.filename.length() > 0 && !documentState.isNew;
+      !asNew && documentState.filename.length() > 0 && !documentState.isNew;
   const String previousPath = replacingExisting
       ? "/bitmap16dx/sketches/" + documentState.filename
       : "";
@@ -854,7 +789,7 @@ bool saveActiveSketchToSD() {
   const String fullPath =
       "/bitmap16dx/sketches/" + nextFilename;
 
-  if (!writeSketchFile(fullPath.c_str(), documentState.sketch)) {
+  if (!writeSketchFile(fullPath.c_str(), editor.sketch())) {
     setStatusMessage(StatusMsg::FAILED_TO_SAVE);
     sdCardAvailable = false;
     return false;
@@ -869,24 +804,11 @@ bool saveActiveSketchToSD() {
   PreferenceStore::writeUInt32("sketchCounter", counter);
   documentState.filename = nextFilename;
   documentState.isNew = false;
-  documentState.sketch.isEmpty = false;
   focusNewestSketchOnNextMemoryOpen = true;
   sketchCatalogValid = false;
-  documentDirty = false;
 
   setStatusMessage(StatusMsg::SAVED);
   return true;
-}
-
-/**
- * Save active sketch as NEW copy (creates new timestamped file)
- * Used for Fn+S to duplicate current work
- */
-bool saveActiveSketchAsNew() {
-  // Force creation of new file regardless of existing filename
-  documentState.filename = "";
-  documentState.isNew = true;
-  return saveActiveSketchToSD();
 }
 
 /**
@@ -913,15 +835,14 @@ bool loadSketchFromSD(String filename) {
     return false;
   }
 
-  if (!readSketchFile(fullPath.c_str(), documentState.sketch)) {
+  if (!readSketchFile(fullPath.c_str(), sketchOperationBuffer)) {
     setStatusMessage(StatusMsg::FILE_CORRUPT);
     return false;
   }
 
-  documentState.sketch.isEmpty = false;
+  editor.reset(sketchOperationBuffer);
   documentState.filename = filename;
   documentState.isNew = false;
-  documentDirty = false;
 
   return true;
 }
@@ -961,8 +882,8 @@ bool exportCanvasToPNG(bool scale) {
   }
 
   // Determine output size
-  int outputSize = scale ? 128 : editorState.gridSize;
-  int pixelScale = scale ? (128 / editorState.gridSize) : 1;
+  int outputSize = scale ? 128 : editor.sketch().gridSize;
+  int pixelScale = scale ? (128 / editor.sketch().gridSize) : 1;
 
   // Allocate line buffer (RGB, 3 bytes per pixel)
   uint8_t* lineBuffer = (uint8_t*)malloc(outputSize * 3);
@@ -1021,13 +942,13 @@ bool exportCanvasToPNG(bool scale) {
 
   // Write each line of the PNG
   for (int y = 0; y < outputSize; y++) {
-    int canvasY = y / pixelScale;  // Map to editorState.canvas coordinate
+    int canvasY = y / pixelScale;  // Map to a logical canvas coordinate
 
     for (int x = 0; x < outputSize; x++) {
-      int canvasX = x / pixelScale;  // Map to editorState.canvas coordinate
+      int canvasX = x / pixelScale;  // Map to a logical canvas coordinate
 
       // Get color index from canvas
-      uint8_t colorIndex = editorState.canvas[canvasY][canvasX];
+      uint8_t colorIndex = editor.sketch().pixels[canvasY][canvasX];
       uint8_t r, g, b, a;
 
       if (colorIndex == 0) {
@@ -1036,7 +957,7 @@ bool exportCanvasToPNG(bool scale) {
         a = 0;  // Fully transparent
       } else {
         // Get palette color from the active sketch's palette
-        uint16_t color565 = documentState.sketch.paletteColors[colorIndex - 1];
+        uint16_t color565 = editor.sketch().paletteColors[colorIndex - 1];
 
         if (exportRGB565) {
           // Export as RGB565 (simple bit shift, faster but less accurate)
@@ -1375,11 +1296,11 @@ void updateIndicatorLED() {
     color = 0xf800;
   } else if (
       indicatorPaletteColorEnabled &&
-      editorState.selectedColor >= 1 &&
-      editorState.selectedColor <= documentState.sketch.paletteSize) {
+      editor.selectedColor() >= 1 &&
+      editor.selectedColor() <= editor.sketch().paletteSize) {
     enabled = true;
-    color = documentState.sketch.paletteColors[
-        editorState.selectedColor - 1];
+    color = editor.sketch().paletteColors[
+        editor.selectedColor() - 1];
   }
 
   if (enabled == lastEnabled && (!enabled || color == lastColor)) {
@@ -1417,8 +1338,6 @@ void updateLEDMatrixFromSketch(Sketch& sketch);
 void toggleLEDMatrix();
 #endif
 
-bitmap16::Sketch captureEditorSketch();
-
 bitmap16::DialogView::Theme advDialogTheme() {
   return {currentTheme->background, currentTheme->text,
           currentTheme->iconDark, currentTheme->iconLight, currentTheme == &THEME_DARK};
@@ -1429,23 +1348,23 @@ void drawSharedCanvasView() {
     return;
   }
   const bitmap16::CanvasView::State state = {
-      editorState.canvas,
-      static_cast<uint8_t>(editorState.gridSize),
-      documentState.sketch.paletteColors,
-      documentState.sketch.paletteSize,
-      static_cast<uint8_t>(editorState.cursorX),
-      static_cast<uint8_t>(editorState.cursorY),
-      editorState.selectedColor,
-      editorState.rulersVisible,
-      editorState.moveModeActive,
+      editor.sketch().pixels,
+      static_cast<uint8_t>(editor.sketch().gridSize),
+      editor.sketch().paletteColors,
+      editor.sketch().paletteSize,
+      static_cast<uint8_t>(editor.cursorX()),
+      static_cast<uint8_t>(editor.cursorY()),
+      editor.selectedColor(),
+      canvasViewState.rulersVisible,
+      canvasViewState.moveModeActive,
       statusMessage,
       lastBatteryPercent,
-      editorState.drawPressed,
-      editorState.erasePressed,
-      editorState.fillPressed,
-      editorState.viewport.cellSize,
-      editorState.viewport.x,
-      editorState.viewport.y,
+      canvasViewState.drawPressed,
+      canvasViewState.erasePressed,
+      canvasViewState.fillPressed,
+      canvasViewState.viewport.cellSize,
+      canvasViewState.viewport.x,
+      canvasViewState.viewport.y,
       false,
       true,
   };
@@ -1483,9 +1402,9 @@ void drawSharedCanvasView() {
   };
   bitmap16::CanvasView::render(Display::canvas(), state, theme, &assets);
   if (resizeDialogVisible) {
-    const auto sketch = captureEditorSketch();
-    bitmap16::DialogView::drawResize(Display::canvas(), sketch, advDialogTheme(),
-                                     resizeDialogSize, resizeDialogAction);
+    bitmap16::DialogView::drawResize(
+        Display::canvas(), editor.sketch(), advDialogTheme(),
+        resizeDialogSize, resizeDialogAction);
   }
   Display::endFrame();
 }
@@ -1511,216 +1430,58 @@ void btUpdateNotify();
 // CANVAS OPERATIONS
 // ============================================================================
 
-/**
- * Save current canvas state to undo buffer
- * Note: This is for regular drawing undo, not sketch deletion operations
- */
-// Capture the live canvas as well as palette/grid metadata. The document's
-// pixel copy is not kept in sync while drawing.
-bitmap16::Sketch captureEditorSketch() {
-  bitmap16::Sketch sketch = documentState.sketch;
-  sketch.gridSize = editorState.gridSize;
-  sketch.isEmpty = true;
-  for (int y = 0; y < MAX_currentGridSize; ++y) {
-    for (int x = 0; x < MAX_currentGridSize; ++x) {
-      sketch.pixels[y][x] = editorState.canvas[y][x];
-      if (y < editorState.gridSize && x < editorState.gridSize &&
-          sketch.pixels[y][x] != 0) sketch.isEmpty = false;
-    }
-  }
-  return sketch;
-}
-
-void saveUndo() {
-  editorState.history.record(captureEditorSketch());
-}
-
-void savePaletteUndo() {
-  saveUndo();
-}
-
 bool editCanvasPixel(bool erase) {
-  const uint8_t replacement = erase ? 0 : editorState.selectedColor;
-  auto& pixel = editorState.canvas[editorState.cursorY][editorState.cursorX];
-  if (pixel == replacement) return false;
-  editorState.history.recordEdit(
-      captureEditorSketch(), erase ? bitmap16::SketchHistory::Action::Erase
-                                  : bitmap16::SketchHistory::Action::Draw);
-  pixel = replacement;
+  const bool changed = erase ? editor.erase() : editor.draw();
+  if (changed) LED_CANVAS_UPDATED();
+  return changed;
+}
+
+bool restoreUndo() {
+  if (!editor.undo()) {
+    setStatusMessage(StatusMsg::NO_UNDO);
+    return false;
+  }
+  canvasViewState.viewport = {};
+  sketchWorkflow.edited();
   LED_CANVAS_UPDATED();
+  setStatusMessage(StatusMsg::UNDO);
   return true;
 }
 
-void restoreEditorSketch(const bitmap16::Sketch& sketch) {
-  documentState.sketch = sketch;
-  editorState.gridSize = sketch.gridSize;
-  editorState.cellSize = 128 / editorState.gridSize;
-  editorState.viewport = {};
-  for (int y = 0; y < MAX_currentGridSize; ++y) {
-    for (int x = 0; x < MAX_currentGridSize; ++x) {
-      editorState.canvas[y][x] = sketch.pixels[y][x];
-    }
-  }
-  editorState.cursorX = min(editorState.cursorX, editorState.gridSize - 1);
-  editorState.cursorY = min(editorState.cursorY, editorState.gridSize - 1);
-  if (editorState.selectedColor > sketch.paletteSize) editorState.selectedColor = 1;
-  LED_CANVAS_UPDATED();
-}
-
-void restoreUndo() {
-  bitmap16::Sketch sketch = captureEditorSketch();
-  if (!editorState.history.undo(sketch)) {
-    setStatusMessage(StatusMsg::NO_UNDO);
-    return;
-  }
-  restoreEditorSketch(sketch);
-  setStatusMessage(StatusMsg::UNDO);
-}
-
-void restoreRedo() {
-  bitmap16::Sketch sketch = captureEditorSketch();
-  if (!editorState.history.redo(sketch)) {
+bool restoreRedo() {
+  if (!editor.redo()) {
     setStatusMessage("No redo");
-    return;
+    return false;
   }
-  restoreEditorSketch(sketch);
+  canvasViewState.viewport = {};
+  sketchWorkflow.edited();
+  LED_CANVAS_UPDATED();
   setStatusMessage("Redo");
+  return true;
 }
 
-/**
- * Clear the entire canvas
- * This saves the current state to undo before clearing
- */
-void clearCanvas() {
-  saveUndo();
-
-  for (int y = 0; y < editorState.gridSize; y++) {
-    for (int x = 0; x < editorState.gridSize; x++) {
-      editorState.canvas[y][x] = 0;
-    }
+// Palette data may reside in flash on ADV; edit rules stay in Editor.
+bool applyCatalogPalette(int index) {
+  uint16_t colors[bitmap16::kMaxPaletteColors];
+  for (int i = 0; i < 16; ++i) {
+    colors[i] = pgm_read_word(&allPalettes[index][i]);
   }
-
-  setStatusMessage(StatusMsg::CLEAR);
-}
-
-// Shift the entire canvas by (dx, dy) with wrapping
-void shiftCanvas(int dx, int dy) {
-  uint8_t temp[MAX_currentGridSize][MAX_currentGridSize];
-  int size = editorState.gridSize;
-  bool changed = false;
-  for (int y = 0; y < size; y++) {
-    for (int x = 0; x < size; x++) {
-      int srcX = (x - dx + size) % size;
-      int srcY = (y - dy + size) % size;
-      temp[y][x] = editorState.canvas[srcY][srcX];
-      changed = changed || temp[y][x] != editorState.canvas[y][x];
-    }
+  const bool changed = editor.applyPalette(colors, allPaletteSizes[index]);
+  if (changed) {
+    sketchWorkflow.edited();
+    LED_CANVAS_UPDATED();
   }
-  if (!changed) return;
-  editorState.history.recordEdit(captureEditorSketch(), bitmap16::SketchHistory::Action::Move);
-  for (int y = 0; y < size; y++) {
-    for (int x = 0; x < size; x++) {
-      editorState.canvas[y][x] = temp[y][x];
-    }
-  }
-}
-
-/**
- * Flood fill - fills all connected pixels of the same color with the selected color
- *
- * This is like the paint bucket tool in image editors. Starting from the cursor position,
- * it fills all adjacent pixels that match the original color with the currently selected color.
- *
- * Uses an iterative approach with a simple array-based stack to avoid recursion issues.
- * Only considers 4-way connectivity (up, down, left, right) - not diagonal.
- *
- * @param startX Starting X position (cursor position)
- * @param startY Starting Y position (cursor position)
- * @param fillColor Color to fill with (currently selected color)
- */
-void floodFill(int startX, int startY, uint8_t fillColor) {
-  // Get the original color at the starting position
-  uint8_t originalColor = editorState.canvas[startY][startX];
-
-  // If the original color is the same as fill color, nothing to do
-  if (originalColor == fillColor) {
-    return;
-  }
-
-  // Visited array to track which pixels we've already added to the stack
-  // This prevents duplicates and ensures we process each pixel exactly once
-  struct Point {
-    uint8_t x;
-    uint8_t y;
-  };
-  // These buffers are static so a 32×32 fill does not consume the ESP32 loop
-  // task's limited stack. Coordinates only need five bits at this grid size.
-  static bool visited[MAX_currentGridSize][MAX_currentGridSize];
-  static Point stack[MAX_currentGridSize * MAX_currentGridSize];
-  memset(visited, 0, sizeof(visited));
-  int stackSize = 0;
-
-  // Add starting position to stack and mark as visited
-  stack[stackSize++] = {
-      static_cast<uint8_t>(startX),
-      static_cast<uint8_t>(startY)};
-  visited[startY][startX] = true;
-
-  // Process stack until empty
-  while (stackSize > 0) {
-    // Pop position from stack
-    Point p = stack[--stackSize];
-
-    // Skip if out of bounds (shouldn't happen, but safety check)
-    if (p.x >= editorState.gridSize || p.y >= editorState.gridSize) {
-      continue;
-    }
-
-    // Skip if this pixel isn't the original color
-    if (editorState.canvas[p.y][p.x] != originalColor) {
-      continue;
-    }
-
-    // Fill this pixel
-    editorState.canvas[p.y][p.x] = fillColor;
-
-    // Add adjacent pixels to stack (4-way connectivity: up, down, left, right)
-    // Only add if not visited and within bounds
-    // Up
-    if (p.y > 0 && !visited[p.y - 1][p.x]) {
-      stack[stackSize++] = {
-          p.x, static_cast<uint8_t>(p.y - 1)};
-      visited[p.y - 1][p.x] = true;
-    }
-    // Down
-    if (p.y < editorState.gridSize - 1 && !visited[p.y + 1][p.x]) {
-      stack[stackSize++] = {
-          p.x, static_cast<uint8_t>(p.y + 1)};
-      visited[p.y + 1][p.x] = true;
-    }
-    // Left
-    if (p.x > 0 && !visited[p.y][p.x - 1]) {
-      stack[stackSize++] = {
-          static_cast<uint8_t>(p.x - 1), p.y};
-      visited[p.y][p.x - 1] = true;
-    }
-    // Right
-    if (p.x < editorState.gridSize - 1 && !visited[p.y][p.x + 1]) {
-      stack[stackSize++] = {
-          static_cast<uint8_t>(p.x + 1), p.y};
-      visited[p.y][p.x + 1] = true;
-    }
-  }
+  return changed;
 }
 
 /** Open Resize Canvas without modifying the document until Apply. */
 void toggleGridSize() {
-  editorState.history.endGroup();
+  editor.endUndoGroup();
   resizeDialogVisible = true;
-  resizeDialogSize = editorState.gridSize;
+  resizeDialogSize = editor.sketch().gridSize;
   resizeDialogAction = -1;
-  resizePreviousViewport = editorState.viewport;
-  editorState.viewport = {};
+  resizePreviousViewport = canvasViewState.viewport;
+  canvasViewState.viewport = {};
   drawSharedCanvasView();
 }
 
@@ -1746,16 +1507,10 @@ void handleResizeDialog(const bitmap16::InputFrame& input) {
   }
   if (close) {
     resizeDialogVisible = false;
-    editorState.viewport = resizePreviousViewport;
-    if (apply && resizeDialogSize != editorState.gridSize) {
-      saveUndo();
-      editorState.gridSize = resizeDialogSize;
-      documentState.sketch.gridSize = resizeDialogSize;
-      editorState.cellSize = 128 / resizeDialogSize;
-      editorState.viewport = {};
-      editorState.cursorX = std::min(editorState.cursorX, static_cast<int>(resizeDialogSize) - 1);
-      editorState.cursorY = std::min(editorState.cursorY, static_cast<int>(resizeDialogSize) - 1);
-      documentDirty = true;
+    canvasViewState.viewport = resizePreviousViewport;
+    if (apply && editor.resizeGrid(resizeDialogSize)) {
+      canvasViewState.viewport = {};
+      sketchWorkflow.edited();
       LED_CANVAS_UPDATED();
     }
     canvasDialogReleasePending = true;
@@ -1767,65 +1522,43 @@ void handleResizeDialog(const bitmap16::InputFrame& input) {
 /**
  * Open a sketch from SD card by filename
  */
-void openSketch(String filename) {
+bool openSketch(String filename) {
+  const uint8_t cursorX = editor.cursorX();
+  const uint8_t cursorY = editor.cursorY();
   if (!loadSketchFromSD(filename)) {
     setStatusMessage(StatusMsg::FAILED_TO_LOAD);
-    return;
+    return false;
   }
 
-  editorState.history.clear();
-
-  // Validate palette
-  if (documentState.sketch.paletteSize == 0 || documentState.sketch.paletteSize > 16) {
-    documentState.sketch.paletteSize = 16;
-  }
-
-  // Copy to canvas
-  editorState.gridSize = documentState.sketch.gridSize;
-  editorState.cellSize = 128 / editorState.gridSize;
-  editorState.viewport = {};
-
-  for (int y = 0; y < MAX_currentGridSize; y++) {
-    for (int x = 0; x < MAX_currentGridSize; x++) {
-      editorState.canvas[y][x] = documentState.sketch.pixels[y][x];
-    }
-  }
-
-  if (editorState.cursorX >= editorState.gridSize) editorState.cursorX = editorState.gridSize - 1;
-  if (editorState.cursorY >= editorState.gridSize) editorState.cursorY = editorState.gridSize - 1;
-
-  editorState.selectedColor = 1;
-
-  // Update LED matrix with newly loaded canvas
+  // ADV keeps its cursor position when opening, clamped to the new grid.
+  editor.setCursor(cursorX, cursorY);
+  canvasViewState.viewport = {};
   LED_CANVAS_UPDATED();
-
   setStatusMessage(StatusMsg::LOADED);
+  return true;
 }
 
-/**
- * Create a new blank sketch
- */
+/** Create a new sketch with the configured grid and default palette. */
 void createNewSketch() {
-  editorState.history.clear();
-  initializeActiveSketch();
-
-  for (int y = 0; y < MAX_currentGridSize; y++) {
-    for (int x = 0; x < MAX_currentGridSize; x++) {
-      editorState.canvas[y][x] = 0;
-    }
+  uint16_t colors[bitmap16::kMaxPaletteColors];
+  for (int i = 0; i < 16; ++i) {
+    colors[i] = pgm_read_word(&allPalettes[0][i]);
   }
+  bitmap16::initializeSketch(sketchOperationBuffer, defaultGridSize, colors, 16);
+  editor.reset(sketchOperationBuffer);
+  documentState.isNew = true;
+  documentState.filename = "";
+  canvasViewState.viewport = {};
+}
 
-  // Use default grid size from settings instead of hardcoded 16
-  editorState.gridSize = defaultGridSize;
-  editorState.cellSize = 128 / editorState.gridSize;
-  editorState.viewport = {};
-  documentState.sketch.gridSize = editorState.gridSize;
-  editorState.cursorX = 0;
-  editorState.cursorY = 0;
-  editorState.selectedColor = 1;
-  documentDirty = false;
-
-  // setStatusMessage("New sketch");  // Removed - no message on boot
+bool AdvSketchStorage::save(bool asNew) { return saveActiveSketchToSD(asNew); }
+bool AdvSketchStorage::create() {
+  createNewSketch();
+  return true;
+}
+bool AdvSketchStorage::open(const std::string& key) { return openSketch(String(key.c_str())); }
+std::string AdvSketchStorage::currentKey() const {
+  return documentState.isNew ? std::string{} : std::string(documentState.filename.c_str());
 }
 
 /**
@@ -1988,7 +1721,7 @@ bitmap16::MemoryView::Catalog currentMemoryCatalog() {
 }
 
 void enterMemoryView() {
-  editorState.history.endGroup();
+  editor.endUndoGroup();
   if (!sketchCatalogValid) {
     loadSketchListFromSD();
   }
@@ -2073,7 +1806,7 @@ void drawChargingFrame() {
 }
 
 void enterChargingMode() {
-  editorState.history.endGroup();
+  editor.endUndoGroup();
   app.setView(bitmap16::ViewId::Charging);
   viewState.charging.lastFrameTime = millis();
   viewState.charging.batteryPercent = Power::getBatteryPercent();
@@ -2143,7 +1876,7 @@ void exitChargingMode() {
  * Enter Help Screen mode
  */
 void enterHelpView() {
-  editorState.history.endGroup();
+  editor.endUndoGroup();
   app.setView(bitmap16::ViewId::Help);
   viewState.help.navigation = {};
   viewState.help.ownsCanvas = !Display::isReady();
@@ -2242,10 +1975,10 @@ void drawPreviewImage(
 
 void drawCanvasPreview() {
   drawPreviewImage(
-      editorState.canvas,
-      editorState.gridSize,
-      documentState.sketch.paletteColors,
-      documentState.sketch.paletteSize);
+      editor.sketch().pixels,
+      editor.sketch().gridSize,
+      editor.sketch().paletteColors,
+      editor.sketch().paletteSize);
 }
 
 void loadGallerySketch(int index) {
@@ -2277,7 +2010,7 @@ void loadGallerySketch(int index) {
  * Context-aware: detects if coming from Memory View for gallery mode
  */
 void enterPreviewView() {
-  editorState.history.endGroup();
+  editor.endUndoGroup();
   const bool fromMemoryView =
       app.currentView() == bitmap16::ViewId::Memory;
   bitmap16::PreviewView::selectBackground(
@@ -2403,7 +2136,7 @@ int activePaletteCatalogIndex() {
   for (int palette = 0; palette < totalPaletteCount; ++palette) {
     bool matches = true;
     for (int color = 0; color < 16; ++color) {
-      if (documentState.sketch.paletteColors[color] !=
+      if (editor.sketch().paletteColors[color] !=
           pgm_read_word(&allPalettes[palette][color])) {
         matches = false;
         break;
@@ -2417,7 +2150,7 @@ int activePaletteCatalogIndex() {
 }
 
 void enterPaletteView() {
-  editorState.history.endGroup();
+  editor.endUndoGroup();
   app.setView(bitmap16::ViewId::Palette);
   viewState.palette.ownsCanvas = !Display::isReady();
   viewState.palette.canvasAvailable = Display::init();
@@ -2496,7 +2229,7 @@ const char* bluetoothSettingsValue() {
  * Enter Settings Menu - vertical list of persistent preferences
  */
 void enterSettingsView() {
-  editorState.history.endGroup();
+  editor.endUndoGroup();
   app.setView(bitmap16::ViewId::Settings);
   viewState.settings.navigation = {};
   viewState.settings.ownsCanvas = !Display::isReady();
@@ -3006,8 +2739,8 @@ void drawMemoryView(bool) {
       theme,
       showStatus ? statusMessage : nullptr,
       &assets);
-  if (saveWarningVisible) {
-    bitmap16::DialogView::drawSave(Display::canvas(), advDialogTheme(), saveWarningChoice);
+  if (sketchWorkflow.awaitingChoice()) {
+    bitmap16::DialogView::drawSave(Display::canvas(), advDialogTheme(), static_cast<int>(sketchWorkflow.choice()));
   } else if (deleteWarningVisible) {
     bitmap16::DialogView::drawDelete(Display::canvas(), advDialogTheme(), deleteWarningSelected);
   }
@@ -3278,14 +3011,14 @@ void updateLEDMatrix(bool showCursor) {
       bitmap16::CanvasView::layoutFor(
           Display::canvas().width(),
           Display::canvas().height(),
-          static_cast<uint8_t>(editorState.gridSize));
+          static_cast<uint8_t>(editor.sketch().gridSize));
   const int cellSize =
-      editorState.viewport.cellSize == 0
+      canvasViewState.viewport.cellSize == 0
           ? layout.cellSize
-          : editorState.viewport.cellSize;
+          : canvasViewState.viewport.cellSize;
   const uint8_t visibleSize = static_cast<uint8_t>(
-      min(
-          editorState.gridSize,
+      min<int>(
+          editor.sketch().gridSize,
           layout.gridPixels / cellSize));
   if (visibleSize > matrixSize) {
     clearLEDMatrix();
@@ -3294,23 +3027,23 @@ void updateLEDMatrix(bool showCursor) {
 
   const uint8_t viewportX = static_cast<uint8_t>(
       min(
-          max(0, editorState.gridSize - visibleSize),
-          static_cast<int>(editorState.viewport.x)));
+          max(0, editor.sketch().gridSize - visibleSize),
+          static_cast<int>(canvasViewState.viewport.x)));
   const uint8_t viewportY = static_cast<uint8_t>(
       min(
-          max(0, editorState.gridSize - visibleSize),
-          static_cast<int>(editorState.viewport.y)));
+          max(0, editor.sketch().gridSize - visibleSize),
+          static_cast<int>(canvasViewState.viewport.y)));
   LEDMatrix::clear();
   for (uint8_t y = 0; y < visibleSize; ++y) {
     for (uint8_t x = 0; x < visibleSize; ++x) {
       const uint8_t sourceX = viewportX + x;
       const uint8_t sourceY = viewportY + y;
       const uint8_t pixelValue =
-          editorState.canvas[sourceY][sourceX];
+          editor.sketch().pixels[sourceY][sourceX];
       const bool isCursor =
           showCursor &&
-          sourceX == editorState.cursorX &&
-          sourceY == editorState.cursorY;
+          sourceX == editor.cursorX() &&
+          sourceY == editor.cursorY();
       bitmap16::LedMapping::Rgb888 color = {};
       if (pixelValue == 0) {
         if (isCursor) {
@@ -3318,7 +3051,7 @@ void updateLEDMatrix(bool showCursor) {
         }
       } else {
         color = bitmap16::LedMapping::rgb565ToRgb888(
-            documentState.sketch.paletteColors[pixelValue - 1]);
+            editor.sketch().paletteColors[pixelValue - 1]);
         if (isCursor) {
           color.red = min(255, color.red + 80);
           color.green = min(255, color.green + 80);
@@ -3567,11 +3300,8 @@ void setup() {
   viewState.palette.canvasAvailable = false;
   viewState.settings.canvasAvailable = false;
 
-  // Initialize active sketch as blank
-  initializeActiveSketch();
-
-  // Create new blank sketch (will use defaultGridSize from settings)
-  createNewSketch();
+  // Create the initial sketch through the same lifecycle as later replacements.
+  sketchWorkflow.request(SketchAction::NewSketch, false);
 
   // Boot directly to Draw View (not Memory View)
   drawSharedCanvasView();
@@ -3703,42 +3433,27 @@ void handleHelpView(const bitmap16::InputFrame& input) {
 /**
  * Handle Memory View input and rendering
  */
-void finishPendingDocumentAction() {
-  const PendingDocumentAction action = pendingDocumentAction;
-  const int sketchIndex = pendingSketchIndex;
-  pendingDocumentAction = PendingDocumentAction::None;
-  pendingSketchIndex = -1;
-  saveWarningVisible = false;
-
-  if (action == PendingDocumentAction::NewSketch) {
-    createNewSketch();
-  } else if (
-      action == PendingDocumentAction::OpenSketch &&
-      sketchIndex >= 0 &&
-      sketchIndex < sketchList.size()) {
-    openSketch(sketchList[sketchIndex].filename);
-  } else {
-    return;
+bool finishDocumentRequest(SketchResult result) {
+  if (result == SketchResult::Completed) {
+    exitMemoryView();
+    canvasDialogReleasePending = true;
+    return true;
   }
-  exitMemoryView();
-  canvasDialogReleasePending = true;
+  if (!sketchCatalogValid) {
+    loadSketchListFromSD();
+    bitmap16::MemoryView::clamp(viewState.memory.navigation, sketchList.size());
+  }
+  drawMemoryView(true);
+  return false;
 }
 
-bool requestDocumentAction(
-    PendingDocumentAction action,
-    int sketchIndex = -1) {
-  if (saveWarningsEnabled && documentDirty) {
-    pendingDocumentAction = action;
-    pendingSketchIndex = sketchIndex;
-    saveWarningVisible = true;
-    saveWarningChoice = 2;
-    drawMemoryView(true);
-    return false;
+bool requestDocumentAction(SketchAction action, int sketchIndex = -1) {
+  std::string key;
+  if (action == SketchAction::OpenSketch) {
+    if (sketchIndex < 0 || sketchIndex >= static_cast<int>(sketchList.size())) return false;
+    key = sketchList[sketchIndex].filename.c_str();
   }
-  pendingDocumentAction = action;
-  pendingSketchIndex = sketchIndex;
-  finishPendingDocumentAction();
-  return true;
+  return finishDocumentRequest(sketchWorkflow.request(action, saveWarningsEnabled, key));
 }
 
 bool deleteSketchWithUndo(int sketchIndex) {
@@ -3747,11 +3462,18 @@ bool deleteSketchWithUndo(int sketchIndex) {
     setStatusMessage(StatusMsg::FILE_OPEN_FAIL);
     return false;
   }
+  const bool deletedActive = !documentState.isNew &&
+      documentState.filename == sketchList[sketchIndex].filename;
   const String filename =
       "/bitmap16dx/sketches/" + sketchList[sketchIndex].filename;
   if (!Filesystem::remove(filename.c_str())) {
     setStatusMessage("Delete failed");
     return false;
+  }
+  if (deletedActive) {
+    documentState.filename = "";
+    documentState.isNew = true;
+    sketchWorkflow.savedCopyRemoved();
   }
   deletedSketchBuffer = sketchOperationBuffer;
   deletedSketchAvailable = true;
@@ -3770,29 +3492,42 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
   static bool memoryViewNeedsRedraw = true;
   static int lastMemoryViewCursor = -1;
 
-  if (saveWarningVisible || deleteWarningVisible) {
-    if (input.event == bitmap16::InputEvent::Left || input.event == bitmap16::InputEvent::Right) {
-      const int delta = input.event == bitmap16::InputEvent::Left ? -1 : 1;
-      if (saveWarningVisible) saveWarningChoice = std::max(0, std::min(2, saveWarningChoice + delta));
+  bool warningLeft = input.event == bitmap16::InputEvent::Left;
+  bool warningRight = input.event == bitmap16::InputEvent::Right;
+  bool warningEnter = input.enterPressed ||
+      (deleteWarningVisible && input.actionPressed);
+  bool warningEscape = input.event == bitmap16::InputEvent::Escape;
+#if ENABLE_BLUETOOTH
+  static bool previousWarningLeft = false, previousWarningRight = false;
+  static bool previousWarningEnter = false, previousWarningEscape = false;
+  const bool btMemoryLeftPressed = btArrowLeft && !previousWarningLeft;
+  const bool btMemoryRightPressed = btArrowRight && !previousWarningRight;
+  const bool btMemoryEnterPressed = btEnter && !previousWarningEnter;
+  const bool btMemoryEscapePressed = btEscape && !previousWarningEscape;
+  warningLeft |= btMemoryLeftPressed;
+  warningRight |= btMemoryRightPressed;
+  warningEnter |= btMemoryEnterPressed;
+  warningEscape |= btMemoryEscapePressed;
+  previousWarningLeft = btArrowLeft;
+  previousWarningRight = btArrowRight;
+  previousWarningEnter = btEnter;
+  previousWarningEscape = btEscape;
+#endif
+  if (sketchWorkflow.awaitingChoice() || deleteWarningVisible) {
+    if (warningLeft || warningRight) {
+      const int delta = warningLeft ? -1 : 1;
+      if (sketchWorkflow.awaitingChoice()) sketchWorkflow.moveChoice(delta);
       else deleteWarningSelected = delta > 0;
       drawMemoryView(true);
-    } else if (input.event == bitmap16::InputEvent::Escape || input.enterPressed) {
+    } else if (warningEscape || warningEnter) {
       if (deleteWarningVisible) {
-        if (input.enterPressed && deleteWarningSelected) deleteSketchWithUndo(deleteWarningSketch);
+        if (warningEnter && deleteWarningSelected) deleteSketchWithUndo(deleteWarningSketch);
         deleteWarningVisible = false;
         deleteWarningSketch = -1;
         bitmap16::MemoryView::clamp(viewState.memory.navigation, sketchList.size());
-      } else if (input.enterPressed && saveWarningChoice == 2) {
-        const auto sketch = captureEditorSketch();
-        fromPortableSketch(sketch, documentState.sketch);
-        if (saveActiveSketchToSD()) finishPendingDocumentAction();
-      } else if (input.enterPressed && saveWarningChoice == 1) {
-        documentDirty = false;
-        finishPendingDocumentAction();
       } else {
-        pendingDocumentAction = PendingDocumentAction::None;
-        pendingSketchIndex = -1;
-        saveWarningVisible = false;
+        finishDocumentRequest(sketchWorkflow.choose(
+            warningEscape ? SketchChoice::Cancel : sketchWorkflow.choice()));
       }
       memoryViewNeedsRedraw = true;
       lastMemoryViewCursor = -1;
@@ -3825,8 +3560,9 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
     }
   }
 
-  // G0 opens a confirmation; no file is changed until Delete is selected.
-  if (input.actionPressed && viewState.memory.navigation.cursor > 0) {
+  // G0 or Delete opens a confirmation; no file is changed until Delete is selected.
+  if ((input.actionPressed || input.deletePressed) &&
+      viewState.memory.navigation.cursor > 0) {
     deleteWarningSketch = viewState.memory.navigation.cursor - 1;
     deleteWarningSelected = false;
     deleteWarningVisible = true;
@@ -3837,12 +3573,12 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
   if (input.enterPressed) {
     if (viewState.memory.navigation.cursor == 0) {
       requestDocumentAction(
-          PendingDocumentAction::NewSketch);
+          SketchAction::NewSketch);
     } else {
       int sketchIndex = viewState.memory.navigation.cursor - 1;
       if (sketchIndex < sketchList.size()) {
         requestDocumentAction(
-            PendingDocumentAction::OpenSketch,
+            SketchAction::OpenSketch,
             sketchIndex);
       }
     }
@@ -3937,8 +3673,6 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
 #if ENABLE_BLUETOOTH
   // BT keyboard navigation for memory view
   static bool btPrevUpMem = false, btPrevDownMem = false;
-  static bool btPrevLeftMem = false, btPrevRightMem = false;
-  static bool btPrevEnterMem = false, btPrevEscMem = false;
 
   if (btArrowUp && !btPrevUpMem) {
     bitmap16::MemoryView::moveCursor(
@@ -3956,7 +3690,7 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
         sketchList.size(),
         M5Cardputer.Display.width());
   }
-  if (btArrowLeft && !btPrevLeftMem) {
+  if (btMemoryLeftPressed) {
     bitmap16::MemoryView::moveCursor(
         viewState.memory.navigation,
         -1,
@@ -3964,7 +3698,7 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
         sketchList.size(),
         M5Cardputer.Display.width());
   }
-  if (btArrowRight && !btPrevRightMem) {
+  if (btMemoryRightPressed) {
     bitmap16::MemoryView::moveCursor(
         viewState.memory.navigation,
         1,
@@ -3972,26 +3706,23 @@ void handleMemoryView(const bitmap16::InputFrame& input) {
         sketchList.size(),
         M5Cardputer.Display.width());
   }
-  if (btEnter && !btPrevEnterMem) {
+  if (btMemoryEnterPressed) {
     if (viewState.memory.navigation.cursor == 0) {
-      createNewSketch();
+      requestDocumentAction(SketchAction::NewSketch);
     } else {
-      int sketchIndex = viewState.memory.navigation.cursor - 1;
-      if (sketchIndex < sketchList.size()) {
-        openSketch(sketchList[sketchIndex].filename);
+      const int sketchIndex = viewState.memory.navigation.cursor - 1;
+      if (sketchIndex < static_cast<int>(sketchList.size())) {
+        requestDocumentAction(SketchAction::OpenSketch, sketchIndex);
       }
     }
-    exitMemoryView();
     memoryViewNeedsRedraw = true;
   }
-  if (btEscape && !btPrevEscMem) {
+  if (btMemoryEscapePressed) {
     exitMemoryView();
     memoryViewNeedsRedraw = true;
   }
 
   btPrevUpMem = btArrowUp; btPrevDownMem = btArrowDown;
-  btPrevLeftMem = btArrowLeft; btPrevRightMem = btArrowRight;
-  btPrevEnterMem = btEnter; btPrevEscMem = btEscape;
 #endif
 
   delay(10);
@@ -4110,7 +3841,7 @@ void handlePreviewView(const bitmap16::InputFrame& input) {
                   viewState.preview.galleryIndex < sketchList.size() &&
                   sketchList[viewState.preview.galleryIndex].dataLoaded
               ? sketchList[viewState.preview.galleryIndex].gridSize
-              : static_cast<uint8_t>(editorState.gridSize);
+              : static_cast<uint8_t>(editor.sketch().gridSize);
       if (bitmap16::PreviewView::adjustZoom(
               viewState.preview.display,
               input.event == bitmap16::InputEvent::Plus ? 1 : -1,
@@ -4249,14 +3980,7 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
     const int selectedPaletteIdx =
         bitmap16::PaletteView::selectedCatalogIndex(
             viewState.palette.navigation);
-    savePaletteUndo();
-    documentState.sketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
-    for (int i = 0; i < 16; ++i) {
-      documentState.sketch.paletteColors[i] =
-          pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
-    }
-    documentDirty = true;
-    LED_CANVAS_UPDATED();
+    applyCatalogPalette(selectedPaletteIdx);
   } else if (input.event == bitmap16::InputEvent::Number0) {
     const bool captured = captureReload();
     bitmap16::PaletteView::reset(viewState.palette.navigation, catalog);
@@ -4313,13 +4037,7 @@ void handlePaletteView(const bitmap16::InputFrame& input) {
     const int selectedPaletteIdx =
         bitmap16::PaletteView::selectedCatalogIndex(
             viewState.palette.navigation);
-    savePaletteUndo();
-    documentState.sketch.paletteSize = allPaletteSizes[selectedPaletteIdx];
-    for (int i = 0; i < 16; i++) {
-      documentState.sketch.paletteColors[i] = pgm_read_word(&allPalettes[selectedPaletteIdx][i]);
-    }
-    documentDirty = true;
-    LED_CANVAS_UPDATED();
+    applyCatalogPalette(selectedPaletteIdx);
   }
   if (btEscape && !btPrevEscPal) {
     viewState.palette.closeRequested = true;
@@ -4885,9 +4603,9 @@ void runLegacyFrame() {
   // ============================================================================
   // Check for shake gesture ONLY in canvas view
   if (app.currentView() == bitmap16::ViewId::Canvas && !resizeDialogVisible) {
-    if (shakeUndoEnabled && detectShakeGesture() && editorState.history.canUndo()) {
+    if (shakeUndoEnabled && detectShakeGesture() && editor.canUndo()) {
       // Shake detected and undo is available!
-      restoreUndo();  // Perform the undo operation
+      restoreUndo();
       drawSharedCanvasView();
     }
   }
@@ -4945,20 +4663,20 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   bool deleteHeld = input.deleteHeld;
 
   if (input.actionPressed) {
-    clearCanvas();
-    canvasCleared = true;
+    canvasCleared = editor.clear();
+    setStatusMessage(StatusMsg::CLEAR);
     LED_CANVAS_UPDATED();  // Update LED matrix
   }
 
   // Check if M key is held (for canvas move)
   bool mHeld = input.mHeld;
-  bool moveModeChanged = (mHeld != editorState.moveModeActive);
-  editorState.moveModeActive = mHeld;
+  bool moveModeChanged = (mHeld != canvasViewState.moveModeActive);
+  canvasViewState.moveModeActive = mHeld;
 #if ENABLE_BLUETOOTH
   enterHeld = (enterHeld || btEnter || btSpace) && !input.lHeld;
   deleteHeld = deleteHeld || btBackspace;
 #endif
-  editorState.history.setHeldActions(enterHeld, deleteHeld, mHeld);
+  editor.setHeldActions(enterHeld, deleteHeld, mHeld);
 
 #if ENABLE_BLUETOOTH
   // Merge BT input with keyboard input
@@ -4975,25 +4693,25 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     lastKey = ';';  // Use same codes as built-in keyboard
     lastKeyTime = millis();
     keyRepeating = false;
-    if (editorState.cursorY > 0) { editorState.cursorY--; moved = true; }
+    moved |= editor.moveCursor(0, -1);
   }
   if (btArrowDown && !btPrevDown) {
     lastKey = '.';
     lastKeyTime = millis();
     keyRepeating = false;
-    if (editorState.cursorY < editorState.gridSize - 1) { editorState.cursorY++; moved = true; }
+    moved |= editor.moveCursor(0, 1);
   }
   if (btArrowLeft && !btPrevLeft) {
     lastKey = ',';
     lastKeyTime = millis();
     keyRepeating = false;
-    if (editorState.cursorX > 0) { editorState.cursorX--; moved = true; }
+    moved |= editor.moveCursor(-1, 0);
   }
   if (btArrowRight && !btPrevRight) {
     lastKey = '/';
     lastKeyTime = millis();
     keyRepeating = false;
-    if (editorState.cursorX < editorState.gridSize - 1) { editorState.cursorX++; moved = true; }
+    moved |= editor.moveCursor(1, 0);
   }
 
   btPrevUp = btArrowUp; btPrevDown = btArrowDown;
@@ -5015,31 +4733,29 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     if (btChar >= '1' && btChar <= '8') {
       uint8_t baseColor = btChar - '0';
       uint8_t newColor = fnHeld ? (baseColor + 8) : baseColor;
-      if (newColor <= documentState.sketch.paletteSize && editorState.selectedColor != newColor) {
-        editorState.selectedColor = newColor;
+      if (newColor <= editor.sketch().paletteSize && editor.selectedColor() != newColor) {
+        editor.setSelectedColor(newColor);
         colorChanged = true;
         char colorMsg[20];
-        snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, editorState.selectedColor);
+        snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, editor.selectedColor());
         setStatusMessage(colorMsg);
       }
     }
     // C key - Cycle color
     else if (btChar == 'c' || btChar == 'C') {
-      editorState.selectedColor++;
-      if (editorState.selectedColor > documentState.sketch.paletteSize) editorState.selectedColor = 1;
+      editor.setSelectedColor(editor.selectedColor() % editor.sketch().paletteSize + 1);
       colorChanged = true;
       char colorMsg[20];
-      snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, editorState.selectedColor);
+      snprintf(colorMsg, sizeof(colorMsg), StatusMsg::COLOR_FMT, editor.selectedColor());
       setStatusMessage(colorMsg);
     }
     // Z key - Undo
     else if (btChar == 'z' || btChar == 'Z') {
       if (fnHeld) {
-        restoreRedo();
+        undoPerformed |= restoreRedo();
       } else {
-        restoreUndo();
+        undoPerformed |= restoreUndo();
       }
-      undoPerformed = true;
     }
     // G key - Toggle grid
     else if (btChar == 'g' || btChar == 'G') {
@@ -5048,9 +4764,9 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     }
     // R key - Toggle rulers
     else if (btChar == 'r' || btChar == 'R') {
-      editorState.rulersVisible = !editorState.rulersVisible;
+      canvasViewState.rulersVisible = !canvasViewState.rulersVisible;
       rulersToggled = true;
-      setStatusMessage(editorState.rulersVisible ? "Rulers: On" : "Rulers: Off");
+      setStatusMessage(canvasViewState.rulersVisible ? "Rulers: On" : "Rulers: Off");
     }
     // O key - Memory view
     else if (btChar == 'o' || btChar == 'O') {
@@ -5072,17 +4788,10 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     }
     // S key - Save sketch (or Alt+S to save as new)
     else if (btChar == 's' || btChar == 'S') {
-      // Copy canvas to active sketch before saving
-      for (int y = 0; y < MAX_currentGridSize; y++) {
-        for (int x = 0; x < MAX_currentGridSize; x++) {
-          documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
-        }
-      }
-      documentState.sketch.gridSize = editorState.gridSize;
       if (fnHeld) {
-        saveActiveSketchAsNew();
+        sketchWorkflow.save(true);
       } else {
-        saveActiveSketchToSD();
+        sketchWorkflow.save();
       }
     }
     // V key - Preview view
@@ -5099,12 +4808,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
     }
     // F key - Flood fill
     else if (btChar == 'f' || btChar == 'F') {
-      saveUndo();
-      floodFill(
-          editorState.cursorX,
-          editorState.cursorY,
-          fnHeld ? 0 : editorState.selectedColor);
-      floodFilled = true;
+      floodFilled |= editor.floodFill(fnHeld ? 0 : editor.selectedColor());
       LED_CANVAS_UPDATED();
       setStatusMessage(fnHeld ? "Erase Fill" : StatusMsg::FILL);
     }
@@ -5131,12 +4835,12 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
 #endif
       ;
   const bool toolStateChanged =
-      drawPressed != editorState.drawPressed ||
-      erasePressed != editorState.erasePressed ||
-      fillPressed != editorState.fillPressed;
-  editorState.drawPressed = drawPressed;
-  editorState.erasePressed = erasePressed;
-  editorState.fillPressed = fillPressed;
+      drawPressed != canvasViewState.drawPressed ||
+      erasePressed != canvasViewState.erasePressed ||
+      fillPressed != canvasViewState.fillPressed;
+  canvasViewState.drawPressed = drawPressed;
+  canvasViewState.erasePressed = erasePressed;
+  canvasViewState.fillPressed = fillPressed;
 
   if ((input.enterPressed && !input.lHeld) || input.ctrlPressed) {
     pixelPlaced |= editCanvasPixel(false);
@@ -5160,15 +4864,15 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   if (requestedColor != 0) {
     const uint8_t newColor =
         fnHeld ? requestedColor + 8 : requestedColor;
-    if (newColor <= documentState.sketch.paletteSize && editorState.selectedColor != newColor) {
-      editorState.selectedColor = newColor;
+    if (newColor <= editor.sketch().paletteSize && editor.selectedColor() != newColor) {
+      editor.setSelectedColor(newColor);
       colorChanged = true;
       char colorMsg[20];
       snprintf(
           colorMsg,
           sizeof(colorMsg),
           StatusMsg::COLOR_FMT,
-          editorState.selectedColor);
+          editor.selectedColor());
       setStatusMessage(colorMsg);
     }
   }
@@ -5178,53 +4882,38 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   const char command = characterEvent ? input.character : '\0';
 
   if (command == 'c' || command == 'C') {
-    ++editorState.selectedColor;
-    if (editorState.selectedColor > documentState.sketch.paletteSize) {
-      editorState.selectedColor = 1;
-    }
+    editor.setSelectedColor(editor.selectedColor() % editor.sketch().paletteSize + 1);
     colorChanged = true;
     char colorMsg[20];
     snprintf(
         colorMsg,
         sizeof(colorMsg),
         StatusMsg::COLOR_FMT,
-        editorState.selectedColor);
+        editor.selectedColor());
     setStatusMessage(colorMsg);
   } else if (command == 'z' || command == 'Z') {
     if (fnHeld) {
-      restoreRedo();
+      undoPerformed |= restoreRedo();
     } else {
-      restoreUndo();
+      undoPerformed |= restoreUndo();
     }
-    undoPerformed = true;
   } else if (command == 'g' || command == 'G') {
     toggleGridSize();
     return;
   } else if (command == 'r' || command == 'R') {
-    editorState.rulersVisible = !editorState.rulersVisible;
+    canvasViewState.rulersVisible = !canvasViewState.rulersVisible;
     rulersToggled = true;
-    setStatusMessage(editorState.rulersVisible ? "Rulers: On" : "Rulers: Off");
+    setStatusMessage(canvasViewState.rulersVisible ? "Rulers: On" : "Rulers: Off");
   } else if (command == 'o' || command == 'O') {
     enterMemoryView();
   } else if (command == 's' || command == 'S') {
-    for (int y = 0; y < MAX_currentGridSize; ++y) {
-      for (int x = 0; x < MAX_currentGridSize; ++x) {
-        documentState.sketch.pixels[y][x] = editorState.canvas[y][x];
-      }
-    }
-    documentState.sketch.gridSize = editorState.gridSize;
     if (fnHeld) {
-      saveActiveSketchAsNew();
+      sketchWorkflow.save(true);
     } else {
-      saveActiveSketchToSD();
+      sketchWorkflow.save();
     }
   } else if (command == 'f' || command == 'F') {
-    saveUndo();
-    floodFill(
-        editorState.cursorX,
-        editorState.cursorY,
-        fnHeld ? 0 : editorState.selectedColor);
-    floodFilled = true;
+    floodFilled |= editor.floodFill(fnHeld ? 0 : editor.selectedColor());
     LED_CANVAS_UPDATED();
     setStatusMessage(fnHeld ? "Erase Fill" : StatusMsg::FILL);
   } else if (command == 'h' || command == 'H') {
@@ -5272,23 +4961,23 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
              (input.event == bitmap16::InputEvent::Plus ||
               input.event == bitmap16::InputEvent::Minus)) {
     zoomChanged = bitmap16::CanvasView::adjustZoom(
-        editorState.viewport,
+        canvasViewState.viewport,
         input.event == bitmap16::InputEvent::Plus ? 1 : -1,
         Display::canvas().width(),
         Display::canvas().height(),
-        static_cast<uint8_t>(editorState.gridSize),
-        static_cast<uint8_t>(editorState.cursorX),
-        static_cast<uint8_t>(editorState.cursorY));
+        static_cast<uint8_t>(editor.sketch().gridSize),
+        static_cast<uint8_t>(editor.cursorX()),
+        static_cast<uint8_t>(editor.cursorY()));
     if (zoomChanged) {
       const bitmap16::CanvasView::Layout zoomLayout =
           bitmap16::CanvasView::layoutFor(
               Display::canvas().width(),
               Display::canvas().height(),
-              static_cast<uint8_t>(editorState.gridSize));
+              static_cast<uint8_t>(editor.sketch().gridSize));
       const int zoomCellSize =
-          editorState.viewport.cellSize == 0
+          canvasViewState.viewport.cellSize == 0
               ? zoomLayout.cellSize
-              : editorState.viewport.cellSize;
+              : canvasViewState.viewport.cellSize;
       char zoomMessage[16] = {};
       snprintf(
           zoomMessage,
@@ -5335,55 +5024,48 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
         bitmap16::CanvasView::layoutFor(
             Display::canvas().width(),
             Display::canvas().height(),
-            static_cast<uint8_t>(editorState.gridSize));
+            static_cast<uint8_t>(editor.sketch().gridSize));
     const int currentCellSize =
-        editorState.viewport.cellSize == 0
+        canvasViewState.viewport.cellSize == 0
             ? currentLayout.cellSize
-            : editorState.viewport.cellSize;
+            : canvasViewState.viewport.cellSize;
     const bool zoomed = currentCellSize > currentLayout.cellSize;
     if (fnHeld && zoomed) {
-      const int previousX = editorState.cursorX;
-      const int previousY = editorState.cursorY;
+      const int previousX = editor.cursorX();
+      const int previousY = editor.cursorY();
       if (input.event == bitmap16::InputEvent::Up) {
-        editorState.cursorY = 0;
+        editor.setCursor(editor.cursorX(), 0);
       } else if (input.event == bitmap16::InputEvent::Down) {
-        editorState.cursorY = editorState.gridSize - 1;
+        editor.setCursor(editor.cursorX(), editor.sketch().gridSize - 1);
       } else if (input.event == bitmap16::InputEvent::Left) {
-        editorState.cursorX = 0;
+        editor.setCursor(0, editor.cursorY());
       } else {
-        editorState.cursorX = editorState.gridSize - 1;
+        editor.setCursor(editor.sketch().gridSize - 1, editor.cursorY());
       }
       moved =
-          previousX != editorState.cursorX ||
-          previousY != editorState.cursorY;
+          previousX != editor.cursorX() ||
+          previousY != editor.cursorY();
     } else if (mHeld) {
       if (input.event == bitmap16::InputEvent::Up) {
-        shiftCanvas(0, -1);
+        canvasMoved |= editor.shift(0, -1);
       } else if (input.event == bitmap16::InputEvent::Down) {
-        shiftCanvas(0, 1);
+        canvasMoved |= editor.shift(0, 1);
       } else if (input.event == bitmap16::InputEvent::Left) {
-        shiftCanvas(-1, 0);
+        canvasMoved |= editor.shift(-1, 0);
       } else {
-        shiftCanvas(1, 0);
+        canvasMoved |= editor.shift(1, 0);
       }
-      canvasMoved = true;
       LED_CANVAS_UPDATED();
       setStatusMessage(StatusMsg::MOVE);
     } else {
-      if (input.event == bitmap16::InputEvent::Up && editorState.cursorY > 0) {
-        --editorState.cursorY;
-        moved = true;
-      } else if (input.event == bitmap16::InputEvent::Down &&
-                 editorState.cursorY < editorState.gridSize - 1) {
-        ++editorState.cursorY;
-        moved = true;
-      } else if (input.event == bitmap16::InputEvent::Left && editorState.cursorX > 0) {
-        --editorState.cursorX;
-        moved = true;
-      } else if (input.event == bitmap16::InputEvent::Right &&
-                 editorState.cursorX < editorState.gridSize - 1) {
-        ++editorState.cursorX;
-        moved = true;
+      if (input.event == bitmap16::InputEvent::Up) {
+        moved |= editor.moveCursor(0, -1);
+      } else if (input.event == bitmap16::InputEvent::Down) {
+        moved |= editor.moveCursor(0, 1);
+      } else if (input.event == bitmap16::InputEvent::Left) {
+        moved |= editor.moveCursor(-1, 0);
+      } else if (input.event == bitmap16::InputEvent::Right) {
+        moved |= editor.moveCursor(1, 0);
       }
 
       if (moved && enterHeld) {
@@ -5410,28 +5092,16 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       keyRepeating = true;
       lastKeyTime = currentTime;
       if (mHeld) {
-        if (currentBtArrow == ';') shiftCanvas(0, -1);
-        else if (currentBtArrow == '.') shiftCanvas(0, 1);
-        else if (currentBtArrow == ',') shiftCanvas(-1, 0);
-        else shiftCanvas(1, 0);
-        canvasMoved = true;
+        if (currentBtArrow == ';') canvasMoved |= editor.shift(0, -1);
+        else if (currentBtArrow == '.') canvasMoved |= editor.shift(0, 1);
+        else if (currentBtArrow == ',') canvasMoved |= editor.shift(-1, 0);
+        else canvasMoved |= editor.shift(1, 0);
         LED_CANVAS_UPDATED();
       } else {
-        if (currentBtArrow == ';' && editorState.cursorY > 0) {
-          --editorState.cursorY;
-          moved = true;
-        } else if (currentBtArrow == '.' &&
-                   editorState.cursorY < editorState.gridSize - 1) {
-          ++editorState.cursorY;
-          moved = true;
-        } else if (currentBtArrow == ',' && editorState.cursorX > 0) {
-          --editorState.cursorX;
-          moved = true;
-        } else if (currentBtArrow == '/' &&
-                   editorState.cursorX < editorState.gridSize - 1) {
-          ++editorState.cursorX;
-          moved = true;
-        }
+        if (currentBtArrow == ';') moved |= editor.moveCursor(0, -1);
+        else if (currentBtArrow == '.') moved |= editor.moveCursor(0, 1);
+        else if (currentBtArrow == ',') moved |= editor.moveCursor(-1, 0);
+        else moved |= editor.moveCursor(1, 0);
         if (moved && enterHeld) {
           pixelPlaced |= editCanvasPixel(false);
         } else if (moved && deleteHeld) {
@@ -5448,12 +5118,12 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
   // Update LED matrix when cursor moves (to highlight current position)
   if (moved) {
     bitmap16::CanvasView::keepCursorVisible(
-        editorState.viewport,
+        canvasViewState.viewport,
         Display::canvas().width(),
         Display::canvas().height(),
-        static_cast<uint8_t>(editorState.gridSize),
-        static_cast<uint8_t>(editorState.cursorX),
-        static_cast<uint8_t>(editorState.cursorY));
+        static_cast<uint8_t>(editor.sketch().gridSize),
+        static_cast<uint8_t>(editor.cursorX()),
+        static_cast<uint8_t>(editor.cursorY()));
     LED_CANVAS_UPDATED();
   }
 
@@ -5472,7 +5142,7 @@ void handleCanvasView(const bitmap16::InputFrame& input) {
       statusMessage[0] != '\0' || statusMessageJustCleared;
   if (pixelPlaced || canvasCleared || undoPerformed ||
       floodFilled || canvasMoved) {
-    documentDirty = true;
+    sketchWorkflow.edited();
   }
   if (canvasViewChanged) {
     drawSharedCanvasView();

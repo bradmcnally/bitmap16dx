@@ -220,8 +220,8 @@ int main() {
       legacy.settings().displayWarmth != 0) {
     return 12;
   }
-#ifdef BITMAP16_CARDPUTER_ZERO
-  // Configuration is separate from artwork and does not import old data-folder settings.
+#if defined(BITMAP16_CARDPUTER_ZERO) || defined(BITMAP16_STEAM_DECK)
+  // Configuration is separate from artwork; Deck preserves existing preferences.
   const auto config = root / "config";
 #ifdef _WIN32
   _putenv_s("BITMAP16_CONFIG_DIR", config.string().c_str());
@@ -231,16 +231,21 @@ int main() {
   bitmap16::Editor configuredEditor;
   bitmap16::Desktop::Workspace configured;
   if (!configured.initialize(configuredEditor) || configured.configRoot() != config ||
+#ifdef BITMAP16_STEAM_DECK
+      configured.settings().theme != bitmap16::ThemeId::Dark ||
+      !std::filesystem::is_regular_file(config / "settings.bin") ||
+#else
       configured.settings().theme != bitmap16::Settings{}.theme ||
       std::filesystem::exists(config / "settings.bin") ||
+#endif
       !std::filesystem::is_regular_file(root / "settings.bin")) return 18;
-  configured.settings().theme = bitmap16::ThemeId::Dark;
+  configured.settings().theme = bitmap16::ThemeId::Light;
   if (!configured.saveSettings()) return 19;
   bitmap16::Desktop::Workspace preferred;
   if (!preferred.initialize(configuredEditor) ||
-      preferred.settings().theme != bitmap16::ThemeId::Dark) return 20;
+      preferred.settings().theme != bitmap16::ThemeId::Light) return 20;
 #endif
-#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || defined(BITMAP16_STEAM_DECK)
   // Device exports belong in the user's visible Pictures folder.
   const auto deviceHome = root / "device-home";
   std::filesystem::create_directories(deviceHome, error);
@@ -255,6 +260,11 @@ int main() {
       !deviceWorkspace.exportSketch(deviceEditor.sketch(), true, deviceExport) ||
       deviceExport != deviceHome / "Pictures" / "BitMap16DX" / "export-0001.png" ||
       !std::filesystem::is_regular_file(deviceExport)) return 21;
+#ifdef BITMAP16_STEAM_DECK
+  if (!deviceWorkspace.exportSteamScreenshot(deviceEditor.sketch(), 0, deviceExport) ||
+      deviceExport != deviceHome / "Pictures" / "BitMap16DX" / "screenshot-0001.png" ||
+      !std::filesystem::is_regular_file(deviceExport)) return 22;
+#endif
 #endif
   if (std::getenv("BITMAP16_KEEP_TEST_DATA") == nullptr) {
     std::filesystem::remove_all(root, error);

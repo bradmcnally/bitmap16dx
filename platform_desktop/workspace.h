@@ -7,6 +7,7 @@
 
 #include "core/editor.h"
 #include "core/settings.h"
+#include "core/sketch_workflow.h"
 
 namespace bitmap16 {
 namespace Desktop {
@@ -42,6 +43,9 @@ class Workspace {
 
   bool newSketch(Editor& editor);
   bool openSketch(std::size_t index, Editor& editor);
+  bool openSketch(const std::string& key, Editor& editor);
+  std::string sketchKey(std::size_t index) const;
+  bool hasDetachedSketch() const { return !detachedActivePath_.empty(); }
   bool saveSketch(const Editor& editor, bool saveAsNew);
   bool duplicateSketch(std::size_t index);
   bool deleteSketch(std::size_t index);
@@ -71,8 +75,22 @@ class Workspace {
   std::filesystem::path deletedOriginalPath_;
   std::filesystem::path deletedTrashPath_;
   bool deletedWasActive_ = false;
+  std::filesystem::path detachedActivePath_;
   Settings settings_;
   int activeIndex_ = -1;
+};
+
+class SketchStorage final : public SketchWorkflow::Storage {
+ public:
+  SketchStorage(Workspace& workspace, Editor& editor) : workspace_(workspace), editor_(editor) {}
+  bool save(bool asNew) override;
+  bool create() override;
+  bool open(const std::string& key) override;
+  std::string currentKey() const override;
+
+ private:
+  Workspace& workspace_;
+  Editor& editor_;
 };
 
 }  // namespace Desktop

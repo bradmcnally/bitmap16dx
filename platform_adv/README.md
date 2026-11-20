@@ -95,7 +95,7 @@ or [M5Launcher](https://bmorcelli.github.io/Launcher/) and flash it to your Card
 | `ok`/`enter` | Load selected sketch |
 | `V` | Open slideshow **v**iew |
 | `esc` | Dismiss |
-| `g0` button | Delete the focused sketch |
+| `g0` button or `del`/`backspace` | Open Delete for the focused sketch; choose Delete with the arrows, then press OK/Enter or `g0` to confirm |
 | `Z` | Restore the most recently deleted sketch |
 | `fn` + `S` | Duplicate the focused sketch |
 

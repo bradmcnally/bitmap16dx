@@ -15,17 +15,22 @@ Use a fresh install or isolated data folder for the first-run checks, then repea
 
 - [ ] Draw and erase single pixels and continuous lines; fill and erase fill stay within the selected region.
 - [ ] Move artwork, clear the canvas, undo, and redo; undo history resets when opening or creating a sketch.
+- [ ] After undoing a stroke to an empty canvas, clear, erase fill, or move without changing pixels; redo still restores the stroke.
 - [ ] Resize among 8×8, 16×16, and 32×32; shrinking and growing preserves hidden pixels.
 - [ ] Zoom, pan or jump to edges, rulers, and the minimap behave correctly at every canvas size.
 - [ ] Select colors from both halves of a 16-color palette; switching palettes preserves pixel indices.
+- [ ] Select color 12, apply a four-color palette, and draw; color 4 is selected while existing artwork keeps its pixel indices.
 
 ## Sketches and preview
 
 - [ ] With no saved sketches, Sketches shows the `+` tile and New Sketch works.
 - [ ] Save updates the current sketch; Save As creates a separate sketch; both survive a restart.
-- [ ] Open, duplicate, delete, and restore a sketch; deletion does not alter the current drawing unexpectedly.
+- [ ] Open, duplicate, delete, and restore a sketch; on ADV, G0 and Delete/Backspace open the confirmation, and OK/Enter or G0 confirms the selected option. Deletion does not alter the current drawing unexpectedly.
 - [ ] Preview and slideshow show the correct artwork, backgrounds, navigation, and auto-advance.
 - [ ] A failed save or open reports an error and leaves the current drawing available.
+- [ ] Select an older sketch while the current one has unsaved edits, choose Save, and confirm the originally selected sketch opens after the list reorders.
+- [ ] Discard followed by a failed open preserves the current drawing and its unsaved warning; Cancel preserves undo history.
+- [ ] Delete the current saved sketch and verify Save still works; restoring an older deletion after New or Open does not change the current sketch's save destination.
 
 ## Palettes and export
 
@@ -45,7 +50,7 @@ Use a fresh install or isolated data folder for the first-run checks, then repea
 ## Zero hardware
 
 - [ ] Package installs and launches from HOME; Escape returns through views and a three-second hold returns HOME.
-- [ ] Keyboard shortcuts match the [Zero guide](../platform_zero/README.md#controls); display brightness and warmth respond and persist.
+- [ ] Keyboard shortcuts match the [Zero guide](../platform_zero/README.md#controls); display brightness responds and persists, and the beta Warmth setting is hidden.
 - [ ] Battery and charging indicators reflect device state; shake undo appears only on supported hardware.
 - [ ] Lospec browse shows `PALETTES>LOSPEC (count)`; filters, import by name or URL, and saved-palette exclusion work.
 - [ ] Offline or failed Lospec refresh keeps cached palettes available; empty cache and no matches show distinct messages.

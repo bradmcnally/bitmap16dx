@@ -84,7 +84,7 @@ def check(deb=None):
         require(fields.get('Package') == manifest['package_name'], 'Package name differs from listing')
         require(fields.get('Version') == manifest['version'], 'Package version differs from listing')
         require(fields.get('Architecture') == 'arm64', 'Store package must be ARM64')
-        require(fields.get('Maintainer', '').startswith('Brad McNally'), 'Package author differs from listing')
+        require(fields.get('Maintainer', '').startswith('Brad McNally'), 'Package maintainer is missing or unexpected')
     with archive(deb, 'data') as data:
         files = {m.name.removeprefix('./'): m for m in data.getmembers() if m.isfile()}
         base = 'usr/share/APPLaunch/'

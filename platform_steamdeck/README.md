@@ -24,8 +24,17 @@ In Desktop Mode, add `~/Applications/bitmap16dx/bitmap16dx_desktop` to Steam
 as a non-Steam game and select Steam Input's standard Gamepad template.
 Launch through Steam in Gaming Mode or Desktop Mode.
 
-Settings, sketches, palettes, and exports are stored in
-`~/.local/share/bitmap16dx/`. Use Quit in Settings to close the app.
+For an existing Distrobox setup, run **Update and Build** or run
+`platform_steamdeck/update_and_build.sh` inside the `dev` container. It pulls
+the latest source, builds, runs checks, and installs to
+`~/Applications/bitmap16dx/bitmap16dx_desktop`, the existing Steam shortcut target.
+Failed builds or checks leave the installed app available. `build-info.txt`
+beside the executable identifies the installed source revision.
+
+Sketches and palettes are stored in `~/.local/share/bitmap16dx/`. Settings use
+`~/.config/bitmap16dx/`, preserving existing Deck preferences on first launch.
+Exports and screenshots go to `~/Pictures/BitMap16DX/`; existing files in the
+old exports folder stay there. Use Quit in Settings to close the app.
 
 ## Controls
 
@@ -58,6 +67,10 @@ rows. Left/right switches columns for palettes with more than eight colors.
 L3 or L4 resizes the canvas. Resizing is undoable.
 
 Keyboard controls are also available.
+
+Help groups controls into Draw, Canvas, Palettes, Sketches, Preview, App, and
+Keyboard sections. Use LB/RB to change sections and Up/Down to select a control.
+In Palettes, Import stays at the left of the footer and Browse Lospec at the right.
 
 In local Palettes, press `X` (keyboard Backspace/Delete) to remove a saved
 user palette. Removed files move to `trash/`.
@@ -117,7 +130,7 @@ that opens the controller reference and returns to Settings when closed.
 Press `F12` to write a UI-free 1280x800 PNG to:
 
 ```text
-~/.local/share/bitmap16dx/exports/
+~/Pictures/BitMap16DX/
 ```
 
 The artwork is centered at the largest integer scale that fits the Steam Deck

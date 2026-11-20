@@ -14,6 +14,7 @@
 #include "core/canvas.h"
 #include "core/canvas_view.h"
 #include "core/editor.h"
+#include "core/sketch_workflow.h"
 #include "core/help_view.h"
 #include "core/input.h"
 #include "core/led_mapping.h"
@@ -96,6 +97,7 @@ void test_editor_palette_application_is_undoable_and_non_destructive() {
   sketch.pixels[2][3] = 15;
   Editor editor;
   editor.reset(sketch);
+  editor.setSelectedColor(12);
 
   uint16_t replacement[bitmap16::kMaxPaletteColors] = {};
   for (std::size_t index = 0;
@@ -105,6 +107,7 @@ void test_editor_palette_application_is_undoable_and_non_destructive() {
   }
 
   TEST_ASSERT_TRUE(editor.applyPalette(replacement, 4));
+  TEST_ASSERT_EQUAL_UINT8(4, editor.selectedColor());
   TEST_ASSERT_EQUAL_UINT8(4, editor.sketch().paletteSize);
   TEST_ASSERT_EQUAL_HEX16(0x2000, editor.sketch().paletteColors[0]);
   TEST_ASSERT_EQUAL_UINT8(15, editor.sketch().pixels[2][3]);
@@ -118,6 +121,279 @@ void test_editor_palette_application_is_undoable_and_non_destructive() {
   TEST_ASSERT_EQUAL_UINT8(4, editor.sketch().paletteSize);
   TEST_ASSERT_EQUAL_HEX16(0x2000, editor.sketch().paletteColors[0]);
   TEST_ASSERT_EQUAL_UINT8(15, editor.sketch().pixels[2][3]);
+}
+
+void test_editor_no_op_edits_preserve_redo() {
+  Editor editor;
+  editor.reset(makeSketch());
+  TEST_ASSERT_TRUE(editor.draw());
+  TEST_ASSERT_TRUE(editor.undo());
+
+  editor.setHeldActions(false, true, true);
+  TEST_ASSERT_FALSE(editor.erase());
+  TEST_ASSERT_FALSE(editor.clear());
+  TEST_ASSERT_FALSE(editor.floodFill(0));
+  TEST_ASSERT_FALSE(editor.shift(1, 0));
+  TEST_ASSERT_FALSE(editor.resizeGrid(8));
+  const Sketch unchanged = editor.sketch();
+  TEST_ASSERT_FALSE(editor.applyPalette(unchanged.paletteColors, 16));
+  editor.setHeldActions(false, false, false);
+
+  TEST_ASSERT_FALSE(editor.canUndo());
+  TEST_ASSERT_TRUE(editor.canRedo());
+  TEST_ASSERT_TRUE(editor.redo());
+  TEST_ASSERT_EQUAL_UINT8(1, editor.sketch().pixels[0][0]);
+  TEST_ASSERT_FALSE(editor.draw());
+  TEST_ASSERT_FALSE(editor.floodFill(1));
+  TEST_ASSERT_TRUE(editor.undo());
+  TEST_ASSERT_TRUE(editor.sketch().isEmpty);
+  TEST_ASSERT_FALSE(editor.canUndo());
+}
+
+void test_editor_full_grid_fill_reuses_workspace_without_leaking_state() {
+  Editor first;
+  Editor second;
+  first.reset(makeSketch(32));
+  second.reset(makeSketch(8));
+  for (const uint8_t color : {2, 3, 4}) {
+    TEST_ASSERT_TRUE(first.floodFill(color));
+    TEST_ASSERT_TRUE(second.floodFill(color + 1));
+    for (uint8_t y = 0; y < 32; ++y) {
+      for (uint8_t x = 0; x < 32; ++x) {
+        TEST_ASSERT_EQUAL_UINT8(color, first.sketch().pixels[y][x]);
+        TEST_ASSERT_EQUAL_UINT8(
+            x < 8 && y < 8 ? color + 1 : 0, second.sketch().pixels[y][x]);
+      }
+    }
+    TEST_ASSERT_TRUE(first.undo());
+    TEST_ASSERT_TRUE(first.redo());
+  }
+  TEST_ASSERT_TRUE(second.undo());
+  TEST_ASSERT_EQUAL_UINT8(4, second.sketch().pixels[7][7]);
+  TEST_ASSERT_EQUAL_UINT8(4, first.sketch().pixels[31][31]);
+}
+
+void test_editor_live_sketch_round_trips_after_edits_and_resize() {
+  Editor editor;
+  editor.reset(makeSketch(32));
+  editor.setCursor(20, 20);
+  editor.setSelectedColor(12);
+  TEST_ASSERT_TRUE(editor.draw());
+  TEST_ASSERT_TRUE(editor.resizeGrid(8));
+  TEST_ASSERT_EQUAL_UINT8(7, editor.cursorX());
+  TEST_ASSERT_EQUAL_UINT8(7, editor.cursorY());
+  editor.setCursor(2, 3);
+  TEST_ASSERT_TRUE(editor.draw());
+  TEST_ASSERT_TRUE(editor.shift(1, 0));
+  const uint16_t palette[16] = {0x1111, 0x2222, 0x3333, 0x4444};
+  TEST_ASSERT_TRUE(editor.applyPalette(palette, 4));
+  TEST_ASSERT_EQUAL_UINT8(4, editor.selectedColor());
+
+  uint8_t data[bitmap16::SketchCodec::kCurrentFileSize];
+  std::size_t bytesWritten = 0;
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(bitmap16::SketchCodec::Result::Ok),
+      static_cast<int>(bitmap16::SketchCodec::encode(
+          editor.sketch(), data, sizeof(data), bytesWritten)));
+  Sketch loaded;
+  TEST_ASSERT_EQUAL_INT(
+      static_cast<int>(bitmap16::SketchCodec::Result::Ok),
+      static_cast<int>(bitmap16::SketchCodec::decode(data, bytesWritten, loaded)));
+  TEST_ASSERT_EQUAL_UINT8(8, loaded.gridSize);
+  TEST_ASSERT_EQUAL_UINT8(4, loaded.paletteSize);
+  TEST_ASSERT_EQUAL_UINT8(12, loaded.pixels[3][3]);
+  TEST_ASSERT_EQUAL_UINT8(12, loaded.pixels[20][20]);
+  TEST_ASSERT_EQUAL_HEX16_ARRAY(palette, loaded.paletteColors, 16);
+  TEST_ASSERT_FALSE(loaded.isEmpty);
+
+  // Opening uses reset then restores ADV's cursor, clamped by Editor.
+  TEST_ASSERT_TRUE(editor.resizeGrid(32));
+  editor.setCursor(31, 30);
+  const uint8_t cursorX = editor.cursorX();
+  const uint8_t cursorY = editor.cursorY();
+  editor.reset(loaded);
+  editor.setCursor(cursorX, cursorY);
+  TEST_ASSERT_EQUAL_UINT8(7, editor.cursorX());
+  TEST_ASSERT_EQUAL_UINT8(7, editor.cursorY());
+  TEST_ASSERT_EQUAL_UINT8(1, editor.selectedColor());
+  TEST_ASSERT_FALSE(editor.canUndo());
+  TEST_ASSERT_FALSE(editor.canRedo());
+  TEST_ASSERT_TRUE(editor.clear());
+  TEST_ASSERT_FALSE(editor.sketch().isEmpty);
+  TEST_ASSERT_TRUE(editor.resizeGrid(32));
+  TEST_ASSERT_EQUAL_UINT8(12, editor.sketch().pixels[20][20]);
+}
+
+struct WorkflowStorage final : bitmap16::SketchWorkflow::Storage {
+  Editor& editor;
+  Sketch replacement = makeSketch();
+  std::string key = "original";
+  std::string opened;
+  bool allowSave = true;
+  bool allowOpen = true;
+  bool allowCreate = true;
+  int saves = 0;
+  int creates = 0;
+  int opens = 0;
+  explicit WorkflowStorage(Editor& value) : editor(value) {}
+  bool save(bool asNew) override {
+    ++saves;
+    if (!allowSave) return false;
+    key = asNew ? "copy" : "promoted";
+    return true;
+  }
+  bool create() override {
+    ++creates;
+    if (!allowCreate) return false;
+    editor.reset(makeSketch());
+    key.clear();
+    return true;
+  }
+  bool open(const std::string& target) override {
+    ++opens;
+    if (!allowOpen) return false;
+    opened = key = target;
+    editor.reset(replacement);
+    return true;
+  }
+  std::string currentKey() const override { return key; }
+};
+using Workflow = bitmap16::SketchWorkflow;
+
+void test_sketch_workflow_cancel_and_quit_preserve_edits() {
+  Editor editor;
+  editor.reset(makeSketch());
+  WorkflowStorage storage(editor);
+  Workflow flow(editor, storage);
+  TEST_ASSERT_TRUE(editor.draw());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::AwaitingChoice),
+      static_cast<int>(flow.request(Workflow::Action::NewSketch, true)));
+  TEST_ASSERT_EQUAL_INT(2, static_cast<int>(flow.choice()));
+  flow.moveChoice(-20);
+  TEST_ASSERT_EQUAL_INT(0, static_cast<int>(flow.choice()));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Busy),
+      static_cast<int>(flow.request(Workflow::Action::Quit, true)));
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Cancelled),
+      static_cast<int>(flow.choose(Workflow::Choice::Cancel)));
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  TEST_ASSERT_TRUE(editor.canUndo());
+  TEST_ASSERT_EQUAL_UINT8(1, editor.sketch().pixels[0][0]);
+  TEST_ASSERT_EQUAL_INT(0, storage.creates);
+  TEST_ASSERT_EQUAL_INT(0, storage.saves);
+  flow.request(Workflow::Action::Quit, true);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Completed),
+      static_cast<int>(flow.choose(Workflow::Choice::Discard)));
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  TEST_ASSERT_TRUE(editor.canUndo());
+  TEST_ASSERT_FALSE(flow.awaitingChoice());
+}
+
+void test_sketch_workflow_failed_save_can_retry_without_replacing() {
+  Editor editor;
+  editor.reset(makeSketch());
+  WorkflowStorage storage(editor);
+  Workflow flow(editor, storage);
+  editor.draw();
+  storage.allowSave = false;
+  flow.request(Workflow::Action::NewSketch, true);
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::SaveFailed),
+      static_cast<int>(flow.choose(Workflow::Choice::Save)));
+  TEST_ASSERT_TRUE(flow.awaitingChoice());
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  TEST_ASSERT_TRUE(editor.canUndo());
+  TEST_ASSERT_EQUAL_INT(0, storage.creates);
+  TEST_ASSERT_FALSE(flow.save(true));
+  TEST_ASSERT_EQUAL_STRING("original", storage.key.c_str());
+  storage.allowSave = true;
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Completed),
+      static_cast<int>(flow.choose(Workflow::Choice::Save)));
+  TEST_ASSERT_EQUAL_INT(1, storage.creates);
+  TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+  TEST_ASSERT_FALSE(editor.canUndo());
+  TEST_ASSERT_FALSE(editor.canRedo());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Cancelled),
+      static_cast<int>(flow.choose(Workflow::Choice::Save)));
+  TEST_ASSERT_EQUAL_INT(1, storage.creates);
+}
+
+void test_sketch_workflow_discard_failure_keeps_unsaved_state() {
+  Editor editor;
+  editor.reset(makeSketch());
+  WorkflowStorage storage(editor);
+  Workflow flow(editor, storage);
+  editor.draw();
+  storage.allowOpen = false;
+  flow.request(Workflow::Action::OpenSketch, true, "missing");
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::OpenFailed),
+      static_cast<int>(flow.choose(Workflow::Choice::Discard)));
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  TEST_ASSERT_TRUE(editor.canUndo());
+  TEST_ASSERT_EQUAL_STRING("original", storage.key.c_str());
+  TEST_ASSERT_FALSE(flow.awaitingChoice());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::AwaitingChoice),
+      static_cast<int>(flow.request(Workflow::Action::Quit, true)));
+}
+
+void test_sketch_workflow_tracks_baseline_and_backing_loss() {
+  Editor editor;
+  editor.reset(makeSketch());
+  WorkflowStorage storage(editor);
+  Workflow flow(editor, storage);
+  editor.draw();
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  editor.undo();
+  TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+  editor.resizeGrid(32);
+  editor.setCursor(20, 20);
+  editor.draw();
+  editor.resizeGrid(8);
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  TEST_ASSERT_TRUE(editor.undo() && editor.undo() && editor.undo());
+  TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+  flow.savedCopyRemoved();
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  flow.savedCopyRestored();
+  TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+  flow.savedCopyRemoved();
+  TEST_ASSERT_TRUE(flow.save());
+  TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+}
+
+void test_sketch_workflow_preserves_adv_edit_latch() {
+  Editor editor;
+  editor.reset(makeSketch());
+  WorkflowStorage storage(editor);
+  Workflow flow(editor, storage, Workflow::DirtyPolicy::SinceLastSave);
+  if (editor.draw()) flow.edited();
+  if (editor.undo()) flow.edited();
+  TEST_ASSERT_TRUE(flow.hasUnsavedChanges());
+  TEST_ASSERT_TRUE(flow.save());
+  TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+  TEST_ASSERT_FALSE(editor.clear());
+  TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+}
+
+void test_sketch_workflow_keeps_stable_target_across_save_promotion() {
+  for (const bool openingCurrent : {false, true}) {
+    Editor editor;
+    editor.reset(makeSketch());
+    WorkflowStorage storage(editor);
+    Workflow flow(editor, storage);
+    editor.draw();
+    flow.request(Workflow::Action::OpenSketch, true, openingCurrent ? "original" : "other");
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Completed),
+        static_cast<int>(flow.choose(Workflow::Choice::Save)));
+    TEST_ASSERT_EQUAL_STRING(openingCurrent ? "promoted" : "other", storage.opened.c_str());
+    TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+    TEST_ASSERT_FALSE(editor.canUndo());
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Completed),
+        static_cast<int>(flow.request(Workflow::Action::NewSketch, true)));
+    editor.draw();
+    TEST_ASSERT_EQUAL_INT(static_cast<int>(Workflow::Result::Completed),
+        static_cast<int>(flow.request(Workflow::Action::NewSketch, false)));
+    TEST_ASSERT_FALSE(flow.hasUnsavedChanges());
+    TEST_ASSERT_EQUAL_INT(1, storage.saves);
+  }
 }
 
 void test_canvas_allocation_fill_and_release() {
@@ -1563,6 +1839,15 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_editor_draw_erase_and_undo);
   RUN_TEST(test_editor_palette_application_is_undoable_and_non_destructive);
+  RUN_TEST(test_editor_no_op_edits_preserve_redo);
+  RUN_TEST(test_editor_full_grid_fill_reuses_workspace_without_leaking_state);
+  RUN_TEST(test_editor_live_sketch_round_trips_after_edits_and_resize);
+  RUN_TEST(test_sketch_workflow_cancel_and_quit_preserve_edits);
+  RUN_TEST(test_sketch_workflow_failed_save_can_retry_without_replacing);
+  RUN_TEST(test_sketch_workflow_discard_failure_keeps_unsaved_state);
+  RUN_TEST(test_sketch_workflow_tracks_baseline_and_backing_loss);
+  RUN_TEST(test_sketch_workflow_preserves_adv_edit_latch);
+  RUN_TEST(test_sketch_workflow_keeps_stable_target_across_save_promotion);
   RUN_TEST(test_canvas_allocation_fill_and_release);
   RUN_TEST(test_canvas_clips_rectangles_and_pixels);
   RUN_TEST(test_canvas_view_layout_is_resolution_and_grid_aware);

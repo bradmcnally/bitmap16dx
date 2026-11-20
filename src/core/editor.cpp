@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 
 namespace bitmap16 {
 
@@ -106,8 +107,16 @@ bool Editor::floodFill(uint8_t replacementColor) {
 
   saveUndo();
 
-  bool visited[kMaxGridSize][kMaxGridSize] = {};
+#if defined(ARDUINO_ARCH_ESP32)
+  // ADV edits run serially on the loop task. Keep the 3 KiB fill workspace
+  // outside its limited stack, as in the original firmware implementation.
+  static bool visited[kMaxGridSize][kMaxGridSize];
+  static Point stack[kMaxGridSize * kMaxGridSize];
+#else
+  bool visited[kMaxGridSize][kMaxGridSize];
   Point stack[kMaxGridSize * kMaxGridSize];
+#endif
+  std::memset(visited, 0, sizeof(visited));
   std::size_t stackSize = 0;
   stack[stackSize++] = {cursorX_, cursorY_};
   visited[cursorY_][cursorX_] = true;

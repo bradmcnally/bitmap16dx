@@ -2,8 +2,31 @@
 
 All notable user-facing changes to BitMap16 DX are documented here.
 
-The repository contains experimental multiplatform work, but the v0.8.0
-release artifact targets the M5Stack Cardputer ADV only.
+The v0.8.0 release artifact targets the M5Stack Cardputer ADV. Version 0.9.0
+adds a Cardputer Zero package.
+
+## [0.9.0] — Cardputer Zero
+
+### Added
+
+- Added a native Cardputer Zero app!
+- Added Lospec feed browsing and palette import by name or URL on Zero and the desktop builds.
+- Expanded undo and redo to 16 steps.
+- Added mouse support to the desktop builds.
+
+### Changed
+
+- Updated `.hex` and Lospec palette imports to accept any number of colors from 4 through 16. Palette filters now group 4, 5–8, and 9–16 colors.
+- Reorganized Help into clearer sections and revised its labels.
+- Refined palette, save, and confirmation dialogs.
+- Reduced startup splash screen time.
+- Added a setting to hide the Zero battery icon. Charging appears in the same status area when the device reports it is charging.
+
+### Fixed
+
+- Fixed sketch duplication, deletion, and restoration replacing the open drawing. Restoring a deleted sketch on ADV now preserves canvas undo history.
+- Fixed battery indicator jitter and Help navigation and label clipping.
+- Fixed palette selection after switching from a larger palette to a smaller one, without changing existing artwork's pixel indices.
 
 ## [0.8.0] — Blast Processing
 

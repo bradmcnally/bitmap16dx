@@ -25,7 +25,7 @@ constexpr Item kItems[] = {
 #ifdef BITMAP16_CARDPUTER_ZERO
     {"Battery display", Action::BatteryDisplayChanged},
 #endif
-#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) && defined(BITMAP16_BETA_SETTINGS)
     {"Warmth", Action::DisplayWarmthChanged},
 #endif
     {"Cursor", Action::CursorStyleChanged},

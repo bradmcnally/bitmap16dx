@@ -18,6 +18,48 @@ struct Item {
 };
 
 constexpr Item kItems[] = {
+#ifdef BITMAP16_STEAM_DECK
+    {"Cursor", "L stick", "", 0, false, false},
+    {"Draw", "A", "", 0, false, false},
+    {"Erase", "X", "", 0, false, false},
+    {"Fill", "Y", "", 0, false, false},
+    {"Move", "LT+L stick", "", 0, false, false},
+    {"Undo", "LB", "", 0, false, false},
+    {"Redo", "RB", "", 0, false, false},
+    {"Resize", "L3 / L4", "", 1, false, false},
+    {"Rulers", "R5", "", 1, false, false},
+    {"Palettes", "R3", "", 2, false, false},
+    {"Color", "R stick", "", 2, false, false},
+    {"Browse", "L/R stick", "", 2, false, false},
+    {"Apply", "A", "", 2, false, false},
+    {"Lospec", "Y", "", 2, false, false},
+    {"Import", "L3", "", 2, false, false},
+    {"Color range", "LB/RB", "", 2, false, false},
+    {"User palettes", "Dpad Up", "", 2, false, false},
+    {"All palettes", "Dpad Down", "", 2, false, false},
+    {"Retry feed", "X", "", 2, false, false},
+    {"Sketches", "View", "", 3, false, false},
+    {"Open", "A", "", 3, false, false},
+    {"Save", "LT+RT", "", 3, false, false},
+    {"Duplicate", "Y", "", 3, false, false},
+    {"Delete", "X", "", 3, false, false},
+    {"Restore", "LB", "", 3, false, false},
+    {"Preview", "L5", "", 4, false, false},
+    {"Browse", "L stick", "", 4, false, false},
+    {"Zoom", "LT/RT", "", 4, false, false},
+    {"Background", "A/X/Y", "", 4, false, false},
+    {"Settings", "Menu", "", 5, false, false},
+    {"Help", "R4", "", 5, false, false},
+    {"Back", "B", "", 5, false, false},
+    {"Quit", "Settings", "", 5, false, false},
+    {"Clear", "K", "", 6, false, false},
+    {"Erase fill", "Alt F", "", 6, false, false},
+    {"Save as", "Alt S", "", 6, false, false},
+    {"Export", "X", "", 6, false, false},
+    {"Native PNG", "Alt X", "", 6, false, false},
+    {"Screenshot", "F12", "", 6, false, false},
+    {"Autoplay", "Space", "", 6, false, false},
+#else
     {"Cursor", "Arrows", "F Z X C", 0, false, false},
     {"Draw", "Ok", "Enter", 0, false, false},
     {"Erase", "Del", "Backspace", 0, false, false},
@@ -27,9 +69,7 @@ constexpr Item kItems[] = {
     {"Undo", "Z", "Ctrl Z", 0, false, false},
     {"Redo", "Fn Z", "Ctrl Y", 0, false, false},
     {"Clear", "G0", "Fn Bksp", 0, false, false},
-#ifndef BITMAP16_STEAM_DECK
     {"Zoom", "+/-", "Fn+L/M", 1, false, false},
-#endif
     {"Edge jump", "Fn edge", "Shift dir", 1, false, false},
     {"Grid size", "G", "G", 1, false, false},
     {"Grid ruler", "R", "R", 1, false, false},
@@ -37,11 +77,6 @@ constexpr Item kItems[] = {
     {"Color 9-16", "Fn 1-8", "Fn 1-8", 2, false, false},
     {"Next color", "C", "I", 2, false, false},
     {"Palette", "P", "P", 2, false, false},
-#ifdef BITMAP16_STEAM_DECK
-    {"Pal range", "LB/RB", "", 2, false, false},
-    {"User palettes", "Dpad Up", "", 2, false, false},
-    {"Clear filter", "Dpad Down", "", 2, false, false},
-#endif
     {"Open", "O", "O", 3, false, false},
     {"Save", "S", "Ctrl S", 3, false, false},
     {"Save as", "Fn S", "Shift S", 3, false, false},
@@ -58,10 +93,16 @@ constexpr Item kItems[] = {
 #endif
     {"RGB on/off", "L Ok", "L Enter", 5, true, false},
     {"RGB Bright", "L +/-", "L +/-", 5, true, false},
+#endif
 };
 
 constexpr const char* kGroupNames[] = {
-    "DRAW", "CANVAS", "COLOR", "SKETCHES & FILES", "VIEWS", "DEVICE"};
+#ifdef BITMAP16_STEAM_DECK
+    "DRAW", "CANVAS", "PALETTES", "SKETCHES", "PREVIEW", "APP", "KEYBOARD"
+#else
+    "DRAW", "CANVAS", "COLOR", "SKETCHES & FILES", "VIEWS", "DEVICE"
+#endif
+};
 
 const Item& visibleItem(
     int index,
@@ -110,6 +151,29 @@ bool moveCursor(
   return true;
 }
 
+bool moveGroup(
+    State& state,
+    int delta,
+    bool includeLedMatrixControls,
+    bool includeBatteryControls) {
+  const int count = itemCount(includeLedMatrixControls, includeBatteryControls);
+  if (count == 0 || delta == 0) return false;
+  const int cursor = std::max(0, std::min(count - 1, state.cursor));
+  const int group = visibleItem(cursor, includeLedMatrixControls, includeBatteryControls).group;
+  const int direction = delta < 0 ? -1 : 1;
+  int next = cursor;
+  while (next >= 0 && next < count &&
+         visibleItem(next, includeLedMatrixControls, includeBatteryControls).group == group)
+    next += direction;
+  if (next < 0 || next >= count) return false;
+  const int nextGroup = visibleItem(next, includeLedMatrixControls, includeBatteryControls).group;
+  while (next > 0 &&
+         visibleItem(next - 1, includeLedMatrixControls, includeBatteryControls).group == nextGroup)
+    --next;
+  state.cursor = state.scrollOffset = next;
+  return true;
+}
+
 void render(
     Canvas& canvas,
     State& state,
@@ -117,7 +181,7 @@ void render(
     bool includeLedMatrixControls,
     bool includeBatteryControls,
     bool includeCtrlDraw) {
-#ifdef BITMAP16_CARDPUTER_ZERO
+#if defined(BITMAP16_CARDPUTER_ZERO) || defined(BITMAP16_STEAM_DECK)
   (void)includeCtrlDraw;
 #endif
   if (!canvas.isValid()) {
@@ -139,6 +203,22 @@ void render(
           state.cursor, includeLedMatrixControls, includeBatteryControls).group],
       4 + 7 * 6, 4);
 
+  int sectionEnd = totalItems;
+#ifdef BITMAP16_STEAM_DECK
+  const int group = visibleItem(state.cursor, includeLedMatrixControls, includeBatteryControls).group;
+  int sectionStart = state.cursor;
+  while (sectionStart > 0 &&
+         visibleItem(sectionStart - 1, includeLedMatrixControls, includeBatteryControls).group == group)
+    --sectionStart;
+  sectionEnd = state.cursor + 1;
+  while (sectionEnd < totalItems &&
+         visibleItem(sectionEnd, includeLedMatrixControls, includeBatteryControls).group == group)
+    ++sectionEnd;
+  state.scrollOffset = std::max(sectionStart, state.scrollOffset);
+  const int contentBottom = canvas.height() - 14;
+#else
+  const int contentBottom = canvas.height();
+#endif
   constexpr int startY = 18;
   constexpr int lineHeight = 14;
   constexpr int selectedLineHeight = 24;
@@ -164,14 +244,14 @@ void render(
       }
       y += i == state.cursor ? selectedLineHeight : lineHeight;
     }
-    if (y <= canvas.height()) {
+    if (y <= contentBottom) {
       break;
     }
     ++state.scrollOffset;
   }
 
   int y = startY;
-  for (int i = state.scrollOffset; i < totalItems; ++i) {
+  for (int i = state.scrollOffset; i < sectionEnd; ++i) {
     const Item& item = visibleItem(
         i, includeLedMatrixControls, includeBatteryControls);
     if (i > state.scrollOffset) {
@@ -182,11 +262,15 @@ void render(
         y += groupGap;
       }
     }
-    if (y >= canvas.height()) {
+    const bool selected = i == state.cursor;
+#ifdef BITMAP16_STEAM_DECK
+    if (y + (selected ? selectedLineHeight : lineHeight) > contentBottom) {
+#else
+    if (y >= contentBottom) {
+#endif
       break;
     }
 
-    const bool selected = i == state.cursor;
     const uint8_t textSize = selected ? 2 : 1;
     const int textY = selected ? y + 4 : y;
     canvas.setTextSize(textSize);
@@ -195,7 +279,7 @@ void render(
     const char* keyLabel = item.key;
 #ifdef BITMAP16_CARDPUTER_ZERO
     keyLabel = item.zeroKey;
-#else
+#elif !defined(BITMAP16_STEAM_DECK)
     if (includeCtrlDraw && std::strcmp(item.label, "Draw") == 0) {
       keyLabel = "Ok/Ctrl";
     }
@@ -203,6 +287,14 @@ void render(
     canvas.drawString(keyLabel, keyX, textY);
     y += selected ? selectedLineHeight : lineHeight;
   }
+#ifdef BITMAP16_STEAM_DECK
+  canvas.setTextSize(1);
+  canvas.setTextColor(theme.textSecondary);
+  canvas.setTextAlign(TextAlign::Left);
+  canvas.drawString("LB/RB:Sections", 3, canvas.height() - 11);
+  canvas.setTextAlign(TextAlign::Right);
+  canvas.drawString("B:Back", canvas.width() - 3, canvas.height() - 11);
+#endif
 }
 
 }  // namespace HelpView

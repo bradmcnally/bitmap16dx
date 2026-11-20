@@ -36,7 +36,7 @@ std::filesystem::path dataRoot() {
 }
 
 std::filesystem::path settingsRoot(const std::filesystem::path& data) {
-#ifdef BITMAP16_CARDPUTER_ZERO
+#if defined(BITMAP16_CARDPUTER_ZERO) || defined(BITMAP16_STEAM_DECK)
   const char* overrideConfig = std::getenv("BITMAP16_CONFIG_DIR");
   if (overrideConfig != nullptr && overrideConfig[0] != '\0') return overrideConfig;
   // Keep isolated test/data workspaces self-contained unless explicitly overridden.
@@ -51,7 +51,7 @@ std::filesystem::path settingsRoot(const std::filesystem::path& data) {
 }
 
 std::filesystem::path exportRoot(const std::filesystem::path& data) {
-#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+#if defined(BITMAP16_CARDPUTER_ZERO_DEVICE) || defined(BITMAP16_STEAM_DECK)
   // An isolated test workspace keeps its exports with the test data.
   const char* overrideRoot = std::getenv("BITMAP16_DATA_DIR");
   if (overrideRoot == nullptr || overrideRoot[0] == '\0') {
@@ -163,11 +163,26 @@ bool Workspace::initialize(Editor& editor) {
 bool Workspace::loadSettings() {
   settings_ = normalizeSettings(Settings{});
   std::ifstream input(configRoot_ / "settings.bin", std::ios::binary);
+#ifdef BITMAP16_STEAM_DECK
+  // Keep existing Deck preferences when adopting the shared configuration
+  // location. An existing configuration always wins over the legacy file.
+  bool migrating = false;
+  std::error_code error;
+  if (!input && configRoot_ != root_ &&
+      !std::filesystem::exists(configRoot_ / "settings.bin", error) && !error) {
+    input = std::ifstream(root_ / "settings.bin", std::ios::binary);
+    migrating = static_cast<bool>(input);
+  }
+#endif
   if (!input) return false;
   const std::vector<uint8_t> data(
       (std::istreambuf_iterator<char>(input)),
       std::istreambuf_iterator<char>());
-  return !input.bad() && decodeSettings(data, settings_);
+  const bool loaded = !input.bad() && decodeSettings(data, settings_);
+#ifdef BITMAP16_STEAM_DECK
+  if (loaded && migrating) saveSettings();
+#endif
+  return loaded;
 }
 
 bool Workspace::saveSettings() const {
@@ -229,13 +244,30 @@ bool Workspace::newSketch(Editor& editor) {
       16);
   editor.reset(sketch);
   activeIndex_ = -1;
+  detachedActivePath_.clear();
   return true;
 }
 
 bool Workspace::openSketch(std::size_t index, Editor& editor) {
-  if (index >= sketches_.size()) return false;
-  activeIndex_ = static_cast<int>(index);
-  editor.reset(sketches_[index]);
+  return openSketch(sketchKey(index), editor);
+}
+
+std::string Workspace::sketchKey(std::size_t index) const {
+  return index < sketchPaths_.size() ? sketchPaths_[index].string() : std::string{};
+}
+
+bool Workspace::openSketch(const std::string& key, Editor& editor) {
+  const auto found = std::find(sketchPaths_.begin(), sketchPaths_.end(), std::filesystem::path(key));
+  if (key.empty() || found == sketchPaths_.end()) return false;
+  std::ifstream input(*found, std::ios::binary);
+  const std::vector<uint8_t> data((std::istreambuf_iterator<char>(input)), {});
+  Sketch sketch;
+  if (input.bad() || SketchCodec::decode(data.data(), data.size(), sketch) != SketchCodec::Result::Ok) {
+    return false;
+  }
+  activeIndex_ = static_cast<int>(found - sketchPaths_.begin());
+  editor.reset(sketch);
+  detachedActivePath_.clear();
   return true;
 }
 
@@ -288,6 +320,7 @@ bool Workspace::saveSketch(const Editor& editor, bool saveAsNew) {
   activeIndex_ = found == sketchPaths_.end()
       ? -1
       : static_cast<int>(found - sketchPaths_.begin());
+  if (activeIndex_ >= 0) detachedActivePath_.clear();
   return activeIndex_ >= 0;
 }
 
@@ -339,6 +372,7 @@ bool Workspace::deleteSketch(std::size_t index) {
   deletedOriginalPath_ = original;
   deletedTrashPath_ = trash;
   deletedWasActive_ = original == activePath;
+  if (deletedWasActive_) detachedActivePath_ = original;
   if (!loadSketches()) return false;
   const auto active =
       std::find(sketchPaths_.begin(), sketchPaths_.end(), activePath);
@@ -369,7 +403,7 @@ bool Workspace::undoDelete() {
   std::error_code error;
   std::filesystem::rename(deletedTrashPath_, restored, error);
   if (error) return false;
-  const bool restoreActive = deletedWasActive_;
+  const bool restoreActive = deletedWasActive_ && detachedActivePath_ == deletedOriginalPath_;
   deletedOriginalPath_.clear();
   deletedTrashPath_.clear();
   deletedWasActive_ = false;
@@ -381,6 +415,7 @@ bool Workspace::undoDelete() {
   activeIndex_ = active == sketchPaths_.end()
       ? -1
       : static_cast<int>(active - sketchPaths_.begin());
+  if (restoreActive && activeIndex_ >= 0) detachedActivePath_.clear();
   return restoreActive ? activeIndex_ >= 0 : true;
 }
 
@@ -407,12 +442,16 @@ bool Workspace::exportSteamScreenshot(
     const Sketch& sketch,
     uint16_t background,
     std::filesystem::path& outputPath) const {
+  const auto directory = exportRoot(root_);
+  std::error_code error;
+  std::filesystem::create_directories(directory, error);
+  if (error) return false;
   int next = 1;
   do {
     std::ostringstream name;
     name << "screenshot-" << std::setw(4) << std::setfill('0') << next++
          << ".png";
-    outputPath = root_ / "exports" / name.str();
+    outputPath = directory / name.str();
   } while (std::filesystem::exists(outputPath));
 
   SteamScreenshot::Image image;
@@ -494,6 +533,14 @@ bool Workspace::deleteUserPalette(std::size_t index) {
   std::filesystem::rename(source, destination, error);
   if (error) return false;
   return reloadUserPalettes();
+}
+
+bool SketchStorage::save(bool asNew) { return workspace_.saveSketch(editor_, asNew); }
+bool SketchStorage::create() { return workspace_.newSketch(editor_); }
+bool SketchStorage::open(const std::string& key) { return workspace_.openSketch(key, editor_); }
+std::string SketchStorage::currentKey() const {
+  const int index = workspace_.activeIndex();
+  return index >= 0 ? workspace_.sketchKey(static_cast<std::size_t>(index)) : std::string{};
 }
 
 }  // namespace Desktop

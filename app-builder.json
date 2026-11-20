@@ -6,7 +6,7 @@
   "description": "Pixel-art sketchbook for Cardputer Zero",
   "store": {
     "summary": "Draw tiny pixel art, collect palettes, and export your sketches.",
-    "description": "A pocket pixel-art sketchbook with 8×8, 16×16, and 32×32 canvases. Draw, erase, fill, move, undo, and redo. Save sketches, browse your artwork, import Lospec palettes, and export PNGs. Includes light and dark themes and a screensaver.",
+    "description": "BitMap16 DX is a tiny pixel-art sketchbook for Cardputer ADV and Cardputer Zero, channeling the vibe of 2000s handheld game consoles.\n\nCreate pixel art on 8×8, 16×16, or 32×32 canvases. Draw, erase, and fill, with zoom, a pixel-accurate minimap, and 16-step undo and redo. Choose built-in palettes, swap colors, or browse the daily Lospec feed and import by name or URL. Preview your sketches in a slideshow, and export PNGs at 128×128 or their original size.",
     "icon": "platform_zero/store/icon.png",
     "screenshots": [
       "platform_zero/store/Cardputer_2026-11-19_21-40-59_1831.png",

@@ -41,6 +41,28 @@ Generated output goes into `build/desktop`, `build_zero_simulator`,
 Older local outputs are kept under `build/archive`, `build/releases`, or
 `build_zero_device/archive`; they are not part of the source repository.
 
+The shared `Editor` owns the live sketch, cursor, selected color, and undo/redo
+history on ADV and the SDL platforms. ADV keeps view state, file identity,
+hardware effects, and storage outside the editor; saving and rendering read the
+editor's sketch directly. ESP32 flood fill uses static scratch buffers because
+edits run serially and the firmware loop has limited stack space.
+
+The SDL `PaletteBrowser` owns palette catalog snapshots, Lospec requests and
+cache freshness, refresh cooldown, filters, and save-before-apply decisions.
+Its download adapter supplies asynchronous results; the same interface accepts
+controlled offline results in tests. SDL retains input mapping, frame pacing,
+rendering, and navigation between views. Catalog backing data remains valid
+across workspace palette reloads.
+
+The shared `SketchWorkflow` owns unsaved-change tracking and pending New, Open,
+and Quit decisions. ADV and SDL storage adapters perform file operations, while
+their input and rendering code presents the save warning. Open retains a file
+identity across save-driven catalog reordering; failed saves and failed opens
+preserve the current drawing. SDL compares against the saved sketch; ADV retains
+its existing edit-since-save warning policy. Losing a saved copy counts as unsaved
+on both platforms. Restoring a deleted SDL file only reattaches it if its detached
+sketch is still current.
+
 For planned iPhone and iPad support, see the [iOS plan](plans/ios.md).
 
 
@@ -58,6 +80,11 @@ To upload to an attached ADV:
 ```sh
 pio run -e m5stack-cardputer -t upload
 ```
+
+PlatformIO detects the USB serial port automatically. If detection fails or
+multiple devices are connected, run `pio device list` and add
+`--upload-port <device>` to the upload command, replacing `<device>` with the
+listed device path.
 
 
 ## Cardputer Zero device build
@@ -96,6 +123,15 @@ the 1280×800 display and enables SDL controller input:
 cmake --preset steamdeck
 cmake --build --preset steamdeck
 ```
+
+On a Deck with the existing `dev` Distrobox container, the **Update and Build**
+launcher runs `platform_steamdeck/update_and_build.sh`. The script pulls with
+`--ff-only`, builds, runs CTest, verifies a Linux x86-64 executable, and updates
+`~/Applications/bitmap16dx/bitmap16dx_desktop`. A failed build or check preserves
+the installed executable. Set `BITMAP16_STEAM_DECK_INSTALL_DIR` for a different
+installation directory. The script resets stale feed settings to the preset
+default; set the environment variable `BITMAP16_LOSPEC_FEED_URL` to keep an
+explicit override, including an empty value for direct API development.
 
 See [the Steam Deck sideload guide](../platform_steamdeck/README.md) for the
 controller layout and copy/run instructions.
@@ -292,8 +328,14 @@ same optional key setup as the [Zero feed configuration](#zero-feed-configuratio
    returns to the previous screen. Confirm R5 toggles the grid rulers.
 9. Test both Gaming Mode and Desktop Mode, then report any incorrect button
    labels, dead-zone problems, double movements, or missed repeats.
-10. Press F12 and inspect the resulting 1280x800 PNG in `exports/`. Confirm it
+10. Press F12 and inspect the resulting 1280x800 PNG in `~/Pictures/BitMap16DX/`. Confirm it
     contains only integer-scaled artwork and the selected background.
+11. In Help, use LB/RB to visit every section and confirm controller labels and
+    footer prompts stay clear of the content. In local Palettes, Import belongs
+    at the left and Browse Lospec at the right, matching Zero's alignment.
+12. Open Import with L3 and leave the system keyboard up through several cursor
+    blinks. Confirm the dialog stays visible, type a slug, then check Cancel
+    and Import focus transitions without flashing or reopening the keyboard.
 
 SDL exposes the Deck's rear grips as controller paddles. If Steam Input does
 not pass them through with the selected template, bind L4, L5, R4, and R5 to
