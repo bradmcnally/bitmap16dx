@@ -1,9 +1,10 @@
 # Cardputer Zero store release
 
 The listing is defined in [`app-builder.json`](../app-builder.json). It uses
-**BitMap16 DX**, package name **bitmap16dx**, category **Creative & Office**,
-and share code **16DX**. Keep the package name and share code stable after the
-first publication. Availability is checked by the store at submission time.
+**BitMap16 DX**, public developer name **beepbot**, package name **bitmap16dx**,
+category **Creative & Office**, and share code **16DX**. Keep the package name
+and share code stable after the first publication. Availability is checked by
+the store at submission time.
 
 ## Build and check
 
@@ -15,11 +16,11 @@ python3 platform_zero/tools/check_store.py
 ```
 
 The package command builds on the Zero and checks the resulting
-`build_zero_device/bitmap16dx_0.8.0-1_arm64.deb`. Local installation uses the
+`build_zero_device/bitmap16dx_0.9.0-1_arm64.deb`. Local installation uses the
 same package. To check a package again:
 
 ```sh
-python3 platform_zero/tools/check_store.py --deb build_zero_device/bitmap16dx_0.8.0-1_arm64.deb
+python3 platform_zero/tools/check_store.py --deb build_zero_device/bitmap16dx_0.9.0-1_arm64.deb
 ```
 
 The checks cover listing assets, version, package name, architecture, the ARM64
@@ -33,15 +34,12 @@ CMake/CPack package for submission.
 
 ## Listing assets
 
-The listing uses a 256×256 icon and three 320×170 PNG screenshots in
-[`store/`](store/). They are rendered from the application's embedded pencil
-and UI views, using a sample drawing. The app launcher uses a separate
-128×128 PNG in `launcher/bitmap16dx.png`. Regenerate the assets after UI changes:
+The listing uses a 256×256 icon and six 320×170 PNG screenshots in
+[`store/`](store/), in the order listed in `app-builder.json`. The app launcher
+uses a separate 128×128 PNG in `launcher/bitmap16dx.png`. Check the listing
+assets after UI changes:
 
 ```sh
-cmake --preset zero
-cmake --build --preset zero --target bitmap16dx_store_assets
-./build_zero_simulator/bitmap16dx_store_assets platform_zero/store platform_zero/launcher/bitmap16dx.png
 python3 platform_zero/tools/check_store.py
 ```
 

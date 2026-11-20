@@ -1,7 +1,7 @@
 {
   "app_name": "BitMap16 DX",
   "package_name": "bitmap16dx",
-  "version": "0.8.0-1",
+  "version": "0.9.0-1",
   "bin_name": "bitmap16dx",
   "description": "Pixel-art sketchbook for Cardputer Zero",
   "store": {
@@ -9,9 +9,12 @@
     "description": "A pocket pixel-art sketchbook with 8×8, 16×16, and 32×32 canvases. Draw, erase, fill, move, undo, and redo. Save sketches, browse your artwork, import Lospec palettes, and export PNGs. Includes light and dark themes and a screensaver.",
     "icon": "platform_zero/store/icon.png",
     "screenshots": [
-      "platform_zero/store/drawing.png",
-      "platform_zero/store/drawing-dark.png",
-      "platform_zero/store/palettes.png"
+      "platform_zero/store/Cardputer_2026-11-19_21-40-59_1831.png",
+      "platform_zero/store/Cardputer_2026-11-19_21-43-12_EC11.png",
+      "platform_zero/store/Cardputer_2026-11-19_21-41-53_C5EB.png",
+      "platform_zero/store/Cardputer_2026-11-19_21-17-35_CFD8.png",
+      "platform_zero/store/Cardputer_2026-11-19_21-42-26_2360.png",
+      "platform_zero/store/Cardputer_2026-11-19_21-17-25_F906.png"
     ],
     "categories": [
       "Creative & Office"
@@ -26,7 +29,7 @@
       "external_display": false
     },
     "author": {
-      "display_name": "Brad McNally",
+      "display_name": "beepbot",
       "github": "bradmcnally"
     },
     "source_repo": "https://github.com/bradmcnally/bitmap16dx",
