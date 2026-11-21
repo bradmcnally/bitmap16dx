@@ -49,6 +49,11 @@ Use a fresh install or isolated data folder for the first-run checks, then repea
 
 ## Zero hardware
 
+- [ ] With the switch on HUB, connect a USB keyboard before launch and during use; arrows navigate and Enter+Arrow or Space+Arrow draws continuously. Backspace/Delete+Arrow erases, while built-in Fn+Backspace still clears.
+- [ ] USB Ctrl+Z undoes; Ctrl+Shift+Z and Ctrl+Y redo. Shift+Arrow jumps when zoomed, M+Arrow moves artwork, F1–F8 selects colors 9–16, and punctuation works in Lospec import.
+- [ ] Use both keyboards together, unplug USB while holding Draw, a direction, a modifier, or Escape, and reconnect. No keys remain stuck, the app stays open, and the built-in keyboard still works.
+- [ ] USB F/Z/X/C do not navigate Canvas, Settings, Help, Palettes, Sketches, resize, or confirmation dialogs; built-in F/Z/X/C still navigate, and Ctrl+F/Z/X retain their commands.
+- [ ] While Help is open, connect and disconnect USB and alternate between the keyboards. HELP USB shows Arrows, M arrows, F1–F8, and USB shortcuts; built-in input restores the device mappings without leaving Help.
 - [ ] Package installs and launches from HOME; Escape returns through views and a three-second hold returns HOME.
 - [ ] Keyboard shortcuts match the [Zero guide](../platform_zero/README.md#controls); display brightness responds and persists, and the beta Warmth setting is hidden.
 - [ ] Battery and charging indicators reflect device state; shake undo appears only on supported hardware.

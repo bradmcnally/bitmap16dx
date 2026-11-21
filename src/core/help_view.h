@@ -10,6 +10,7 @@ namespace HelpView {
 struct State {
   int cursor = 0;
   int scrollOffset = 0;
+  bool externalKeyboard = false;
 };
 
 struct Theme {

@@ -6,7 +6,7 @@ the full list by view.
 
 ## Design rules
 
-- Bare `F`, `Z`, `X`, and `C` act as Up, Left, Down, and
+- On the built-in keyboard, bare `F`, `Z`, `X`, and `C` act as Up, Left, Down, and
   Right, as recommended by the Cardputer Zero key specification.
 - The Zero firmware's `Fn+F`, `Fn+Z`, `Fn+X`, and `Fn+C` arrow combinations
   remain supported for normal navigation.
@@ -35,7 +35,7 @@ release before the countdown finishes to stay in the app.
 | Jump to bottom edge | `Fn+Down` | `Shift+X` |
 | Jump to left edge | `Fn+Left` | `Shift+Z` |
 | Jump to right edge | `Fn+Right` | `Shift+C` |
-| Draw pixel | OK/Enter or Ctrl | Enter |
+| Draw pixel | OK/Enter or Ctrl | Enter or Space |
 | Erase pixel | Backspace/Delete | Backspace |
 | Clear canvas | G0 | `Fn+Backspace` |
 | Fill | `F` | `Ctrl+F` |
@@ -63,8 +63,14 @@ release before the countdown finishes to stay in the app.
 | Toggle RGB matrix | `L` + Enter | `L` + Enter (simulator) |
 | Adjust RGB matrix brightness | `L` + `+/-` | `L` + `+/-` (simulator) |
 
-`M+F/Z/X/C` is the only Zero artwork-movement form. Combining `M` with a
-firmware Fn-arrow would require three held keys and is not supported.
+On the built-in keyboard, use `M+F/Z/X/C` to move artwork. Combining `M` with
+a firmware Fn-arrow would require three held keys and is not supported.
+An external USB keyboard supports `M+Arrow` and `Shift+Arrow`, plus
+`Ctrl+Shift+Z` for redo. USB Delete erases; built-in Fn+Backspace clears.
+See the [USB keyboard controls](README.md#usb-keyboard).
+USB F/Z/X/C remain letters in every view and dialog. Help follows the keyboard
+most recently used, defaulting to USB when it connects and returning to the
+device mappings when the last USB keyboard disconnects.
 
 ## Sketches
 

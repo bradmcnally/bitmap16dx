@@ -68,7 +68,7 @@ Page Down, or backlight keys.
 | Key | Action |
 |---|---|
 | Direction keys | Move the cursor. Hold a direction to repeat. |
-| Enter / Backspace | Draw / erase a pixel. Hold the key while moving to draw or erase a line. |
+| Enter or Space / Backspace | Draw / erase a pixel. Hold the key while moving to draw or erase a line. |
 | `Ctrl+F` / `E` | Flood fill / erase fill. |
 | `Fn+Backspace` | Clear the canvas. |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo. |
@@ -96,6 +96,37 @@ Page Down, or backlight keys.
 | Slideshow | Left and Right / Space | Browse saved sketches / toggle three-second auto-advance. |
 
 See the [ADV and Zero key comparison](CONTROLS.md) for platform differences.
+
+### USB keyboard
+
+Set the Zero's USB switch to **HUB** (Host mode), then plug a standard USB
+keyboard into USB-A. You can connect it before starting the app or while the
+app is running. The built-in keyboard remains active; unplugging the USB
+keyboard releases its held controls without closing the app.
+
+| USB keyboard | Action |
+|---|---|
+| Arrow keys | Move the cursor or navigate menus. Hold to repeat. |
+| Enter, numpad Enter, or Space | Draw. Hold while using arrows to draw a line. Enter also confirms selections. |
+| Backspace or Delete | Erase. Hold while using arrows to erase a line. In Sketches and Palettes, delete the selection. |
+| Escape | Go back; hold for three seconds to return HOME. |
+| `Ctrl+Z` / `Ctrl+Shift+Z` or `Ctrl+Y` | Undo / redo. |
+| `Shift+Arrow` | Jump to an artwork edge while zoomed. |
+| `M+Arrow` | Move the artwork. |
+| `+` / `-` or Page Up / Page Down | Zoom in / out. |
+| F1–F8 | Select colors 9–16. |
+
+The existing letter and Ctrl shortcuts also work. USB typing uses a US QWERTY
+layout; the built-in keyboard retains its Sym legends and Fn shortcuts,
+including **Fn+Backspace to clear the canvas**. USB Delete only erases.
+On USB, **F/Z/X/C are ordinary letters**, including in menus and dialogs;
+use the actual arrow keys to navigate. Their Ctrl shortcuts still work.
+
+Help switches to **HELP USB** when a USB keyboard connects or you press one of
+its keys, showing Arrows, M+Arrow, F1–F8, and the other USB mappings. Using the
+built-in keyboard switches Help back to the device mappings. Unplugging the
+last USB keyboard also restores the device mappings. Controls labeled
+**On device** use the Zero's built-in keyboard.
 
 ## Using the app
 

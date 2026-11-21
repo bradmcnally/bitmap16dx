@@ -178,6 +178,18 @@ launch user needs write access to `/dev/fb_lcd` (or `/dev/fb0`) and read
 access to the keypad's input event device. The brightness shortcut also
 requires write access to `/sys/class/backlight/backlight/brightness`.
 
+USB keyboards also require read access to their `/dev/input/event*` devices.
+The Zero adapter discovers keyboards by their evdev key capabilities every
+half second, tracks held keys per device, and translates standard USB keys
+separately from the built-in keypad's Sym codes. No USB library is needed.
+The `zero_usb_keyboard` test checks merged holds, repeat timing, modifiers,
+Delete and numpad Enter mappings, keyboard-specific navigation, and
+disconnect/reconnect behavior. The `zero_keyboard_help` test verifies that
+the active keyboard's labels fit the Help screen. Built-in events retain
+their source so only their F/Z/X/C keys become arrows; USB letters stay letters
+in every view and dialog. Help follows the last keyboard used and refreshes
+on USB connection/disconnection, including while idle.
+
 ### Package and reinstall from your Mac
 
 
@@ -242,9 +254,9 @@ BITMAP16_DATA_DIR=/tmp/bitmap16dx-zero-test \
 
 Recommended all-at-once test:
 
-1. Navigate with both `F/Z/X/C` and desktop arrows. Draw with Enter, erase
+1. Navigate with desktop arrows. Draw with Enter or Space, erase
    with Backspace, fill with `Ctrl+F`, erase fill with `E`, undo/redo with
-   `Ctrl+Z`/`Ctrl+Y`, jump with `Shift+F/Z/X/C`, move with `M+F/Z/X/C`, and
+   `Ctrl+Z`/`Ctrl+Y`, jump with `Shift+Arrow`, move with `M+Arrow`, and
    clear with Delete.
 2. Select colors 1-8 and colors 9-16 with `F1`-`F8`, cycle with `I`, apply
    built-in palettes,
@@ -370,3 +382,4 @@ In the Zero simulator, use desktop arrows for the `Fn` arrow combinations,
 Down for `Fn+L` and `Fn+M`. Use `B` with `+` or `-` for simulated display
 brightness. RGB matrix support, its settings, and its simulator window are
 disabled in Zero builds.
+The simulator uses the USB navigation and Help layout: F/Z/X/C remain letters.
