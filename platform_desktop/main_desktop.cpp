@@ -35,6 +35,10 @@
 #include "workspace.h"
 #include "palette_browser.h"
 
+#ifdef BITMAP16_CARDPUTER_ZERO
+#include "../platform_zero/keyboard_event.h"
+#endif
+
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
 #include "../platform_zero/imu.h"
 #include "../platform_zero/native_io.h"
@@ -68,6 +72,16 @@ const Uint8* keyboardState() {
   return SDL_GetKeyboardState(nullptr);
 #endif
 }
+
+#ifdef BITMAP16_CARDPUTER_ZERO
+bool externalKeyboardActive() {
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+  return nativeIo.externalKeyboardActive();
+#else
+  return true;
+#endif
+}
+#endif
 
 int waitEvent(SDL_Event* event, int timeout = -1) {
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
@@ -683,6 +697,9 @@ void renderCurrentView(
     bitmap16::CanvasView::render(
         canvas, state, canvasTheme(settings), &canvasAssets(settings));
   } else if (view == DesktopView::Help) {
+#ifdef BITMAP16_CARDPUTER_ZERO
+    helpState.externalKeyboard = externalKeyboardActive();
+#endif
     bitmap16::HelpView::render(
         canvas,
         helpState,
@@ -1382,8 +1399,7 @@ int main(int argc, char** argv) {
       if (confirmation.type == SDL_KEYDOWN && confirmation.key.repeat == 0) {
         key = confirmation.key.keysym.sym;
 #ifdef BITMAP16_CARDPUTER_ZERO
-        if (key == SDLK_z) key = SDLK_LEFT;
-        if (key == SDLK_c) key = SDLK_RIGHT;
+        key = bitmap16::Zero::navigationKey(confirmation);
 #endif
       } else if (confirmation.type == SDL_CONTROLLERBUTTONDOWN) {
         switch (confirmation.cbutton.button) {
@@ -1428,8 +1444,7 @@ int main(int argc, char** argv) {
       if (modalEvent.type == SDL_KEYDOWN && modalEvent.key.repeat == 0) {
         modalKey = modalEvent.key.keysym.sym;
 #ifdef BITMAP16_CARDPUTER_ZERO
-        if (modalKey == SDLK_z) modalKey = SDLK_LEFT;
-        if (modalKey == SDLK_c) modalKey = SDLK_RIGHT;
+        modalKey = bitmap16::Zero::navigationKey(modalEvent);
 #endif
       } else if (modalEvent.type == SDL_CONTROLLERBUTTONDOWN) {
         switch (modalEvent.cbutton.button) {
@@ -1498,6 +1513,14 @@ int main(int argc, char** argv) {
       bool repeated = false;
       if (modalEvent.type == SDL_KEYDOWN) {
         key = modalEvent.key.keysym.sym;
+#ifdef BITMAP16_CARDPUTER_ZERO
+        key = bitmap16::Zero::navigationKey(modalEvent);
+#else
+        if (key == SDLK_x) key = SDLK_UP;
+        if (key == SDLK_f) key = SDLK_DOWN;
+        if (key == SDLK_z) key = SDLK_LEFT;
+        if (key == SDLK_c) key = SDLK_RIGHT;
+#endif
         repeated = modalEvent.key.repeat != 0;
       } else if (modalEvent.type == SDL_CONTROLLERBUTTONDOWN) {
         switch (modalEvent.cbutton.button) {
@@ -1517,12 +1540,12 @@ int main(int argc, char** argv) {
           if (desktopResizeAction == 1) chosenSize = sizes[selection];
           break;
         }
-      } else if (key == SDLK_UP || key == SDLK_x) {
+      } else if (key == SDLK_UP) {
         desktopResizeAction = -1;
-      } else if (key == SDLK_DOWN || key == SDLK_f) {
+      } else if (key == SDLK_DOWN) {
         if (desktopResizeAction < 0) desktopResizeAction = 1;
-      } else if (key == SDLK_z || key == SDLK_LEFT || key == SDLK_c || key == SDLK_RIGHT) {
-        const int delta = key == SDLK_z || key == SDLK_LEFT ? -1 : 1;
+      } else if (key == SDLK_LEFT || key == SDLK_RIGHT) {
+        const int delta = key == SDLK_LEFT ? -1 : 1;
         if (desktopResizeAction < 0) selection = std::clamp(selection + delta, 0, 2);
         else desktopResizeAction = std::clamp(desktopResizeAction + delta, 0, 1);
       } else {
@@ -2199,6 +2222,10 @@ int main(int argc, char** argv) {
     }
 #endif
     const int eventAvailable = waitEvent(&event, eventWait);
+#ifdef BITMAP16_CARDPUTER_ZERO
+    if (currentView == DesktopView::Help &&
+        helpState.externalKeyboard != externalKeyboardActive()) renderNow();
+#endif
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
     if (zeroHomeRequested) break;
 #endif
@@ -2275,9 +2302,7 @@ int main(int argc, char** argv) {
       const Uint8* pointerKeys = keyboardState();
       const bool pointerDrawHeld = mouseDrawHeld ||
           pointerKeys[SDL_SCANCODE_RETURN] != 0 ||
-#ifndef BITMAP16_CARDPUTER_ZERO
           pointerKeys[SDL_SCANCODE_SPACE] != 0 ||
-#endif
           (controller != nullptr && SDL_GameControllerGetButton(
               controller, SDL_CONTROLLER_BUTTON_A) != 0);
       const bool pointerEraseHeld = mouseEraseHeld ||
@@ -2597,23 +2622,16 @@ int main(int argc, char** argv) {
 #endif
     bool zeroEdgeJump = false;
 #ifdef BITMAP16_CARDPUTER_ZERO
+    key = bitmap16::Zero::navigationKey(event, currentView == DesktopView::Canvas);
     if (key == SDLK_HELP) key = SDLK_h;
-    if (!ctrlHeld && !altHeld &&
-        (!shiftHeld || currentView == DesktopView::Canvas)) {
-      SDL_Keycode direction = SDLK_UNKNOWN;
-      if (key == SDLK_f) direction = SDLK_UP;
-      if (key == SDLK_x) direction = SDLK_DOWN;
-      if (key == SDLK_z) direction = SDLK_LEFT;
-      if (key == SDLK_c) direction = SDLK_RIGHT;
-      if (direction != SDLK_UNKNOWN) {
-        key = direction;
-        zeroEdgeJump = shiftHeld && currentView == DesktopView::Canvas;
-      }
-    }
 #endif
     const bool arrow =
         key == SDLK_UP || key == SDLK_DOWN ||
         key == SDLK_LEFT || key == SDLK_RIGHT;
+#ifdef BITMAP16_CARDPUTER_ZERO
+    zeroEdgeJump = zeroEdgeJump ||
+        (arrow && shiftHeld && !ctrlHeld && !altHeld && currentView == DesktopView::Canvas);
+#endif
     const bool paletteControllerHorizontalHeld =
         currentView == DesktopView::Palette &&
         controller != nullptr &&
@@ -2633,9 +2651,7 @@ int main(int argc, char** argv) {
     const bool matrixHeld = platformHasLedMatrixControls() && keyboard[SDL_SCANCODE_L] != 0;
     const bool drawHeld = mouseDrawHeld ||
         keyboard[SDL_SCANCODE_RETURN] != 0 ||
-#ifndef BITMAP16_CARDPUTER_ZERO
         keyboard[SDL_SCANCODE_SPACE] != 0 ||
-#endif
         (controller != nullptr &&
          SDL_GameControllerGetButton(
              controller, SDL_CONTROLLER_BUTTON_A) != 0);
@@ -3072,7 +3088,7 @@ int main(int argc, char** argv) {
 #endif
         ) {
 #ifdef BITMAP16_CARDPUTER_ZERO
-      const bool redo = key == SDLK_y;
+      const bool redo = key == SDLK_y || (key == SDLK_z && shiftHeld);
 #else
       const bool redo = altHeld;
 #endif
@@ -3113,11 +3129,7 @@ int main(int argc, char** argv) {
       changed = true;
     } else if (
         currentView == DesktopView::Canvas &&
-        (key == SDLK_RETURN
-#ifndef BITMAP16_CARDPUTER_ZERO
-         || key == SDLK_SPACE
-#endif
-         )) {
+        (key == SDLK_RETURN || key == SDLK_SPACE)) {
       changed = editor.draw();
     } else if (currentView == DesktopView::Canvas &&
 #ifdef BITMAP16_CARDPUTER_ZERO

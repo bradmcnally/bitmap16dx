@@ -2,7 +2,6 @@
 
 #include <SDL.h>
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -11,6 +10,7 @@
 #include "core/display_warmth.h"
 #include "core/canvas.h"
 #include "esc_hold.h"
+#include "keyboard_devices.h"
 #include <vector>
 
 namespace bitmap16::Zero {
@@ -27,7 +27,8 @@ public:
   void setDisplayWarmth(uint8_t level) { displayWarmth_ = level; }
   int pollEvent(SDL_Event* event);
   int waitEvent(SDL_Event* event, int timeoutMs);
-  const Uint8* keyboardState() const { return keys_.data(); }
+  const Uint8* keyboardState() const { return keyboards_.keys(); }
+  bool externalKeyboardActive() const { return keyboards_.externalActive(); }
   bool isHomeEvent(const SDL_Event& event) const { return event.type == homeEventType_; }
   bool escapeHeld() const { return escHold_.pressed(); }
   bool isBacklightEvent(const SDL_Event& event) const {
@@ -39,11 +40,9 @@ private:
   void redrawEscCountdown();
   bool updateEsc(SDL_Event* event);
 
-  void fillKeyEvent(
-      SDL_Event* event, SDL_Scancode scan, bool pressed, bool repeat) const;
-
   Uint32 backlightEventType_ = static_cast<Uint32>(-1);
   Uint32 homeEventType_ = static_cast<Uint32>(-1);
+  Uint32 keyboardLayoutEventType_ = static_cast<Uint32>(-1);
   EscHold escHold_;
   int countdown_ = 0;
   std::vector<uint16_t> lastFrame_;
@@ -51,7 +50,7 @@ private:
   int frameWidth_ = 0;
   int frameHeight_ = 0;
   int framebuffer_ = -1;
-  int keyboard_ = -1;
+  KeyboardDevices keyboards_;
   uint8_t* mapping_ = nullptr;
   std::size_t mappingSize_ = 0;
   bool directWrite_ = false;
@@ -59,12 +58,6 @@ private:
   DisplayWarmth warmthFilter_;
   fb_fix_screeninfo fixed_{};
   fb_var_screeninfo mode_{};
-  std::array<Uint8, SDL_NUM_SCANCODES> keys_{};
-
-  static constexpr std::array kDirectionKeys = {
-      SDL_SCANCODE_UP, SDL_SCANCODE_LEFT, SDL_SCANCODE_DOWN, SDL_SCANCODE_RIGHT,
-      SDL_SCANCODE_F, SDL_SCANCODE_Z, SDL_SCANCODE_X, SDL_SCANCODE_C};
-  std::array<Uint32, kDirectionKeys.size()> nextDirectionRepeat_{};
 };
 
 }  // namespace bitmap16::Zero

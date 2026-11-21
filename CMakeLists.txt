@@ -119,7 +119,8 @@ if(BITMAP16_CARDPUTER_ZERO_DEVICE)
     message(FATAL_ERROR "The Cardputer Zero device preset requires Linux. Use the zero preset for simulation.")
   endif()
   target_sources(bitmap16dx_desktop PRIVATE
-    platform_zero/native_io.cpp platform_zero/imu.cpp src/core/shake_detector.cpp)
+    platform_zero/native_io.cpp platform_zero/keyboard_devices.cpp
+    platform_zero/keyboard_state.cpp platform_zero/imu.cpp src/core/shake_detector.cpp)
   target_compile_definitions(
     bitmap16dx_desktop PRIVATE BITMAP16_CARDPUTER_ZERO_DEVICE=1)
 endif()
@@ -129,6 +130,27 @@ if(BITMAP16_STEAM_DECK)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(bitmap16dx_zero_keyboard_test
+    platform_zero/tests/test_keyboard.cpp platform_zero/keyboard_state.cpp)
+  target_include_directories(bitmap16dx_zero_keyboard_test PRIVATE platform_zero)
+  if(TARGET SDL2::SDL2)
+    target_link_libraries(bitmap16dx_zero_keyboard_test PRIVATE SDL2::SDL2)
+  else()
+    target_link_libraries(bitmap16dx_zero_keyboard_test PRIVATE PkgConfig::SDL2)
+  endif()
+  if(NOT MSVC)
+    target_compile_options(bitmap16dx_zero_keyboard_test PRIVATE -Wall -Wextra -Werror)
+  endif()
+  add_test(NAME zero_usb_keyboard COMMAND bitmap16dx_zero_keyboard_test)
+  add_executable(bitmap16dx_zero_help_test
+    platform_zero/tests/test_help.cpp src/core/help_view.cpp src/core/canvas.cpp)
+  target_include_directories(bitmap16dx_zero_help_test PRIVATE src)
+  target_compile_definitions(bitmap16dx_zero_help_test PRIVATE
+    BITMAP16_CARDPUTER_ZERO=1 BITMAP16_CARDPUTER_ZERO_DEVICE=1)
+  if(NOT MSVC)
+    target_compile_options(bitmap16dx_zero_help_test PRIVATE -Wall -Wextra -Werror)
+  endif()
+  add_test(NAME zero_keyboard_help COMMAND bitmap16dx_zero_help_test)
   if(BITMAP16_STEAM_DECK)
     add_executable(bitmap16dx_steamdeck_help_test
       platform_desktop/tests/test_steamdeck_help.cpp src/core/help_view.cpp src/core/canvas.cpp)
