@@ -1,5 +1,6 @@
 """Exercise build/install failures without touching the real checkout or app."""
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,6 +10,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "update_and_build.sh"
+LAUNCHER = SCRIPT.with_name("run_bitmap16dx.sh")
 
 
 class UpdateAndBuild(unittest.TestCase):
@@ -18,6 +20,8 @@ class UpdateAndBuild(unittest.TestCase):
         self.root = Path(self.directory.name)
         (self.root / "platform_steamdeck").mkdir()
         shutil.copy2(SCRIPT, self.root / "platform_steamdeck/update_and_build.sh")
+        if LAUNCHER.exists():
+            shutil.copy2(LAUNCHER, self.root / "platform_steamdeck/run_bitmap16dx.sh")
         (self.root / "third_party/picojson").mkdir(parents=True)
         (self.root / "third_party/picojson/picojson.h").write_text("JSON license")
         (self.root / "LICENSE").write_text("App license")
@@ -28,6 +32,8 @@ class UpdateAndBuild(unittest.TestCase):
         (self.install / "bitmap16dx_desktop").write_text("previous working app")
         self.environment = os.environ.copy()
         self.environment.pop("BITMAP16_LOSPEC_FEED_URL", None)
+        self.environment.pop("CONTAINER_ID", None)
+        self.environment.pop("BITMAP16_STEAM_DECK_CONTAINER", None)
         self.environment.update(PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                                 BITMAP16_STEAM_DECK_INSTALL_DIR=str(self.install))
         self.command("uname", "print('Linux' if sys.argv[1] == '-s' else 'x86_64')")
@@ -60,7 +66,7 @@ if '--build' in sys.argv:
     def test_success_updates_the_existing_shortcut_target(self):
         result = self.run_build()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual((self.install / "bitmap16dx_desktop").read_bytes(),
+        self.assertEqual((self.install / "bitmap16dx_desktop.bin").read_bytes(),
                          (self.root / "build_steamdeck/bitmap16dx_desktop").read_bytes())
         self.assertTrue(os.access(self.install / "bitmap16dx_desktop", os.X_OK))
         self.assertEqual((self.install / "music/track.mp3").read_bytes(), b'music data')
@@ -73,6 +79,37 @@ if '--build' in sys.argv:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("-DBITMAP16_LOSPEC_FEED_URL=https://example.test/palettes.json",
                       (self.root / "configure-log.txt").read_text())
+
+    def test_steam_shortcut_enters_the_runtime_container(self):
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.command("distrobox", """
+import json
+from pathlib import Path
+Path(os.environ['RUNTIME_ARGS']).write_text(json.dumps(sys.argv[1:]))
+sys.exit(23)
+""")
+        recorded = self.root / "runtime-args.json"
+        result = subprocess.run([str(self.install / "bitmap16dx_desktop"), "--windowed"],
+                                env=dict(self.environment, RUNTIME_ARGS=str(recorded)),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+        self.assertEqual(json.loads(recorded.read_text()),
+                         ["enter", "--name", "dev", "--no-tty", "--",
+                          str(self.install / "bitmap16dx_desktop.bin"), "--windowed"])
+
+    def test_launch_inside_the_runtime_container_does_not_reenter_it(self):
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        binary = self.install / "bitmap16dx_desktop.bin"
+        binary.write_text('#!/usr/bin/env bash\nprintf "native:%s\\n" "$1"\n')
+        binary.chmod(0o755)
+        self.command("distrobox", "sys.exit(99)")
+        result = subprocess.run([str(self.install / "bitmap16dx_desktop"), "--windowed"],
+                                env=dict(self.environment, CONTAINER_ID="dev"),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "native:--windowed\n")
 
     def test_failed_checks_keep_the_installed_app(self):
         result = self.run_build(CHECK_FAILURE="7")

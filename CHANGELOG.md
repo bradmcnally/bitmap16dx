@@ -23,6 +23,7 @@ adds a Cardputer Zero package.
 
 ### Fixed
 
+- Fixed Steam Deck builds exiting at launch when SDL2_mixer is only installed in the build container. The Steam shortcut now launches through the same Distrobox runtime.
 - Fixed Zero Sym-key input, including hyphens, periods, and slashes in palette names and URLs.
 - Fixed the save-changes prompt flashing when opening or moving between buttons.
 - Fixed the import-preview cartridge appearing without its entrance animation.

@@ -65,6 +65,7 @@ fi
   echo "Source: $source_revision"
   echo "Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
   echo "Target: Linux x86-64, Steam Deck 320x200 at 4x scale"
+  echo "Runtime: Distrobox dev (override with BITMAP16_STEAM_DECK_CONTAINER)"
 } > "$steam_install_dir/build-info.txt"
 # Replace the same executable used by the documented Steam shortcut only after
 # build and checks pass. Rename keeps an interrupted copy from damaging it.
@@ -75,7 +76,9 @@ if [[ -d "$steam_install_dir/music" ]]; then
   mv "$steam_install_dir/music" "$steam_install_dir/.music.previous"
 fi
 mv "$music_stage" "$steam_install_dir/music"
-install -m 755 "$built_executable" "$steam_install_dir/.bitmap16dx_desktop.new"
+install -m 755 "$built_executable" "$steam_install_dir/.bitmap16dx_desktop.bin.new"
+install -m 755 platform_steamdeck/run_bitmap16dx.sh "$steam_install_dir/.bitmap16dx_desktop.new"
+mv -f "$steam_install_dir/.bitmap16dx_desktop.bin.new" "$steam_install_dir/bitmap16dx_desktop.bin"
 mv -f "$steam_install_dir/.bitmap16dx_desktop.new" "$steam_install_dir/bitmap16dx_desktop"
 rm -rf "$steam_install_dir/.music.previous"
 echo "Installed: $steam_install_dir/bitmap16dx_desktop"

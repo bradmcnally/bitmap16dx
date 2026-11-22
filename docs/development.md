@@ -188,6 +188,13 @@ installation directory. The script resets stale feed settings to the preset
 default; set the environment variable `BITMAP16_LOSPEC_FEED_URL` to keep an
 explicit override, including an empty value for direct API development.
 
+The installer keeps Steam's shortcut path as a launcher and installs the
+Linux binary as `bitmap16dx_desktop.bin` beside it. The launcher enters the
+`dev` Distrobox without a terminal so runtime dependencies match the build.
+Running an Arch-built binary directly on SteamOS can fail before startup if
+libraries such as SDL2_mixer are only installed in the container. Set
+`BITMAP16_STEAM_DECK_CONTAINER` to use another prepared container.
+
 See [the Steam Deck sideload guide](../platform_steamdeck/README.md) for the
 controller layout and copy/run instructions.
 

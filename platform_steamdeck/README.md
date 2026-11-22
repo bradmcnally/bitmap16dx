@@ -5,18 +5,42 @@ Steam / Steam Deck is coming soon. This guide covers the development build.
 ## Install
 
 Build the Linux executable using the [Steam Deck build instructions](../docs/development.md#steam-deck-build).
-Copy it to `~/Applications/bitmap16dx/` on the Deck using removable storage
-or SSH. From the Linux build machine:
+For the `dev` Distrobox setup, copy the executable, container launcher, and
+music to `~/Applications/bitmap16dx/` on the Deck. From the Linux build machine:
 
 ```sh
 ssh deck@steamdeck.local 'mkdir -p ~/Applications/bitmap16dx'
 scp build_steamdeck/bitmap16dx_desktop \
-  deck@steamdeck.local:Applications/bitmap16dx/
+  deck@steamdeck.local:Applications/bitmap16dx/bitmap16dx_desktop.bin
+scp platform_steamdeck/run_bitmap16dx.sh \
+  deck@steamdeck.local:Applications/bitmap16dx/bitmap16dx_desktop
+scp -r build_steamdeck/music deck@steamdeck.local:Applications/bitmap16dx/
 ssh deck@steamdeck.local \
-  'chmod +x ~/Applications/bitmap16dx/bitmap16dx_desktop'
+  'chmod +x ~/Applications/bitmap16dx/bitmap16dx_desktop ~/Applications/bitmap16dx/bitmap16dx_desktop.bin'
 ```
 
 Replace the hostname or username if your Deck uses different ones.
+
+## Arch build container maintenance
+
+Run this in Konsole on the Deck to refresh the Arch `dev` container and install
+the SDL2_mixer audio dependency. It also resolves package-download 404 errors
+caused by an outdated package list:
+
+```sh
+distrobox enter dev -- sudo pacman -Syu --needed sdl2_mixer
+```
+
+This upgrades packages inside the build container, not SteamOS. Review and
+accept the package changes when prompted. Arch recommends refreshing package
+lists together with a full upgrade; see the
+[package retrieval troubleshooting guide](https://wiki.archlinux.org/title/Pacman#Packages_cannot_be_retrieved_on_installation).
+
+After the command finishes successfully, rebuild and install the app:
+
+```sh
+distrobox enter dev -- /home/deck/bitmap16dx/platform_steamdeck/update_and_build.sh
+```
 
 ## First launch
 
@@ -30,6 +54,12 @@ the latest source, builds, runs checks, and installs to
 `~/Applications/bitmap16dx/bitmap16dx_desktop`, the existing Steam shortcut target.
 Failed builds or checks leave the installed app available. `build-info.txt`
 beside the executable identifies the installed source revision.
+
+The Steam shortcut targets a launcher named `bitmap16dx_desktop`, which runs
+`bitmap16dx_desktop.bin` inside `dev`. This gives the app the same SDL2_mixer
+and other libraries used during its build. Keep that container available;
+`BITMAP16_STEAM_DECK_CONTAINER` can select a different prepared container.
+Invoking the launcher inside the selected container runs the binary directly.
 
 Sketches and palettes are stored in `~/.local/share/bitmap16dx/`. Settings use
 `~/.config/bitmap16dx/`, preserving existing Deck preferences on first launch.
@@ -78,7 +108,8 @@ The bundled MP3 playlist repeats in filename order throughout the app;
 music starts off and its preference is saved. Keyboard media keys also control
 play/pause and previous/next. Sound effects play over the music.
 When copying a build manually, copy the build's `music/` folder alongside
-`bitmap16dx_desktop`. Update and Build installs both automatically.
+`bitmap16dx_desktop.bin` and the launcher. Update and Build installs all three
+automatically.
 
 Help groups controls into Draw, Canvas, Palettes, Sketches, Preview, App, and
 Keyboard sections. Use LB/RB to change sections and Up/Down to select a control.
@@ -154,6 +185,11 @@ cursor, tools, palette rail, rulers, labels, and all other UI.
 
 - If the executable will not run, use an x86-64 Linux build and check that
   it has executable permission. A macOS build cannot run on the Deck.
+- If launch reports a missing `libSDL2_mixer` even though the build passed,
+  check that Steam targets the `bitmap16dx_desktop` launcher and that the
+  `dev` container exists. The `.bin` executable depends on libraries inside
+  that container. For startup output, run
+  `~/Applications/bitmap16dx/bitmap16dx_desktop --windowed` in Konsole.
 - If controller or trackpad input is missing, launch through Steam and check
   the game's Steam Input layout.
 - If rear grips do not respond, bind L4, L5, R4, and R5 to their corresponding
