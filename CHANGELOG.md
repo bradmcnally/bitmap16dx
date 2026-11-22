@@ -7,6 +7,10 @@ adds a Cardputer Zero package.
 
 ## [0.9.1] — Unreleased
 
+### Added
+
+- Added Zero USB keyboard support with arrow-key navigation, Space to draw, and adaptive Help mappings. USB F/Z/X/C remain letter keys.
+
 ### Fixed
 
 - Restored previewing imported Lospec palettes before saving and applying them.
@@ -15,9 +19,8 @@ adds a Cardputer Zero package.
 - Fixed the import-preview cartridge appearing without its entrance animation.
 - Fixed ADV firmware compilation with newer FastLED versions.
 
-This release retains the v0.9.0 audio-free build and controls. Music, sound
-effects, Audio settings, system-volume controls, and USB keyboard support are
-reserved for a later release.
+This release retains the v0.9.0 audio-free build. Music, sound effects, Audio
+settings, and system-volume controls are reserved for a later release.
 
 ## [0.9.0] — Cardputer Zero
 
