@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <random>
 #ifdef BITMAP16_LOSPEC
 #include "lospec.h"
@@ -34,6 +35,8 @@
 #include "palettes.h"
 #include "workspace.h"
 #include "palette_browser.h"
+#include "audio_player.h"
+#include "menu_audio.h"
 
 #ifdef BITMAP16_CARDPUTER_ZERO
 #include "../platform_zero/keyboard_event.h"
@@ -83,31 +86,63 @@ bool externalKeyboardActive() {
 }
 #endif
 
+bitmap16::Desktop::AudioPlayer* appAudio = nullptr;
+std::function<void(SDL_Keycode)> musicShortcut;
+Uint32 musicEventType = static_cast<Uint32>(-1);
+
 int waitEvent(SDL_Event* event, int timeout = -1) {
+  const Uint32 started = SDL_GetTicks();
+  while (true) {
+    if (appAudio != nullptr) appAudio->update();
+    const Uint32 elapsed = SDL_GetTicks() - started;
+    int remaining = timeout < 0 ? -1 : std::max(0, timeout - static_cast<int>(elapsed));
+    // Check track completion even on idle screens and inside modal dialogs.
+    const int slice = appAudio != nullptr && appAudio->musicEnabled()
+        ? remaining < 0 ? 100 : std::min(remaining, 100) : remaining;
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
-  const int available = nativeIo.waitEvent(event, timeout);
-  if (available && (nativeIo.isHomeEvent(*event) ||
-                   (event->type == SDL_QUIT && nativeIo.escapeHeld()))) {
-    zeroHomeRequested = true;
-    *event = {};
-    event->type = SDL_QUIT;
-  }
-  return available;
+    const int available = nativeIo.waitEvent(event, slice);
+    if (available && (nativeIo.isHomeEvent(*event) ||
+                     (event->type == SDL_QUIT && nativeIo.escapeHeld()))) {
+      zeroHomeRequested = true;
+      *event = {};
+      event->type = SDL_QUIT;
+    }
 #else
-  return timeout < 0 ? SDL_WaitEvent(event)
-                     : SDL_WaitEventTimeout(event, timeout);
+    const int available = slice < 0 ? SDL_WaitEvent(event) : SDL_WaitEventTimeout(event, slice);
 #endif
+    if (available) {
+#ifdef BITMAP16_STEAM_DECK
+      // Handle L3 here so music works in every screen and nested dialog.
+      if (musicShortcut &&
+          (event->type == SDL_CONTROLLERBUTTONDOWN || event->type == SDL_CONTROLLERBUTTONUP) &&
+          event->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSTICK) {
+        if (event->type == SDL_CONTROLLERBUTTONDOWN) {
+          musicShortcut(SDLK_AUDIOPLAY);
+          *event = {};
+          event->type = musicEventType;
+          return 1;
+        }
+        continue;
+      }
+#endif
+      if (musicShortcut && (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) &&
+          (event->key.keysym.sym == SDLK_AUDIOPLAY || event->key.keysym.sym == SDLK_AUDIOPREV ||
+           event->key.keysym.sym == SDLK_AUDIONEXT)) {
+        if (event->type == SDL_KEYDOWN && event->key.repeat == 0) {
+          musicShortcut(event->key.keysym.sym);
+          *event = {};
+          event->type = musicEventType;
+          return 1;
+        }
+        continue;
+      }
+      return 1;
+    }
+    if (timeout >= 0 && SDL_GetTicks() - started >= static_cast<Uint32>(timeout)) return 0;
+  }
 }
 
-enum class DesktopView {
-  Canvas,
-  Help,
-  Settings,
-  Preview,
-  Charging,
-  Palette,
-  Memory,
-};
+using DesktopView = bitmap16::Desktop::View;
 
 bitmap16::Desktop::MatrixSimulator* matrixSimulator = nullptr;
 const bitmap16::Sketch* previewOverride = nullptr;
@@ -719,7 +754,7 @@ void renderCurrentView(
         nullptr,
         platformHasQuitSetting(),
         false,
-        platformHasHelpSetting());
+        platformHasHelpSetting(), true);
   } else if (view == DesktopView::Preview) {
     const bitmap16::Sketch& sketch =
         previewOverride == nullptr ? editor.sketch() : *previewOverride;
@@ -1075,13 +1110,13 @@ int main(int argc, char** argv) {
         bitmap16::SettingsView::itemCount(
             false,
             platformHasLedMatrixControls(),
-            platformHasShakeUndo()) - 1;
+            platformHasShakeUndo(), false, false, false, true) - 1;
     bitmap16::SettingsView::activate(
         settingsState,
         settings,
         false,
         platformHasLedMatrixControls(),
-        platformHasShakeUndo());
+        platformHasShakeUndo(), false, false, false, true);
     renderCurrentView(
         currentView,
         canvas,
@@ -1209,6 +1244,30 @@ int main(int argc, char** argv) {
 #endif
   }
 
+  bitmap16::Desktop::AudioPlayer audioPlayer;
+  char* executableDirectory = SDL_GetBasePath();
+  const std::filesystem::path musicDirectory = executableDirectory == nullptr
+      ? std::filesystem::path{} : std::filesystem::path(executableDirectory) / "music";
+  SDL_free(executableDirectory);
+  audioPlayer.open(musicDirectory);
+  audioPlayer.setMusicVolume(settings.musicVolume);
+  audioPlayer.setSoundEffectsVolume(settings.soundEffectsVolume);
+  audioPlayer.setSoundEffectsEnabled(settings.soundEffectsEnabled);
+  audioPlayer.setMusicEnabled(settings.musicEnabled);
+  appAudio = &audioPlayer;
+  musicEventType = SDL_RegisterEvents(1);
+  musicShortcut = [&](SDL_Keycode key) {
+    bool success = true;
+    if (key == SDLK_AUDIOPLAY) success = audioPlayer.setMusicEnabled(!audioPlayer.musicEnabled());
+    else if (key == SDLK_AUDIOPREV) success = audioPlayer.previousTrack();
+    else success = audioPlayer.nextTrack();
+    settings.musicEnabled = audioPlayer.musicEnabled();
+    workspace.saveSettings();
+    const std::string message = !success ? "Music unavailable" :
+        key == SDLK_AUDIOPLAY ? (settings.musicEnabled ? "Music playing" : "Music paused") :
+        "Music: " + audioPlayer.trackName();
+    setDesktopStatus(message.c_str());
+  };
   bool mouseDrawHeld = false;
   bool mouseEraseHeld = false;
   bool pointerInsideCanvas = false;
@@ -1218,8 +1277,22 @@ int main(int argc, char** argv) {
     paletteBrowser.request(action, canvas, SDL_GetTicks(), pendingPaletteSize);
   };
   bool paletteWasVisible = false;
+  auto menuSoundView = currentView;
+  bool cartridgeApplied = false;
+  bool sketchOpened = false;
   const auto renderNow = [&](uint8_t resizeGridSelection = 0,
                              bool presentFrame = true) {
+    if (menuSoundView != currentView) {
+      const auto cue = bitmap16::Desktop::menuTransitionCue(
+          menuSoundView, currentView, returnView, cartridgeApplied, sketchOpened);
+      if (cue == bitmap16::Desktop::MenuCue::Open) audioPlayer.playMenuOpen();
+      if (cue == bitmap16::Desktop::MenuCue::Close) audioPlayer.playMenuClose();
+      if (cue == bitmap16::Desktop::MenuCue::SketchOpen) audioPlayer.playSketchOpen();
+      sketchOpened = false;
+      menuSoundView = currentView;
+      if (currentView == DesktopView::Palette && !paletteState.insertionAnimating)
+        cartridgeApplied = false;
+    }
     if (currentView == DesktopView::Palette && !paletteWasVisible) {
       bitmap16::PaletteView::beginEntrance(paletteState, width);
       paletteFrameAt = SDL_GetTicks();
@@ -1306,6 +1379,7 @@ int main(int argc, char** argv) {
         bitmap16::PaletteView::AnimationResult::SelectionComplete) {
       if (paletteCompletionAt == 0) {
         paletteCompletionAt = SDL_GetTicks();
+        audioPlayer.playCartridgeInsert();
         renderNow();
       } else if (SDL_GetTicks() - paletteCompletionAt >= 200u) {
         paletteState.insertionAnimating = false;
@@ -1421,7 +1495,9 @@ int main(int argc, char** argv) {
         return key != SDLK_ESCAPE && deleteSelected;
       }
       if (key == SDLK_LEFT || key == SDLK_RIGHT) {
-        deleteSelected = key == SDLK_RIGHT;
+        const bool nextSelection = key == SDLK_RIGHT;
+        if (nextSelection != deleteSelected) audioPlayer.playNavigationTick();
+        deleteSelected = nextSelection;
         draw();
       }
     }
@@ -1432,7 +1508,7 @@ int main(int argc, char** argv) {
     SketchResult result = sketchWorkflow.request(action, settings.saveWarnings, key);
     const bool showedDialog = result == SketchResult::AwaitingChoice;
     const auto draw = [&]() {
-      renderNow();
+      renderNow(0, false);
       drawUnsavedChangesModal(canvas, settings, static_cast<int>(sketchWorkflow.choice()));
       present(canvas, texture, renderer, settings.displayBrightness);
     };
@@ -1462,12 +1538,15 @@ int main(int argc, char** argv) {
         break;
       }
       if (modalKey == SDLK_LEFT || modalKey == SDLK_RIGHT) {
+        const auto previousChoice = sketchWorkflow.choice();
         sketchWorkflow.moveChoice(modalKey == SDLK_LEFT ? -1 : 1);
+        if (sketchWorkflow.choice() != previousChoice) audioPlayer.playNavigationTick();
         draw();
       } else if (modalKey == SDLK_RETURN || modalKey == SDLK_KP_ENTER) {
         const SketchChoice choice = sketchWorkflow.choice();
         result = sketchWorkflow.choose(choice);
         if (choice == SketchChoice::Save && result != SketchResult::SaveFailed) {
+          audioPlayer.playSketchSave();
           refreshMemoryCatalog();
           setDesktopStatus("Saved");
         }
@@ -1534,6 +1613,8 @@ int main(int argc, char** argv) {
         }
       } else continue;
       if (key == SDLK_ESCAPE && !repeated) break;
+      const int previousSelection = selection;
+      const int previousAction = desktopResizeAction;
       if ((key == SDLK_RETURN || key == SDLK_KP_ENTER) && !repeated) {
         if (desktopResizeAction < 0) desktopResizeAction = 1;
         else {
@@ -1551,6 +1632,8 @@ int main(int argc, char** argv) {
       } else {
         continue;
       }
+      if (selection != previousSelection || desktopResizeAction != previousAction)
+        audioPlayer.playNavigationTick();
       renderNow(sizes[selection]);
     }
 
@@ -1560,16 +1643,80 @@ int main(int argc, char** argv) {
   };
   if (smokeTest) {
     SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+    const auto musicView = currentView;
+    const bool musicWasEnabled = settings.musicEnabled;
+    if (audioPlayer.trackCount() > 0 && SDL_WasInit(SDL_INIT_AUDIO)) {
+      // The same wait path services every screen and modal, including import.
+      pushKeyEvent(SDLK_AUDIOPLAY, false);
+      SDL_Event mediaEvent{};
+      if (!waitEvent(&mediaEvent, 1000) || mediaEvent.type != musicEventType ||
+          settings.musicEnabled == musicWasEnabled || currentView != musicView) {
+        SDL_Log("Music shortcut smoke failed: event=%u expected=%u enabled=%d before=%d tracks=%zu",
+                mediaEvent.type, musicEventType, settings.musicEnabled, musicWasEnabled, audioPlayer.trackCount());
+        return 1;
+      }
+#ifdef BITMAP16_STEAM_DECK
+      const auto pushMusicButton = [](Uint32 type) {
+        SDL_Event button{};
+        button.type = type;
+        button.cbutton.button = SDL_CONTROLLER_BUTTON_LEFTSTICK;
+        button.cbutton.state = type == SDL_CONTROLLERBUTTONDOWN ? SDL_PRESSED : SDL_RELEASED;
+        SDL_PushEvent(&button);
+      };
+      // Verify a press toggles once and the release does not reach other controls.
+      SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+      pushMusicButton(SDL_CONTROLLERBUTTONDOWN);
+      if (!waitEvent(&mediaEvent, 1000) || mediaEvent.type != musicEventType ||
+          settings.musicEnabled != musicWasEnabled || currentView != musicView) {
+        SDL_Log("L3 music toggle smoke failed");
+        return 1;
+      }
+      pushMusicButton(SDL_CONTROLLERBUTTONUP);
+      if (waitEvent(&mediaEvent, 0) || settings.musicEnabled != musicWasEnabled) {
+        SDL_Log("L3 release must not toggle music or escape into view controls");
+        return 1;
+      }
+      // Toggle back from inside a real modal without affecting its result.
+      pushMusicButton(SDL_CONTROLLERBUTTONDOWN);
+      pushMusicButton(SDL_CONTROLLERBUTTONUP);
+#endif
+      pushKeyEvent(SDLK_AUDIOPREV, false);
+      pushKeyEvent(SDLK_AUDIONEXT, false);
+      pushKeyEvent(SDLK_ESCAPE, false);
+      if (confirmSketchDeletion() || currentView != musicView ||
+          settings.musicEnabled == musicWasEnabled) {
+        SDL_Log("Music controls changed the deletion dialog outcome");
+        return 1;
+      }
+      pushKeyEvent(SDLK_AUDIOPLAY, false);
+      if (!waitEvent(&mediaEvent, 1000) || settings.musicEnabled != musicWasEnabled) {
+        SDL_Log("Music pause smoke failed: event=%u enabled=%d before=%d",
+                mediaEvent.type, settings.musicEnabled, musicWasEnabled);
+        return 1;
+      }
+      SDL_Log("Music shortcut smoke checks passed");
+    }
     const bool warnings = settings.saveWarnings;
     settings.saveWarnings = true;
     if (!editor.draw()) return 1;
     pushKeyEvent(SDLK_ESCAPE, false);
+    const uint64_t beforeSaveWarning = desktopPresentedFrames;
     if (requestSketchAction(SketchAction::NewSketch) || !editor.canUndo() ||
         !sketchWorkflow.hasUnsavedChanges()) return 1;
+    if (desktopPresentedFrames - beforeSaveWarning != 2) {
+      SDL_Log("Save warning must present once on open and once on close; got %llu frames",
+              static_cast<unsigned long long>(desktopPresentedFrames - beforeSaveWarning));
+      return 1;
+    }
+    const uint64_t beforeSaveFocusChange = desktopPresentedFrames;
     pushKeyEvent(SDLK_LEFT, false);
     pushKeyEvent(SDLK_RETURN, false);
     if (!requestSketchAction(SketchAction::NewSketch) || editor.canUndo() ||
         sketchWorkflow.hasUnsavedChanges()) return 1;
+    if (desktopPresentedFrames - beforeSaveFocusChange != 3) {
+      SDL_Log("Save warning must present once per focus change");
+      return 1;
+    }
     if (!editor.draw()) return 1;
     pushKeyEvent(SDLK_ESCAPE, false);
     if (requestSketchAction(SketchAction::Quit) || !editor.canUndo()) return 1;
@@ -1723,6 +1870,7 @@ int main(int argc, char** argv) {
         }
       } else continue;
       cursorEpoch = SDL_GetTicks();
+      const int previousFocus = actionFocus;
       if (key == SDLK_ESCAPE) { finish(false); return false; }
       if ((key == SDLK_RETURN || key == SDLK_KP_ENTER) &&
           (entryEvent.type != SDL_KEYDOWN || entryEvent.key.repeat == 0)) {
@@ -1754,6 +1902,9 @@ int main(int argc, char** argv) {
         actionFocus = -1;
 #endif
       }
+      if (actionFocus != previousFocus && (key == SDLK_UP || key == SDLK_DOWN ||
+          key == SDLK_LEFT || key == SDLK_RIGHT || key == SDLK_RETURN || key == SDLK_KP_ENTER))
+        audioPlayer.playNavigationTick();
       draw();
     }
   };
@@ -2229,6 +2380,10 @@ int main(int argc, char** argv) {
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
     if (zeroHomeRequested) break;
 #endif
+    if (eventAvailable && event.type == musicEventType) {
+      renderNow();
+      continue;
+    }
     if (eventAvailable == 0) {
       if (currentView == DesktopView::Charging) {
         bitmap16::ChargingView::update(chargingState, width, height);
@@ -2420,15 +2575,21 @@ int main(int argc, char** argv) {
            event.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER)) {
         const bool previous = event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
         if (previous) controllerUndoReleaseConsumed = true;
-        if (bitmap16::HelpView::moveGroup(helpState, previous ? -1 : 1, false, false))
+        if (bitmap16::HelpView::moveGroup(helpState, previous ? -1 : 1, false, false)) {
+          audioPlayer.playNavigationTick();
           renderNow();
+        }
         continue;
       }
 #endif
 #ifdef BITMAP16_LOSPEC
       if (currentView == DesktopView::Palette) {
         SDL_Keycode paletteKey = SDLK_UNKNOWN;
+#if defined(BITMAP16_STEAM_DECK) && SDL_VERSION_ATLEAST(2, 0, 14)
+        if (event.cbutton.button == SDL_CONTROLLER_BUTTON_PADDLE2) paletteKey = SDLK_i;
+#elif !defined(BITMAP16_STEAM_DECK)
         if (event.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSTICK) paletteKey = SDLK_i;
+#endif
         if (event.cbutton.button == SDL_CONTROLLER_BUTTON_Y) paletteKey = SDLK_l;
         if (paletteBrowser.online()) {
           if (event.cbutton.button == SDL_CONTROLLER_BUTTON_X) paletteKey = SDLK_r;
@@ -2482,9 +2643,11 @@ int main(int argc, char** argv) {
         case SDL_CONTROLLER_BUTTON_RIGHTSTICK:
           mappedKey = SDLK_p;
           break;
+#ifndef BITMAP16_STEAM_DECK
         case SDL_CONTROLLER_BUTTON_LEFTSTICK:
           mappedKey = SDLK_g;
           break;
+#endif
         case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
           pushControllerEvent(kRedo);
           break;
@@ -2574,7 +2737,10 @@ int main(int argc, char** argv) {
       if (changed && currentView == DesktopView::Palette) {
         rumble(0x0400, 0x1400, 22);
       }
-      if (changed) renderNow();
+      if (changed) {
+        audioPlayer.playNavigationTick();
+        renderNow();
+      }
       continue;
     }
     if (event.type == SDL_KEYUP) {
@@ -2614,6 +2780,14 @@ int main(int argc, char** argv) {
     }
     if (event.type != SDL_KEYDOWN) continue;
 
+    const auto navigationView = currentView;
+    const int previousHelpCursor = helpState.cursor;
+    const int previousSettingsCursor = settingsState.cursor;
+    const auto previousSettingsPage = settingsState.page;
+    const int previousMemoryCursor = memoryState.cursor;
+    const int previousPaletteCursor = paletteState.cursor;
+    const int previousGalleryIndex = galleryIndex;
+    const auto previousColor = editor.selectedColor();
     SDL_Keycode key = event.key.keysym.sym;
     const bool altHeld = (event.key.keysym.mod & KMOD_ALT) != 0;
 #ifdef BITMAP16_CARDPUTER_ZERO
@@ -2748,7 +2922,12 @@ int main(int argc, char** argv) {
       changed = true;
 #endif
 #ifdef BITMAP16_LOSPEC
-    } else if (currentView == DesktopView::Palette && !paletteState.insertionAnimating && key == SDLK_i) {
+    } else if (currentView == DesktopView::Palette && !paletteState.insertionAnimating &&
+               (key == SDLK_i
+#ifdef BITMAP16_STEAM_DECK
+                || key == SDLK_g  // L4's keyboard binding on Steam Input layouts.
+#endif
+               )) {
       if (paletteBrowser.pending()) {
         paletteBrowser.importPalette(lastPaletteLookup);
       } else if (enterPaletteLookup(lastPaletteLookup)) {
@@ -2801,18 +2980,22 @@ int main(int argc, char** argv) {
         previewOverride = nullptr;
       } else if (
           currentView == DesktopView::Settings &&
-          settingsState.page ==
-              bitmap16::SettingsView::Page::RgbMatrix) {
+          (settingsState.page == bitmap16::SettingsView::Page::RgbMatrix ||
+           settingsState.page == bitmap16::SettingsView::Page::Audio)) {
+        const int parentCursor = settingsState.page == bitmap16::SettingsView::Page::Audio
+            ? settingsState.parentCursor : 2;
         settingsState.page = bitmap16::SettingsView::Page::Main;
-        settingsState.cursor = 2;
+        settingsState.cursor = parentCursor;
         settingsState.scrollOffset = 0;
       } else if (currentView != DesktopView::Canvas) {
         currentView = DesktopView::Canvas;
         previewOverride = nullptr;
       }
       changed = true;
+#ifndef BITMAP16_CARDPUTER_ZERO
     } else if (key == SDLK_q) {
       if (requestSketchAction(SketchAction::Quit)) running = false;
+#endif
     } else if (currentView == DesktopView::Charging) {
       currentView = DesktopView::Canvas;
       changed = true;
@@ -3007,6 +3190,7 @@ int main(int argc, char** argv) {
       const bool saveAsNew = altHeld;
 #endif
       if (sketchWorkflow.save(saveAsNew)) {
+        audioPlayer.playSketchSave();
         refreshMemoryCatalog();
         SDL_Log(saveAsNew ? "Saved new sketch" : "Saved sketch");
         setDesktopStatus("Saved");
@@ -3211,7 +3395,7 @@ int main(int argc, char** argv) {
             platformHasShakeUndo(),
             platformHasQuitSetting(),
             false,
-            platformHasHelpSetting());
+            platformHasHelpSetting(), true);
       } else if (currentView == DesktopView::Memory) {
         changed = bitmap16::MemoryView::moveCursor(
             memoryState, 0, -1, memoryCatalog.count, width);
@@ -3236,7 +3420,7 @@ int main(int argc, char** argv) {
             platformHasShakeUndo(),
             platformHasQuitSetting(),
             false,
-            platformHasHelpSetting());
+            platformHasHelpSetting(), true);
       } else if (currentView == DesktopView::Memory) {
         changed = bitmap16::MemoryView::moveCursor(
             memoryState, 0, 1, memoryCatalog.count, width);
@@ -3261,12 +3445,25 @@ int main(int argc, char** argv) {
               platformHasShakeUndo(),
               platformHasQuitSetting(),
               false,
-              platformHasHelpSetting());
+              platformHasHelpSetting(), true, key == SDLK_LEFT ? -1 : 1);
       changed = action != bitmap16::SettingsView::Action::None;
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
       nativeIo.setDisplayWarmth(settings.displayWarmth);
 #endif
-      if (action == bitmap16::SettingsView::Action::QuitRequested) {
+      if (action == bitmap16::SettingsView::Action::SoundEffectsChanged) {
+        audioPlayer.setSoundEffectsEnabled(settings.soundEffectsEnabled);
+        workspace.saveSettings();
+      } else if (action == bitmap16::SettingsView::Action::SoundEffectsVolumeChanged) {
+        audioPlayer.setSoundEffectsVolume(settings.soundEffectsVolume);
+        workspace.saveSettings();
+      } else if (action == bitmap16::SettingsView::Action::MusicVolumeChanged) {
+        audioPlayer.setMusicVolume(settings.musicVolume);
+        workspace.saveSettings();
+      } else if (action == bitmap16::SettingsView::Action::MusicEnabledChanged) {
+        audioPlayer.setMusicEnabled(settings.musicEnabled);
+        settings.musicEnabled = audioPlayer.musicEnabled();
+        workspace.saveSettings();
+      } else if (action == bitmap16::SettingsView::Action::QuitRequested) {
         if (requestSketchAction(SketchAction::Quit)) quitRequested = true;
       } else if (action == bitmap16::SettingsView::Action::HelpRequested) {
         returnView = DesktopView::Settings;
@@ -3304,6 +3501,7 @@ int main(int argc, char** argv) {
       const std::string target = creating ? std::string{} : workspace.sketchKey(
           static_cast<std::size_t>(memoryState.cursor - 1));
       if (requestSketchAction(creating ? SketchAction::NewSketch : SketchAction::OpenSketch, target)) {
+        sketchOpened = !creating;
         currentView = DesktopView::Canvas;
         setDesktopStatus(creating ? "New sketch" : "Loaded");
       }
@@ -3366,6 +3564,8 @@ int main(int argc, char** argv) {
         currentView == DesktopView::Palette &&
         (key == SDLK_RETURN || key == SDLK_KP_ENTER)) {
       if (paletteBrowser.select()) {
+        cartridgeApplied = true;
+        audioPlayer.playCartridgeSlide();
         paletteCompletionAt = 0;
         rumble(0x1800, 0x5000, 120);
         changed = true;
@@ -3396,10 +3596,22 @@ int main(int argc, char** argv) {
       galleryLastAdvance = SDL_GetTicks();
       changed = true;
     }
+    const bool selectionChanged = navigationView == currentView && (
+        (currentView == DesktopView::Canvas && editor.selectedColor() != previousColor) ||
+        (currentView == DesktopView::Help && helpState.cursor != previousHelpCursor) ||
+        (currentView == DesktopView::Settings && (settingsState.cursor != previousSettingsCursor ||
+                                               settingsState.page != previousSettingsPage)) ||
+        (currentView == DesktopView::Memory && memoryState.cursor != previousMemoryCursor) ||
+        (currentView == DesktopView::Palette && paletteState.cursor != previousPaletteCursor) ||
+        (currentView == DesktopView::Preview && galleryIndex != previousGalleryIndex));
+    if (changed && selectionChanged) audioPlayer.playNavigationTick();
     if (changed) renderNow();
   }
 
   paletteBrowser.cancelAndWait();
+  musicShortcut = {};
+  appAudio = nullptr;
+  audioPlayer.close();
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);

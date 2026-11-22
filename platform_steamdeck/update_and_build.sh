@@ -68,7 +68,15 @@ fi
 } > "$steam_install_dir/build-info.txt"
 # Replace the same executable used by the documented Steam shortcut only after
 # build and checks pass. Rename keeps an interrupted copy from damaging it.
+music_stage=$(mktemp -d "$steam_install_dir/.music.XXXXXX")
+cp -R "$repo_root/build_steamdeck/music/." "$music_stage/"
+if [[ -d "$steam_install_dir/music" ]]; then
+  rm -rf "$steam_install_dir/.music.previous"
+  mv "$steam_install_dir/music" "$steam_install_dir/.music.previous"
+fi
+mv "$music_stage" "$steam_install_dir/music"
 install -m 755 "$built_executable" "$steam_install_dir/.bitmap16dx_desktop.new"
 mv -f "$steam_install_dir/.bitmap16dx_desktop.new" "$steam_install_dir/bitmap16dx_desktop"
+rm -rf "$steam_install_dir/.music.previous"
 echo "Installed: $steam_install_dir/bitmap16dx_desktop"
 echo "Launch the existing non-Steam game shortcut to test this build."

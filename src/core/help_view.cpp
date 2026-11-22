@@ -27,14 +27,14 @@ constexpr Item kItems[] = {
     {"Move", "LT+L stick", "", 0, false, false},
     {"Undo", "LB", "", 0, false, false},
     {"Redo", "RB", "", 0, false, false},
-    {"Resize", "L3 / L4", "", 1, false, false},
+    {"Resize", "L4", "", 1, false, false},
     {"Rulers", "R5", "", 1, false, false},
     {"Palettes", "R3", "", 2, false, false},
     {"Color", "R stick", "", 2, false, false},
     {"Browse", "L/R stick", "", 2, false, false},
     {"Apply", "A", "", 2, false, false},
     {"Lospec", "Y", "", 2, false, false},
-    {"Import", "L3", "", 2, false, false},
+    {"Import", "L4", "", 2, false, false},
     {"Color range", "LB/RB", "", 2, false, false},
     {"User palettes", "Dpad Up", "", 2, false, false},
     {"All palettes", "Dpad Down", "", 2, false, false},
@@ -53,6 +53,9 @@ constexpr Item kItems[] = {
     {"Help", "R4", "", 5, false, false},
     {"Back", "B", "", 5, false, false},
     {"Quit", "Settings", "", 5, false, false},
+    {"Music", "L3", "", 5, false, false},
+    {"Prev track", "MediaPrev", "", 5, false, false},
+    {"Next track", "MediaNext", "", 5, false, false},
     {"Clear", "K", "", 6, false, false},
     {"Erase fill", "Alt F", "", 6, false, false},
     {"Save as", "Alt S", "", 6, false, false},
@@ -94,6 +97,14 @@ constexpr Item kItems[] = {
 #endif
     {"RGB on/off", "L Ok", "L Enter", 5, true, false},
     {"RGB Bright", "L +/-", "L +/-", 5, true, false},
+#if defined(BITMAP16_CARDPUTER_ZERO) || defined(BITMAP16_SDL_AUDIO)
+    {"Music", "MediaPlay", "Fn Q", 5, false, false, "MediaPlay"},
+    {"Prev track", "MediaPrev", "Fn W", 5, false, false, "MediaPrev"},
+    {"Next track", "MediaNext", "Fn E", 5, false, false, "MediaNext"},
+#endif
+#ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
+    {"Volume", "", "Fn S/D", 5, false, false, "Vol -/+"},
+#endif
 #endif
 };
 

@@ -12,6 +12,7 @@ enum class Page : uint8_t {
   Main,
   RgbMatrix,
   IndicatorLed,
+  Audio,
 };
 
 enum class Action : uint8_t {
@@ -35,12 +36,18 @@ enum class Action : uint8_t {
   QuitRequested,
   BatteryDisplayChanged,
   DisplayWarmthChanged,
+  MusicEnabledChanged,
+  AudioMenuRequested,
+  SoundEffectsChanged,
+  SoundEffectsVolumeChanged,
+  MusicVolumeChanged,
 };
 
 struct State {
   int cursor = 0;
   int scrollOffset = 0;
   Page page = Page::Main;
+  int parentCursor = 0;
 };
 
 struct Theme {
@@ -55,7 +62,8 @@ int itemCount(
     bool includeShakeUndo,
     bool includeQuit = false,
     bool includeIndicator = false,
-    bool includeHelp = false);
+    bool includeHelp = false,
+    bool includeAudio = false);
 bool moveCursor(
     State& state,
     int delta,
@@ -64,7 +72,8 @@ bool moveCursor(
     bool includeShakeUndo,
     bool includeQuit = false,
     bool includeIndicator = false,
-    bool includeHelp = false);
+    bool includeHelp = false,
+    bool includeAudio = false);
 Action activate(
     State& state,
     Settings& settings,
@@ -73,7 +82,9 @@ Action activate(
     bool includeShakeUndo,
     bool includeQuit = false,
     bool includeIndicator = false,
-    bool includeHelp = false);
+    bool includeHelp = false,
+    bool includeAudio = false,
+    int direction = 1);
 void render(
     Canvas& canvas,
     State& state,
@@ -86,7 +97,8 @@ void render(
     const char* statusMessage = nullptr,
     bool includeQuit = false,
     bool includeIndicator = false,
-    bool includeHelp = false);
+    bool includeHelp = false,
+    bool includeAudio = false);
 
 }  // namespace SettingsView
 }  // namespace bitmap16

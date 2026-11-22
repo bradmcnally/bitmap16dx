@@ -37,7 +37,7 @@ public:
 
 private:
   void writeFrame(const uint16_t* pixels, int width, int height);
-  void redrawEscCountdown();
+  void redrawOverlay();
   bool updateEsc(SDL_Event* event);
 
   Uint32 backlightEventType_ = static_cast<Uint32>(-1);
@@ -45,6 +45,9 @@ private:
   Uint32 keyboardLayoutEventType_ = static_cast<Uint32>(-1);
   EscHold escHold_;
   int countdown_ = 0;
+  char volumeLabel_[32] = {};
+  Uint32 volumeUntil_ = 0;
+  Uint32 lastVolumeChange_ = 0;
   std::vector<uint16_t> lastFrame_;
   Canvas countdownFrame_;
   int frameWidth_ = 0;

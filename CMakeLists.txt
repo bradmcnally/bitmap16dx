@@ -41,6 +41,75 @@ if(NOT SDL2_FOUND)
   pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
 endif()
 
+# Music and sound effects share SDL_mixer's output device.
+find_package(SDL2_mixer 2.6 CONFIG QUIET)
+if(NOT TARGET SDL2_mixer::SDL2_mixer)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(SDL2_MIXER REQUIRED IMPORTED_TARGET SDL2_mixer>=2.6)
+endif()
+
+# Embed the cartridge effects so device packages and standalone builds need no
+# runtime asset path, filesystem lookup, or additional audio decoder.
+set(BITMAP16_CARTRIDGE_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/success_melodic_01b.wav")
+set(BITMAP16_CARTRIDGE_SLIDE_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/transition_soft_02b.wav")
+set(BITMAP16_MENU_OPEN_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/enable_02.wav")
+set(BITMAP16_MENU_CLOSE_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/disable_02.wav")
+set(BITMAP16_SKETCH_OPEN_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/enable_04a.wav")
+set(BITMAP16_SKETCH_SAVE_SOUND "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/success_melodic_03b.wav")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${BITMAP16_CARTRIDGE_SOUND}" "${BITMAP16_CARTRIDGE_SLIDE_SOUND}"
+    "${BITMAP16_MENU_OPEN_SOUND}" "${BITMAP16_MENU_CLOSE_SOUND}"
+    "${BITMAP16_SKETCH_OPEN_SOUND}" "${BITMAP16_SKETCH_SAVE_SOUND}")
+file(READ "${BITMAP16_CARTRIDGE_SOUND}" BITMAP16_CARTRIDGE_SOUND_HEX HEX)
+file(READ "${BITMAP16_CARTRIDGE_SLIDE_SOUND}" BITMAP16_CARTRIDGE_SLIDE_HEX HEX)
+string(REGEX REPLACE "(..)" "0x\\1," BITMAP16_CARTRIDGE_SOUND_BYTES "${BITMAP16_CARTRIDGE_SOUND_HEX}")
+string(REGEX REPLACE "(..)" "0x\\1," BITMAP16_CARTRIDGE_SLIDE_BYTES "${BITMAP16_CARTRIDGE_SLIDE_HEX}")
+file(READ "${BITMAP16_MENU_OPEN_SOUND}" menu_open_hex HEX)
+file(READ "${BITMAP16_MENU_CLOSE_SOUND}" menu_close_hex HEX)
+file(READ "${BITMAP16_SKETCH_OPEN_SOUND}" sketch_open_hex HEX)
+file(READ "${BITMAP16_SKETCH_SAVE_SOUND}" sketch_save_hex HEX)
+string(REGEX REPLACE "(..)" "0x\\1," BITMAP16_MENU_OPEN_BYTES "${menu_open_hex}")
+string(REGEX REPLACE "(..)" "0x\\1," BITMAP16_MENU_CLOSE_BYTES "${menu_close_hex}")
+string(REGEX REPLACE "(..)" "0x\\1," BITMAP16_SKETCH_OPEN_BYTES "${sketch_open_hex}")
+string(REGEX REPLACE "(..)" "0x\\1," BITMAP16_SKETCH_SAVE_BYTES "${sketch_save_hex}")
+set(BITMAP16_NAVIGATION_SOUND_ARRAYS "")
+foreach(index RANGE 1 5)
+  set(sound "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/keys_minimal_0${index}.wav")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${sound}")
+  file(READ "${sound}" sound_hex HEX)
+  string(REGEX REPLACE "(..)" "0x\\1," sound_bytes "${sound_hex}")
+  string(APPEND BITMAP16_NAVIGATION_SOUND_ARRAYS
+    "inline constexpr unsigned char kNavigation${index}[] = {${sound_bytes}};\n")
+endforeach()
+configure_file(platform_desktop/cartridge_sound.h.in generated/cartridge_sound.h @ONLY)
+add_library(bitmap16dx_sound_effects STATIC platform_desktop/audio_player.cpp)
+if(TARGET SDL2_mixer::SDL2_mixer)
+  target_link_libraries(bitmap16dx_sound_effects PUBLIC SDL2_mixer::SDL2_mixer)
+else()
+  target_link_libraries(bitmap16dx_sound_effects PUBLIC PkgConfig::SDL2_MIXER)
+endif()
+target_include_directories(bitmap16dx_sound_effects PUBLIC platform_desktop)
+target_include_directories(bitmap16dx_sound_effects PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+if(TARGET SDL2::SDL2)
+  target_link_libraries(bitmap16dx_sound_effects PUBLIC SDL2::SDL2)
+else()
+  target_link_libraries(bitmap16dx_sound_effects PUBLIC PkgConfig::SDL2)
+endif()
+if(NOT MSVC)
+  target_compile_options(bitmap16dx_sound_effects PRIVATE -Wall -Wextra -Werror)
+endif()
+
+# Keep compressed music as files and stream one track at a time.
+file(GLOB BITMAP16_MUSIC_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/music/*.mp3")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BITMAP16_MUSIC_FILES})
+file(REMOVE_RECURSE "${CMAKE_CURRENT_BINARY_DIR}/music")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/music")
+if(BITMAP16_MUSIC_FILES)
+  file(COPY ${BITMAP16_MUSIC_FILES} DESTINATION "${CMAKE_CURRENT_BINARY_DIR}/music")
+endif()
+# Credits travel with music in standalone builds, Zero packages and Deck installs.
+configure_file(assets/audio/CREDITS.md music/CREDITS.md COPYONLY)
+
 add_executable(bitmap16dx_desktop
   platform_desktop/main_desktop.cpp
   platform_desktop/palette_browser.cpp
@@ -66,11 +135,13 @@ add_executable(bitmap16dx_desktop
   src/core/settings.cpp
 )
 
+target_link_libraries(bitmap16dx_desktop PRIVATE bitmap16dx_sound_effects)
 target_include_directories(bitmap16dx_desktop PRIVATE src)
 target_compile_definitions(bitmap16dx_desktop PRIVATE
   BITMAP16_DEFAULT_WIDTH=${BITMAP16_DEFAULT_WIDTH}
   BITMAP16_DEFAULT_HEIGHT=${BITMAP16_DEFAULT_HEIGHT}
   BITMAP16_APP_VERSION="${BITMAP16_APP_VERSION}"
+  BITMAP16_SDL_AUDIO=1
 )
 if(BITMAP16_CARDPUTER_ZERO)
   target_compile_definitions(
@@ -120,7 +191,8 @@ if(BITMAP16_CARDPUTER_ZERO_DEVICE)
   endif()
   target_sources(bitmap16dx_desktop PRIVATE
     platform_zero/native_io.cpp platform_zero/keyboard_devices.cpp
-    platform_zero/keyboard_state.cpp platform_zero/imu.cpp src/core/shake_detector.cpp)
+    platform_zero/keyboard_state.cpp platform_zero/system_volume.cpp
+    platform_zero/imu.cpp src/core/shake_detector.cpp)
   target_compile_definitions(
     bitmap16dx_desktop PRIVATE BITMAP16_CARDPUTER_ZERO_DEVICE=1)
 endif()
@@ -130,6 +202,25 @@ if(BITMAP16_STEAM_DECK)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(bitmap16dx_menu_audio_test platform_desktop/tests/test_menu_audio.cpp)
+  target_include_directories(bitmap16dx_menu_audio_test PRIVATE platform_desktop)
+  add_test(NAME menu_audio COMMAND bitmap16dx_menu_audio_test)
+  add_executable(bitmap16dx_sound_effects_test platform_desktop/tests/test_audio_player.cpp)
+  target_link_libraries(bitmap16dx_sound_effects_test PRIVATE bitmap16dx_sound_effects)
+  target_compile_definitions(bitmap16dx_sound_effects_test PRIVATE
+    BITMAP16_MUSIC_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets/audio/music")
+  if(NOT MSVC)
+    target_compile_options(bitmap16dx_sound_effects_test PRIVATE -Wall -Wextra -Werror)
+  endif()
+  add_test(NAME sound_effects COMMAND bitmap16dx_sound_effects_test)
+  add_test(NAME sound_effects_unavailable COMMAND bitmap16dx_sound_effects_test --unavailable)
+  add_executable(bitmap16dx_music_settings_test platform_desktop/tests/test_music_settings.cpp
+    src/core/settings.cpp src/core/settings_view.cpp src/core/canvas.cpp)
+  target_include_directories(bitmap16dx_music_settings_test PRIVATE src)
+  if(NOT MSVC)
+    target_compile_options(bitmap16dx_music_settings_test PRIVATE -Wall -Wextra -Werror)
+  endif()
+  add_test(NAME music_settings COMMAND bitmap16dx_music_settings_test)
   add_executable(bitmap16dx_zero_keyboard_test
     platform_zero/tests/test_keyboard.cpp platform_zero/keyboard_state.cpp)
   target_include_directories(bitmap16dx_zero_keyboard_test PRIVATE platform_zero)
@@ -170,6 +261,11 @@ if(BUILD_TESTING)
   target_include_directories(bitmap16dx_zero_symbols_test PRIVATE platform_zero)
   add_test(NAME zero_symbol_keys COMMAND bitmap16dx_zero_symbols_test)
   if(UNIX)
+    add_executable(bitmap16dx_zero_volume_test
+      platform_zero/tests/test_system_volume.cpp platform_zero/system_volume.cpp)
+    target_include_directories(bitmap16dx_zero_volume_test PRIVATE platform_zero)
+    target_compile_options(bitmap16dx_zero_volume_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME zero_system_volume COMMAND bitmap16dx_zero_volume_test)
     add_executable(bitmap16dx_zero_imu_test
       platform_zero/tests/test_imu.cpp platform_zero/imu.cpp src/core/shake_detector.cpp
       src/core/editor.cpp src/core/sketch.cpp src/core/palette.cpp
@@ -298,6 +394,8 @@ if(BITMAP16_CARDPUTER_ZERO_DEVICE)
     TARGETS bitmap16dx_desktop
     RUNTIME DESTINATION share/APPLaunch/apps/bitmap16dx
   )
+  install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/music"
+    DESTINATION share/APPLaunch/apps/bitmap16dx)
   install(
     PROGRAMS platform_zero/launcher/run_bitmap16dx.sh
     DESTINATION share/APPLaunch/bin
@@ -329,7 +427,7 @@ if(BITMAP16_CARDPUTER_ZERO_DEVICE)
     set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE arm64)
     set(CPACK_DEBIAN_PACKAGE_SECTION APPLaunch)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "libsdl2-2.0-0, libcurl4 | libcurl4t64, ca-certificates")
+        "libsdl2-2.0-0, libsdl2-mixer-2.0-0, libcurl4 | libcurl4t64, ca-certificates")
     set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
     include(CPack)
   else()

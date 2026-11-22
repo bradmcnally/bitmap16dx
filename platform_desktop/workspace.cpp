@@ -64,10 +64,10 @@ std::filesystem::path exportRoot(const std::filesystem::path& data) {
   return data / "exports";
 }
 
-// Version 4 files may include trailing battery-display and LCD-warmth settings.
-std::array<uint8_t, 18> encodeSettings(const Settings& settings) {
+// Version 7 adds the effects mix level; older settings keep full effect gain.
+std::array<uint8_t, 22> encodeSettings(const Settings& settings) {
   return {
-      'B', '1', '6', 'S', 4,
+      'B', '1', '6', 'S', 7,
       static_cast<uint8_t>(settings.theme),
       settings.defaultGridSize,
       settings.matrixUnits,
@@ -81,6 +81,10 @@ std::array<uint8_t, 18> encodeSettings(const Settings& settings) {
       static_cast<uint8_t>(settings.cursorStyle),
       static_cast<uint8_t>(settings.batteryDisplay ? 1 : 0),
       settings.displayWarmth,
+      static_cast<uint8_t>(settings.musicEnabled ? 1 : 0),
+      settings.musicVolume,
+      static_cast<uint8_t>(settings.soundEffectsEnabled ? 1 : 0),
+      settings.soundEffectsVolume,
   };
 }
 
@@ -90,7 +94,8 @@ bool decodeSettings(
   if (data.size() < 13 ||
       data[0] != 'B' || data[1] != '1' || data[2] != '6' ||
       data[3] != 'S' ||
-      (data[4] < 1 || data[4] > 4)) {
+      (data[4] < 1 || data[4] > 7) || (data[4] >= 5 && data.size() < 20) ||
+      (data[4] >= 6 && data.size() < 21) || (data[4] == 7 && data.size() < 22)) {
     return false;
   }
   settings.theme = static_cast<ThemeId>(data[5]);
@@ -112,6 +117,10 @@ bool decodeSettings(
       : CursorStyle::Arrow;
   settings.batteryDisplay = data[4] < 4 || data.size() < 17 || data[16] != 0;
   settings.displayWarmth = data[4] >= 4 && data.size() >= 18 ? data[17] : 0;
+  settings.musicEnabled = data[4] >= 5 ? data[18] != 0 : false;
+  settings.musicVolume = data[4] >= 5 ? data[19] : 30;
+  settings.soundEffectsEnabled = data[4] < 6 || data[20] != 0;
+  settings.soundEffectsVolume = data[4] >= 7 ? data[21] : 100;
   settings = normalizeSettings(settings);
   return true;
 }

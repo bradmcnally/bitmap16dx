@@ -20,8 +20,17 @@ the full list by view.
 
 ## Navigation
 
+Background music is controlled globally with `Fn+Q` (play/pause), `Fn+W`
+(previous), and `Fn+E` (next). These work inside dialogs too. USB keyboards
+use their Play/Pause, Previous, and Next media keys. Settings > Audio has
+separate Sound effects and Music on/off toggles, followed by Music volume and
+Sound effects volume percentages together. Left/right changes each level by
+10%, from 0 to 100%. Tracks are
+labeled BGM01, BGM02, and so on. Fn+S/D or USB volume keys adjust system volume.
+
 On Zero, tap Escape to go back. Hold Escape for three seconds to return HOME;
-release before the countdown finishes to stay in the app.
+release before the countdown finishes to stay in the app. Plain Q does not quit;
+Fn+Q remains music play/pause.
 
 ## Canvas
 

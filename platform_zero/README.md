@@ -19,7 +19,7 @@ Quit BitMap16 DX before reinstalling.
 ## First launch
 
 Open BitMap16 DX from HOME. The app creates its data folders automatically.
-Press `Q` to quit. Sketches and palettes are stored in:
+Hold Escape for three seconds to return HOME. Sketches and palettes are stored in:
 
 ```text
 ~/.local/share/bitmap16dx/
@@ -61,7 +61,9 @@ Page Down, or backlight keys.
 | `Ctrl+B` | Open Screensaver. Press a regular key to return to Canvas. |
 | `Fn+U` / `Fn+I` | Dim / brighten the LCD when the app has access to the backlight control. |
 | Escape | Tap to go back. Hold for 3 seconds to return HOME; release early to cancel the countdown. At startup, tap to skip the splash screen. |
-| `Q` | Quit. |
+| `Fn+Q` | Play / pause background music, keeping its current position. |
+| `Fn+W` / `Fn+E` | Previous / next music track. |
+| `Fn+S` / `Fn+D` | Lower / raise the system volume in 5% steps, shared with HOME. Works on every screen and inside dialogs. |
 
 ### Canvas
 
@@ -171,6 +173,34 @@ and applies the selected palette. Escape returns to local Palettes; a
 second Escape returns to Canvas. The `4`, `8`, and `1` filters show 4, 5–8,
 and 9–16 colors respectively; `0` clears the filters.
 Saved palettes are omitted from the feed.
+
+Applying a palette plays a soft transition as its cartridge slides, then a
+melodic success sound once the insertion animation finishes. Both effects are
+included with the app and use the system's audio output.
+
+Menu navigation and color swatch changes play a quiet tick chosen from five
+variations. Drawing-cursor movement stays silent; pressing against a menu
+boundary or selecting the current swatch does not play a tick.
+
+### Background music
+
+The bundled MP3s play in filename order and repeat as a playlist across the
+whole app, including menus, dialogs, and the screensaver. Music starts **off**.
+Press **Fn+Q** to play or pause, **Fn+W** for the previous track, and **Fn+E**
+for the next. USB keyboards can use their Play/Pause, Previous, and Next media
+keys. Skipping while paused keeps music paused.
+
+Settings > **Audio** has independent **Sound effects** and **Music** on/off
+toggles, followed by **Music volume** and **Sound effects volume** together.
+Left/right adjusts each level in 10% steps, from 0 to 100%; these levels balance effects and music
+inside the app independently of system volume. The defaults are 100% effects
+and 30% music. All audio preferences are remembered between launches. Use the
+key commands above to change tracks. Tracks display as **BGM01**, **BGM02**,
+and so on.
+
+**Fn+S / Fn+D** changes the Zero's master system volume for music and sound
+effects together, using the same level as HOME. USB volume keys work too.
+The current percentage briefly appears at the bottom of the screen.
 
 The feed refreshes locally on the first visit each day. If a refresh fails,
 the previous cache remains available.

@@ -43,6 +43,8 @@ Settings normalizeSettings(Settings settings) {
   settings.matrixBrightness =
       clamp(settings.matrixBrightness, 1, 20);
   if (settings.displayWarmth > 3) settings.displayWarmth = 0;
+  settings.musicVolume = clamp(settings.musicVolume, 0, 100);
+  settings.soundEffectsVolume = clamp(settings.soundEffectsVolume, 0, 100);
   return settings;
 }
 

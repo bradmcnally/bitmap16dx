@@ -406,7 +406,7 @@ int main() {
     Fixture f;
     Downloads d;
     PaletteBrowser browser(f.workspace, f.editor, d.adapter());
-    require(std::string(browser.status()) == "L3:Import|Browse Y:Lospec",
+    require(std::string(browser.status()) == "L4:Import|Browse Y:Lospec",
             "Deck keeps Import left and Browse Lospec right like Zero");
   }
 #endif

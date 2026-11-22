@@ -32,9 +32,9 @@ int main() {
   require(canvas.create(320, 200) && expected.create(320, 200), "Create Help frames");
   HelpView::Theme theme;
   HelpView::State state;
-  constexpr int starts[] = {0, 7, 9, 19, 25, 29, 33};
+  constexpr int starts[] = {0, 7, 9, 19, 25, 29, 36};
   constexpr const char* names[] = {"DRAW", "CANVAS", "PALETTES", "SKETCHES", "PREVIEW", "APP", "KEYBOARD"};
-  require(HelpView::itemCount(false, false) == 40, "All Deck controls are visible");
+  require(HelpView::itemCount(false, false) == 43, "All Deck controls are visible");
   require(!HelpView::moveGroup(state, -1, false, false), "First section boundary");
   for (int group = 0; group < 7; ++group) {
     require(state.cursor == starts[group], "Section navigation lands on its first control");

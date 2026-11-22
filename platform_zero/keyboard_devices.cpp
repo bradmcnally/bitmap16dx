@@ -76,6 +76,11 @@ SDL_Scancode scanCode(unsigned code) {
     case KEY_DELETE: return SDL_SCANCODE_DELETE;
     case KEY_TAB: return SDL_SCANCODE_TAB;
     case KEY_SPACE: return SDL_SCANCODE_SPACE;
+    case KEY_VOLUMEDOWN: return SDL_SCANCODE_VOLUMEDOWN;
+    case KEY_VOLUMEUP: return SDL_SCANCODE_VOLUMEUP;
+    case KEY_PLAYPAUSE: return SDL_SCANCODE_AUDIOPLAY;
+    case KEY_PREVIOUSSONG: return SDL_SCANCODE_AUDIOPREV;
+    case KEY_NEXTSONG: return SDL_SCANCODE_AUDIONEXT;
     case KEY_MINUS: return SDL_SCANCODE_MINUS;
     case KEY_EQUAL: return SDL_SCANCODE_EQUALS;
     case KEY_KPPLUS: return SDL_SCANCODE_KP_PLUS;
@@ -129,9 +134,12 @@ bool hasKey(const std::array<unsigned char, (KEY_MAX + 8) / 8>& bits, unsigned k
 
 bool isKeyboard(int fd) {
   std::array<unsigned char, (KEY_MAX + 8) / 8> bits{};
-  return ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits.data()) >= 0 &&
-         hasKey(bits, KEY_A) && hasKey(bits, KEY_Z) &&
-         hasKey(bits, KEY_ENTER) && hasKey(bits, KEY_SPACE);
+  if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(bits)), bits.data()) < 0) return false;
+  return (hasKey(bits, KEY_A) && hasKey(bits, KEY_Z) &&
+          hasKey(bits, KEY_ENTER) && hasKey(bits, KEY_SPACE)) ||
+         (hasKey(bits, KEY_PLAYPAUSE) &&
+          (hasKey(bits, KEY_PREVIOUSSONG) || hasKey(bits, KEY_NEXTSONG))) ||
+         (hasKey(bits, KEY_VOLUMEDOWN) && hasKey(bits, KEY_VOLUMEUP));
 }
 
 bool isBuiltIn(int fd) {

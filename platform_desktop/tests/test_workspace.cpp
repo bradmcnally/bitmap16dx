@@ -49,6 +49,10 @@ int main() {
   first.settings().matrixEnabled = true;
   first.settings().batteryDisplay = false;
   first.settings().displayWarmth = 2;
+  first.settings().musicEnabled = true;
+  first.settings().musicVolume = 40;
+  first.settings().soundEffectsEnabled = false;
+  first.settings().soundEffectsVolume = 60;
   if (!first.saveSettings()) return 3;
 
   bitmap16::Editor restoredEditor;
@@ -62,7 +66,9 @@ int main() {
       restored.settings().defaultGridSize != 16 ||
       !restored.settings().matrixEnabled ||
       restored.settings().batteryDisplay ||
-      restored.settings().displayWarmth != 2) {
+      restored.settings().displayWarmth != 2 ||
+      !restored.settings().musicEnabled || restored.settings().musicVolume != 40 ||
+      restored.settings().soundEffectsEnabled || restored.settings().soundEffectsVolume != 60) {
     return 5;
   }
   if (!restored.openSketch(0, restoredEditor) ||
@@ -199,14 +205,49 @@ int main() {
     if (reopenedEditor.sketch().paletteColors[color] != beforePaletteDelete.paletteColors[color]) return 16;
   }
 
-  // Older version 4 files with the battery option default to neutral warmth.
+  // Version 6 keeps both on/off preferences and defaults the effects mix.
   const auto settingsPath = root / "settings.bin";
+  {
+    std::fstream settingsFile(settingsPath, std::ios::binary | std::ios::in | std::ios::out);
+    settingsFile.seekp(4);
+    settingsFile.put(6);
+  }
+  std::filesystem::resize_file(settingsPath, 21, error);
+  bitmap16::Editor effectsEditor;
+  bitmap16::Desktop::Workspace effectsWorkspace;
+  if (error || !effectsWorkspace.initialize(effectsEditor) ||
+      effectsWorkspace.settings().soundEffectsEnabled ||
+      effectsWorkspace.settings().soundEffectsVolume != 100 ||
+      !effectsWorkspace.settings().musicEnabled || effectsWorkspace.settings().musicVolume != 40) return 19;
+
+  // Version 5 keeps music preferences and defaults sound effects to on.
+  {
+    std::fstream settingsFile(settingsPath, std::ios::binary | std::ios::in | std::ios::out);
+    settingsFile.seekp(4);
+    settingsFile.put(5);
+  }
+  std::filesystem::resize_file(settingsPath, 20, error);
+  bitmap16::Editor musicEditor;
+  bitmap16::Desktop::Workspace musicWorkspace;
+  if (error || !musicWorkspace.initialize(musicEditor) ||
+      !musicWorkspace.settings().soundEffectsEnabled ||
+      musicWorkspace.settings().soundEffectsVolume != 100 ||
+      !musicWorkspace.settings().musicEnabled || musicWorkspace.settings().musicVolume != 40) return 18;
+
+  // Older version 4 files with the battery option default to neutral warmth.
+  {
+    std::fstream settingsFile(settingsPath, std::ios::binary | std::ios::in | std::ios::out);
+    settingsFile.seekp(4);
+    settingsFile.put(4);
+  }
   std::filesystem::resize_file(settingsPath, 17, error);
   bitmap16::Editor previousEditor;
   bitmap16::Desktop::Workspace previous;
   if (error || !previous.initialize(previousEditor) ||
       previous.settings().batteryDisplay ||
-      previous.settings().displayWarmth != 0) {
+      previous.settings().displayWarmth != 0 ||
+      previous.settings().musicEnabled || previous.settings().musicVolume != 30 ||
+      !previous.settings().soundEffectsEnabled) {
     return 17;
   }
 

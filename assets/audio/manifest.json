@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "reviewed": "2026-11-21",
+  "credits": "CREDITS.md",
+  "files": [
+    {
+      "file": "disable_02.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Menu dismissal",
+      "bytes": 144166,
+      "sha256": "476084d04f047f6919090e37682e35832949c4292db53a1487b06fcae7d67888"
+    },
+    {
+      "file": "enable_01b.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Unused audition file",
+      "bytes": 158158,
+      "sha256": "1b2afcee252d6f53d32650d2f1ed78ec0be13110af9b9d53237da10b0b7d3f4b"
+    },
+    {
+      "file": "enable_02.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Menu opening",
+      "bytes": 144736,
+      "sha256": "84489d78cd7f58cfbee237024a85ce9917c830775e54e7847e2dc4c242765b63"
+    },
+    {
+      "file": "enable_04a.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Open an existing sketch",
+      "bytes": 432172,
+      "sha256": "950211a9bfd042df5841e98a6acc716904c3ed46be7d7b901f2ff7741cd25bed"
+    },
+    {
+      "file": "keys_minimal_01.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Varied navigation and color-swatch tick",
+      "bytes": 4540,
+      "sha256": "fe301f2319bde98dbeb36ed42da1ca8d5324ac9aa9685276996d9815322ed4c5"
+    },
+    {
+      "file": "keys_minimal_02.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Varied navigation and color-swatch tick",
+      "bytes": 5716,
+      "sha256": "1125e1ba44a4ffa1ff383e6983ebbd97f830f99f0d699736cc638d1cc0fdea44"
+    },
+    {
+      "file": "keys_minimal_03.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Varied navigation and color-swatch tick",
+      "bytes": 2380,
+      "sha256": "dd919a4b0e4ccd87fed7f038310593d9a302e35cfaa7b5c7758623efcf978131"
+    },
+    {
+      "file": "keys_minimal_04.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Varied navigation and color-swatch tick",
+      "bytes": 4508,
+      "sha256": "aea8fd6d7ee181c8384949c741a37718cb10bae001922f132608a649e387cb51"
+    },
+    {
+      "file": "keys_minimal_05.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Varied navigation and color-swatch tick",
+      "bytes": 3610,
+      "sha256": "951d426625a6127004aa0e7eee20c3eb0fd7c723767014c9cec8ae42d6a1bc04"
+    },
+    {
+      "file": "success_melodic_01b.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Completed cartridge insertion",
+      "bytes": 368920,
+      "sha256": "286ffd165f72aa4813d952a3bcbef8fd061dbd81e0ea9086d6ce76312980a523"
+    },
+    {
+      "file": "success_melodic_03b.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Successful sketch save",
+      "bytes": 200546,
+      "sha256": "4969994eceb2fccbe675e3c4b94ecfa27b368421d7bd41c710c1ccd58dab88bc"
+    },
+    {
+      "file": "transition_soft_01b.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Unused audition file",
+      "bytes": 186910,
+      "sha256": "5d793cf941d8d88fbdd88b723e989a14b3de8f5f46e5277ee7a2e61e04715064"
+    },
+    {
+      "file": "transition_soft_02b.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Cartridge slide",
+      "bytes": 79114,
+      "sha256": "d04ba3c536629b996795c8d62b47392d3bca036e85b220254f972fc21db8423b"
+    },
+    {
+      "file": "music/03 7am _ Towballs Crossing.mp3",
+      "title": "7am | Towballs Crossing",
+      "creator": "Towball (Timothy Willis)",
+      "source": "https://towball.itch.io/towballs-crossing-deluxe",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [],
+      "bytes": 6659934,
+      "sha256": "d67fb408810d54e5d614d9207e8b7b82edf0b9e6f2445eb697a74d4beecac044"
+    },
+    {
+      "file": "music/alrightapothecary.mp3",
+      "title": "Alright Apothecary",
+      "creator": "boipurple",
+      "source": "https://boipurple.bandcamp.com/album/jam-channel",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [],
+      "bytes": 4424850,
+      "sha256": "a2a9ed7974e275f949e9298ceeb609960cdeb4fb6c54014535791f306ba8fb74"
+    },
+    {
+      "file": "music/blossom.mp3",
+      "title": "blossom",
+      "creator": "chajamakesmusic",
+      "source": "https://chajamakesmusic.itch.io/cute-and-silly-rpg-music-pack",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [
+        "Converted from WAV to MP3"
+      ],
+      "bytes": 3637320,
+      "sha256": "de428b6ed32dcec89282fbfe10592c115e70b8162ddf9061919b77a84f7850df"
+    },
+    {
+      "file": "music/comeaux.mp3",
+      "title": "Comeaux",
+      "creator": "boipurple",
+      "source": "https://boipurple.bandcamp.com/album/jam-channel",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [],
+      "bytes": 5015113,
+      "sha256": "b11a1edbf00bda0a6c7545eb8178f6fe25ac37861d603009ccce9a1d453aaee4"
+    },
+    {
+      "file": "music/journey.mp3",
+      "title": "journey",
+      "creator": "chajamakesmusic",
+      "source": "https://chajamakesmusic.itch.io/cute-and-silly-rpg-music-pack",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [
+        "Converted from WAV to MP3"
+      ],
+      "bytes": 1976640,
+      "sha256": "88107f20a6d5b1791e00fc77a6b55d1735ad0e4fae78249451ec30bd236878f3"
+    },
+    {
+      "file": "music/mirth.mp3",
+      "title": "Mirth",
+      "creator": "boipurple",
+      "source": "https://boipurple.bandcamp.com/album/jam-channel",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [],
+      "bytes": 4951479,
+      "sha256": "b6ecf7692558ac7c29447b7d9a76301236631d5411c23fb9954480e595eecaad"
+    },
+    {
+      "file": "music/puddleworld.mp3",
+      "title": "Puddleworld",
+      "creator": "boipurple",
+      "source": "https://boipurple.bandcamp.com/album/jam-channel",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [],
+      "bytes": 6755182,
+      "sha256": "c287ca3e7c742976035be4e3898879107e52711ea4c2aa8734cac3de11073601"
+    },
+    {
+      "file": "music/soiree.mp3",
+      "title": "Soiree",
+      "creator": "boipurple",
+      "source": "https://boipurple.bandcamp.com/album/jam-channel",
+      "license": "CC-BY-4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "public_git": true,
+      "use": "Background music playlist",
+      "changes": [],
+      "bytes": 7599982,
+      "sha256": "65f44d37dc1d8718daa1e7f96ed9bfba8bda4d4a1b348f6be6fd9d1c4378dcab"
+    }
+  ]
+}

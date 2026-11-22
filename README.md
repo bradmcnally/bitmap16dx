@@ -86,7 +86,8 @@ options for your device. Open Help for the controls available on your platform.
 
 ## Downloads and releases
 
-The latest release is **v0.9.0** for Cardputer ADV and Cardputer Zero.
+Version **v0.9.1** is in preparation. The latest published release is
+**v0.9.0** for Cardputer ADV and Cardputer Zero.
 Download the file for your device from the
 [v0.9.0 release](https://github.com/bradmcnally/bitmap16dx/releases/tag/v.0.9.0):
 
@@ -103,3 +104,11 @@ See the [development guide](docs/development.md) for source builds, packaging,
 simulators, and validation, and the [Cloudflare feed setup](services/lospec-feed/README.md)
 for hosting the palette feed. Zero packaging and submission instructions are
 in the [store release guide](platform_zero/STORE.md).
+
+## Licenses and audio assets
+
+The application code is [MIT licensed](LICENSE). Third-party audio retains
+its own licenses; see the [audio credits](assets/audio/CREDITS.md) and
+[source inventory and private asset instructions](assets/audio/README.md).
+The CC BY 4.0 music is distributable with attribution. Cyberleaf sound effects
+are private build assets excluded from public Git tracking.

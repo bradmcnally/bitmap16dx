@@ -54,6 +54,15 @@ docs/notes.md
 
 # Local source assets and working notes
 assets/
+!/assets/
+/assets/*
+!/assets/audio/
+/assets/audio/*
+!/assets/audio/*.md
+!/assets/audio/manifest.json
+!/assets/audio/music/
+/assets/audio/music/*
+!/assets/audio/music/*.mp3
 reference/
 ux/
 docs/*

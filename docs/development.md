@@ -12,6 +12,7 @@ bitmap16dx/
 ├── CMakePresets.json       # Build presets
 ├── platformio.ini          # ADV firmware build
 ├── app-builder.json        # Zero store metadata and package version
+├── assets/audio/           # Shared sound effects and music for SDL platforms
 ├── src/
 │   ├── main.cpp            # ADV entry point
 │   ├── core/               # Shared editor and UI
@@ -53,6 +54,60 @@ Its download adapter supplies asynchronous results; the same interface accepts
 controlled offline results in tests. SDL retains input mapping, frame pacing,
 rendering, and navigation between views. Catalog backing data remains valid
 across workspace palette reloads.
+
+Desktop, Zero, and Steam Deck share audio assets in `assets/audio/`; MP3 music
+files belong in `assets/audio/music/`. The [audio source inventory](../assets/audio/README.md)
+explains licenses and restoring the private Cyberleaf effects for a fresh checkout.
+Public sources, credits and checksums are tracked separately from those ignored
+WAVs. Audio credits are copied into each build's `music/` folder and included by
+the Zero package and Steam Deck installer. SDL builds preload
+`assets/audio/transition_soft_02b.wav` for the start of a cartridge slide and
+`assets/audio/success_melodic_01b.wav` for the first completed insertion frame.
+The completion cue plays once, before the existing brief hold and return to
+Canvas. CMake embeds both WAVs into the executable, including Zero packages, so no runtime asset path or
+extra effect files are needed. SDL2_mixer 2.6+ streams MP3 music from the
+`music/` directory beside the executable, while effects mix over it. CMake
+copies `assets/audio/music/*.mp3` into that directory in filename order.
+The Zero package and Steam Deck installer include the directory. Music is off
+by default; Settings > Audio has Sound effects and Music on/off toggles, followed
+by Music volume and Sound effects volume together. These percentages adjust
+independent mixer gains in 10%
+steps, clamped to 0–100%, without changing system volume or playback state.
+Effects default to 100%, and music to 30%; navigation retains its quieter sample
+gain within the effects mix. Master volume and previous/next track use key
+commands. Tracks display as BGM01, BGM02, and so on.
+Audio preferences are stored in version 7 SDL settings,
+with defaults preserved for older files. Playback and media controls are
+serviced while waiting for events, including idle screens and modal dialogs.
+Sound effects default to on and can be disabled independently of music.
+Unavailable audio leaves the app usable and logs the reason.
+
+Install SDL2_mixer development files before building: `brew install sdl2_mixer`
+on macOS, or `sudo apt install libsdl2-mixer-dev` on Linux. The Zero package
+also declares the SDL2_mixer runtime dependency.
+
+Opening Palettes, Sketches, Settings, or Help plays `enable_02.wav`; closing
+plays `disable_02.wav`. Successfully opening an existing sketch from Sketches
+plays `enable_04a.wav` instead of the dismiss sound. Canceled or failed opens
+stay in Sketches. Applying a cartridge keeps its dedicated success cue.
+These menu sounds are embedded and use a separate effect channel.
+Successful Save, Save As, and Save from the unsaved-changes prompt play the
+embedded `success_melodic_03b.wav` confirmation. Failed or canceled saves
+stay silent. This cue follows the effects toggle and mix, and plays separately
+from menu cues so Save and Open can complete without cutting it off.
+
+Navigation uses an embedded array of `keys_minimal_01.wav` through
+`keys_minimal_05.wav`. Actual menu-focus and color-swatch changes choose a
+random sample, avoid immediate repeats, and share a 100 ms cooldown.
+Ticks play at half effect volume on their own channel, leaving cartridge cues
+and background music uninterrupted. Drawing-cursor movement stays silent.
+
+On the physical Zero, Fn+S/D and USB volume keys adjust PipeWire's default
+output with `wpctl`, matching beepbotdx and the HOME volume setting. The
+native display adapter overlays the percentage without closing or redrawing
+modal dialogs. Volume changes in five-percent steps, capped at 100%; missing
+PipeWire output reports Volume unavailable. The `zero_system_volume` test
+uses a controlled `wpctl` helper to check shared-state reads and failures.
 
 The shared `SketchWorkflow` owns unsaved-change tracking and pending New, Open,
 and Quit decisions. ADV and SDL storage adapters perform file operations, while
@@ -147,7 +202,7 @@ Install the native build dependencies:
 
 ```sh
 sudo apt update
-sudo apt install cmake build-essential libsdl2-dev libcurl4-openssl-dev ca-certificates
+sudo apt install cmake build-essential libsdl2-dev libsdl2-mixer-dev libcurl4-openssl-dev ca-certificates
 ```
 
 Configure and build:
@@ -172,7 +227,7 @@ cpack
 
 Install the generated `arm64.deb` with `sudo dpkg -i`.
 
-Open BitMap16 DX from HOME. Press `Q` to quit and release the keypad to
+Open BitMap16 DX from HOME. Hold Escape for three seconds to return HOME and release the keypad to
 the system. If the app does not open, inspect `/tmp/bitmap16dx.log`. The
 launch user needs write access to `/dev/fb_lcd` (or `/dev/fb0`) and read
 access to the keypad's input event device. The brightness shortcut also
@@ -272,7 +327,7 @@ Recommended all-at-once test:
 7. Test palette import, 4 / 5–8 / 9–16 filters, saved-palette deletion, and
    Escape navigation from Lospec to local Palettes to Canvas.
 8. Test Help return navigation, Preview, `Ctrl+B` Screensaver, display
-   brightness, both themes, Escape behavior, and `Q` quit.
+   brightness, both themes, Escape behavior, and holding Escape to return HOME.
 
 ## Steam Deck build
 
@@ -280,7 +335,7 @@ Build on an x86-64 Linux machine with SDL2 development files installed:
 
 ```sh
 sudo apt update
-sudo apt install cmake build-essential libsdl2-dev libcurl4-openssl-dev ca-certificates
+sudo apt install cmake build-essential libsdl2-dev libsdl2-mixer-dev libcurl4-openssl-dev ca-certificates
 
 cmake --preset steamdeck
 cmake --build --preset steamdeck
@@ -336,7 +391,8 @@ same optional key setup as the [Zero feed configuration](#zero-feed-configuratio
    returning to the canvas.
 7. Draw, release L1 to undo, and press R1 to redo. Confirm L2+R2 saves without
    also undoing, then open Sketches with View and reopen the saved sketch.
-8. Confirm L4 opens Resize Canvas, L5 toggles Preview, and R4 opens Help then
+8. Confirm L3 pauses/resumes music in every view and dialog, L4 opens Resize Canvas,
+   L5 toggles Preview, and R4 opens Help then
    returns to the previous screen. Confirm R5 toggles the grid rulers.
 9. Test both Gaming Mode and Desktop Mode, then report any incorrect button
    labels, dead-zone problems, double movements, or missed repeats.
@@ -345,7 +401,7 @@ same optional key setup as the [Zero feed configuration](#zero-feed-configuratio
 11. In Help, use LB/RB to visit every section and confirm controller labels and
     footer prompts stay clear of the content. In local Palettes, Import belongs
     at the left and Browse Lospec at the right, matching Zero's alignment.
-12. Open Import with L3 and leave the system keyboard up through several cursor
+12. Open Import with L4 and leave the system keyboard up through several cursor
     blinks. Confirm the dialog stays visible, type a slug, then check Cancel
     and Import focus transitions without flashing or reopening the keyboard.
 

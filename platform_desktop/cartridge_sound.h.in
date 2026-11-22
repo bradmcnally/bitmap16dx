@@ -1,0 +1,19 @@
+#pragma once
+
+namespace bitmap16::Desktop::AudioAssets {
+inline constexpr unsigned char kCartridgeSlide[] = {@BITMAP16_CARTRIDGE_SLIDE_BYTES@};
+inline constexpr unsigned char kCartridgeInsert[] = {@BITMAP16_CARTRIDGE_SOUND_BYTES@};
+inline constexpr unsigned char kMenuOpen[] = {@BITMAP16_MENU_OPEN_BYTES@};
+inline constexpr unsigned char kMenuClose[] = {@BITMAP16_MENU_CLOSE_BYTES@};
+inline constexpr unsigned char kSketchOpen[] = {@BITMAP16_SKETCH_OPEN_BYTES@};
+inline constexpr unsigned char kSketchSave[] = {@BITMAP16_SKETCH_SAVE_BYTES@};
+@BITMAP16_NAVIGATION_SOUND_ARRAYS@
+struct SoundData { const unsigned char* data; int size; };
+inline constexpr SoundData kNavigationSounds[] = {
+  {kNavigation1, sizeof(kNavigation1)},
+  {kNavigation2, sizeof(kNavigation2)},
+  {kNavigation3, sizeof(kNavigation3)},
+  {kNavigation4, sizeof(kNavigation4)},
+  {kNavigation5, sizeof(kNavigation5)},
+};
+}

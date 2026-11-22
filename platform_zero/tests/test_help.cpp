@@ -37,7 +37,9 @@ int main() {
       {2, "Backspace", "Bksp/Del"}, {5, "M + FZXC", "M arrows"},
       {7, "Ctrl Y", "Ctrl Sh Z"}, {8, "Fn Bksp", "On device"},
       {9, "Fn+L/M", "+/-"}, {14, "Fn 1-8", "F1-F8"},
-      {25, "Fn U/I", "On device"}};
+      {25, "Fn U/I", "On device"}, {27, "Fn Q", "MediaPlay"},
+      {28, "Fn W", "MediaPrev"}, {29, "Fn E", "MediaNext"},
+      {30, "Fn S/D", "Vol -/+"}};
   for (const bool external : {false, true}) {
     for (const auto& control : controls) {
       HelpView::State state;

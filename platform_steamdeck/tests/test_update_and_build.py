@@ -44,6 +44,8 @@ if '--build' in sys.argv:
     else:
         data = b'\\x7fELF\\x02\\x01\\x01' + bytes(9) + struct.pack('<HHI', 2, 62, 1) + bytes(40)
     Path('build_steamdeck/bitmap16dx_desktop').write_bytes(data)
+    Path('build_steamdeck/music').mkdir(exist_ok=True)
+    Path('build_steamdeck/music/track.mp3').write_bytes(b'music data')
 """)
 
     def command(self, name, body):
@@ -61,6 +63,7 @@ if '--build' in sys.argv:
         self.assertEqual((self.install / "bitmap16dx_desktop").read_bytes(),
                          (self.root / "build_steamdeck/bitmap16dx_desktop").read_bytes())
         self.assertTrue(os.access(self.install / "bitmap16dx_desktop", os.X_OK))
+        self.assertEqual((self.install / "music/track.mp3").read_bytes(), b'music data')
         self.assertEqual((self.install / "licenses/bitmap16dx-LICENSE").read_text(), "App license")
         self.assertIn("abc1234", (self.install / "build-info.txt").read_text())
         self.assertIn("-UBITMAP16_LOSPEC_FEED_URL", (self.root / "configure-log.txt").read_text())

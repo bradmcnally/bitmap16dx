@@ -49,14 +49,14 @@ old exports folder stay there. Use Quit in Settings to close the app.
 | LT + left stick | Move artwork | — |
 | LT / RT | — | Zoom out / in by one integer step in Preview |
 | R3 | Open Palettes | — |
-| L3 | Open Resize Canvas | Import from Lospec in Palettes |
+| L3 | Play / pause music | Play / pause music, including dialogs |
 | L1 / LB | Undo on release | Previous palette color-range filter |
 | R1 / RB | Redo | Next palette color-range filter |
 | L2 + R2 | Save once per chord | Zoom out / in individually |
 | View | Open Sketches | Close Sketches |
 | Menu | Open Settings | Close Settings |
 | D-pad | Move canvas cursor with hold repeat | Navigate; in Palettes, Up toggles user palettes and Down clears filters |
-| L4 | Open Resize Canvas | — |
+| L4 | Open Resize Canvas | Import from Lospec in Palettes |
 | L5 | Toggle Preview | Toggle Preview |
 | R4 | Toggle Help | Toggle Help |
 | R5 | Toggle grid rulers | — |
@@ -64,9 +64,21 @@ old exports folder stay there. Use Quit in Settings to close the app.
 Right-stick color movement follows the palette rail geometry. Up/down changes
 rows. Left/right switches columns for palettes with more than eight colors.
 
-L3 or L4 resizes the canvas. Resizing is undoable.
+L4 resizes the canvas. Resizing is undoable. L3 pauses or resumes music from
+the current playback position throughout the app, including modal dialogs.
 
 Keyboard controls are also available.
+
+Settings > Audio includes Sound effects on/off and Music on/off, followed by
+Music volume and Sound effects volume together. Left/right adjusts each level
+from 0 to 100% in 10% steps, independently of system volume. Levels are saved;
+defaults are 100% effects and 30% music.
+Tracks are labeled BGM01, BGM02, and so on.
+The bundled MP3 playlist repeats in filename order throughout the app;
+music starts off and its preference is saved. Keyboard media keys also control
+play/pause and previous/next. Sound effects play over the music.
+When copying a build manually, copy the build's `music/` folder alongside
+`bitmap16dx_desktop`. Update and Build installs both automatically.
 
 Help groups controls into Draw, Canvas, Palettes, Sketches, Preview, App, and
 Keyboard sections. Use LB/RB to change sections and Up/Down to select a control.
@@ -82,7 +94,7 @@ See [Using Bitmap16 DX](../README.md#using-bitmap16-dx) for the shared workflow.
 
 ### Import a palette by name or URL
 
-In Palettes, press `L3` (keyboard `I`) to import a palette slug such as
+In Palettes, press `L4` (keyboard `I`) to import a palette slug such as
 `endesga-16` or a full Lospec palette URL. Review the returned palette, then
 press Enter / `A` to save and apply it, or Escape / `B` to return to the palette
 list. Palettes with 4–16 colors are supported; saved imports remain available offline.

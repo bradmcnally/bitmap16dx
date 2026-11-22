@@ -107,7 +107,7 @@ void PaletteBrowser::reload() {
     title_ = "PALETTES > LOSPEC (" + std::to_string(entries_.size()) + ')';
     catalog_.emptyMessage = cache_.empty() ? "NO CACHED PALETTES" : "NO NEW MATCHES";
 #ifdef BITMAP16_STEAM_DECK
-    status_ = "L3:Import";
+    status_ = "L4:Import";
 #else
     status_ = "[I]mport";
 #endif
@@ -126,7 +126,7 @@ void PaletteBrowser::reload() {
     title_ = "PALETTES";
     catalog_.emptyMessage = "NO PALETTES";
 #ifdef BITMAP16_STEAM_DECK
-    status_ = "L3:Import|Browse Y:Lospec";
+    status_ = "L4:Import|Browse Y:Lospec";
 #else
     status_ = "[I]mport|Browse [L]ospec";
 #endif

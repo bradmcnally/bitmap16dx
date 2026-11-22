@@ -29,9 +29,17 @@ constexpr Item kItems[] = {
     {"Warmth", Action::DisplayWarmthChanged},
 #endif
     {"Cursor", Action::CursorStyleChanged},
+    {"Audio", Action::AudioMenuRequested},
     {"Bluetooth", Action::BluetoothRequested},
     {"Help", Action::HelpRequested},
     {"Quit", Action::QuitRequested},
+};
+
+constexpr Item kAudioItems[] = {
+    {"Sound effects", Action::SoundEffectsChanged},
+    {"Music", Action::MusicEnabledChanged},
+    {"Music volume", Action::MusicVolumeChanged},
+    {"Sound effects volume", Action::SoundEffectsVolumeChanged},
 };
 
 constexpr Item kMatrixItems[] = {
@@ -53,7 +61,9 @@ bool itemVisible(
     bool includeShakeUndo,
     bool includeQuit,
     bool includeIndicator,
-    bool includeHelp) {
+    bool includeHelp,
+    bool includeAudio) {
+  if (item.action == Action::AudioMenuRequested) return includeAudio;
   if (item.action == Action::BluetoothRequested) return includeBluetooth;
   if (item.action == Action::HelpRequested) return includeHelp;
   if (item.action == Action::QuitRequested) return includeQuit;
@@ -75,7 +85,11 @@ const Item& visibleItem(
     bool includeShakeUndo,
     bool includeQuit,
     bool includeIndicator,
-    bool includeHelp) {
+    bool includeHelp,
+    bool includeAudio) {
+  if (page == Page::Audio) {
+    return kAudioItems[std::clamp(index, 0, static_cast<int>(sizeof(kAudioItems) / sizeof(kAudioItems[0])) - 1)];
+  }
   if (page == Page::RgbMatrix) {
     const int clamped = std::max(
         0,
@@ -105,7 +119,7 @@ const Item& visibleItem(
             includeShakeUndo,
             includeQuit,
             includeIndicator,
-            includeHelp)) {
+            includeHelp, includeAudio)) {
       continue;
     }
     if (visibleIndex == index) {
@@ -125,6 +139,17 @@ const char* valueFor(
   switch (action) {
     case Action::ThemeChanged:
       return settings.theme == ThemeId::Light ? "Light" : "Dark";
+    case Action::AudioMenuRequested:
+      return "OPEN";
+    case Action::SoundEffectsChanged:
+      return settings.soundEffectsEnabled ? "ON" : "OFF";
+    case Action::MusicEnabledChanged:
+      return settings.musicEnabled ? "ON" : "OFF";
+    case Action::SoundEffectsVolumeChanged:
+    case Action::MusicVolumeChanged:
+      std::snprintf(buffer, bufferSize, "%u%%", static_cast<unsigned>(
+          action == Action::MusicVolumeChanged ? settings.musicVolume : settings.soundEffectsVolume));
+      return buffer;
     case Action::DefaultGridChanged:
       return settings.defaultGridSize == 8
           ? "8"
@@ -193,7 +218,8 @@ int itemCount(
     bool includeShakeUndo,
     bool includeQuit,
     bool includeIndicator,
-    bool includeHelp) {
+    bool includeHelp,
+    bool includeAudio) {
   int count = 0;
   for (const Item& item : kItems) {
     if (itemVisible(
@@ -203,7 +229,7 @@ int itemCount(
             includeShakeUndo,
             includeQuit,
             includeIndicator,
-            includeHelp)) {
+            includeHelp, includeAudio)) {
       ++count;
     }
   }
@@ -218,8 +244,11 @@ bool moveCursor(
     bool includeShakeUndo,
     bool includeQuit,
     bool includeIndicator,
-    bool includeHelp) {
-  const int maximum = state.page == Page::RgbMatrix
+    bool includeHelp,
+    bool includeAudio) {
+  const int maximum = state.page == Page::Audio
+      ? static_cast<int>(sizeof(kAudioItems) / sizeof(kAudioItems[0])) - 1
+      : state.page == Page::RgbMatrix
       ? static_cast<int>(
             sizeof(kMatrixItems) / sizeof(kMatrixItems[0])) -
             1
@@ -233,7 +262,7 @@ bool moveCursor(
             includeShakeUndo,
             includeQuit,
             includeIndicator,
-            includeHelp) -
+            includeHelp, includeAudio) -
             1;
   const int next = std::max(0, std::min(maximum, state.cursor + delta));
   if (next == state.cursor) {
@@ -251,8 +280,12 @@ Action activate(
     bool includeShakeUndo,
     bool includeQuit,
     bool includeIndicator,
-    bool includeHelp) {
-  const int count = state.page == Page::RgbMatrix
+    bool includeHelp,
+    bool includeAudio,
+    int direction) {
+  const int count = state.page == Page::Audio
+      ? static_cast<int>(sizeof(kAudioItems) / sizeof(kAudioItems[0]))
+      : state.page == Page::RgbMatrix
       ? static_cast<int>(
             sizeof(kMatrixItems) / sizeof(kMatrixItems[0]))
       : state.page == Page::IndicatorLed
@@ -264,7 +297,7 @@ Action activate(
             includeShakeUndo,
             includeQuit,
             includeIndicator,
-            includeHelp);
+            includeHelp, includeAudio);
   state.cursor =
       std::max(
           0,
@@ -278,9 +311,31 @@ Action activate(
           includeShakeUndo,
           includeQuit,
           includeIndicator,
-          includeHelp)
+          includeHelp, includeAudio)
           .action;
   switch (action) {
+    case Action::AudioMenuRequested:
+      state.parentCursor = state.cursor;
+      state.page = Page::Audio;
+      state.cursor = 0;
+      state.scrollOffset = 0;
+      return action;
+    case Action::SoundEffectsChanged:
+      settings.soundEffectsEnabled = !settings.soundEffectsEnabled;
+      return action;
+    case Action::MusicEnabledChanged:
+      settings.musicEnabled = !settings.musicEnabled;
+      return action;
+    case Action::SoundEffectsVolumeChanged:
+    case Action::MusicVolumeChanged: {
+      uint8_t& percent = action == Action::MusicVolumeChanged
+          ? settings.musicVolume : settings.soundEffectsVolume;
+      const auto next = static_cast<uint8_t>(std::clamp<int>(
+          percent + (direction < 0 ? -10 : 10), 0, 100));
+      if (next == percent) return Action::None;
+      percent = next;
+      return action;
+    }
     case Action::ThemeChanged:
       settings.theme = settings.theme == ThemeId::Light
           ? ThemeId::Dark
@@ -371,7 +426,8 @@ void render(
     const char* statusMessage,
     bool includeQuit,
     bool includeIndicator,
-    bool includeHelp) {
+    bool includeHelp,
+    bool includeAudio) {
   if (!canvas.isValid()) {
     return;
   }
@@ -383,11 +439,14 @@ void render(
   canvas.drawString(
       state.page == Page::RgbMatrix
           ? "RGB MATRIX"
-          : state.page == Page::IndicatorLed ? "INDICATOR LED" : "SETTINGS",
+          : state.page == Page::IndicatorLed ? "INDICATOR LED"
+          : state.page == Page::Audio ? "AUDIO" : "SETTINGS",
       4,
       4);
 
-  const int totalItems = state.page == Page::RgbMatrix
+  const int totalItems = state.page == Page::Audio
+      ? static_cast<int>(sizeof(kAudioItems) / sizeof(kAudioItems[0]))
+      : state.page == Page::RgbMatrix
       ? static_cast<int>(
             sizeof(kMatrixItems) / sizeof(kMatrixItems[0]))
       : state.page == Page::IndicatorLed
@@ -399,7 +458,7 @@ void render(
             includeShakeUndo,
             includeQuit,
             includeIndicator,
-            includeHelp);
+            includeHelp, includeAudio);
   state.cursor = std::max(0, std::min(totalItems - 1, state.cursor));
   state.scrollOffset =
       std::max(0, std::min(state.cursor, state.scrollOffset));
@@ -445,19 +504,15 @@ void render(
         includeShakeUndo,
         includeQuit,
         includeIndicator,
-        includeHelp);
-    canvas.drawString(
-        item.label,
-        labelX,
-        textY);
-
+        includeHelp, includeAudio);
     const char* value = valueFor(
         item.action,
         settings,
         bluetoothValue,
         valueBuffer,
         sizeof(valueBuffer));
-    if (item.action == Action::MatrixMenuRequested ||
+    if (item.action == Action::AudioMenuRequested ||
+        item.action == Action::MatrixMenuRequested ||
         item.action == Action::IndicatorMenuRequested ||
         item.action == Action::HelpRequested) {
       std::snprintf(
@@ -468,6 +523,13 @@ void render(
           selectedValue, sizeof(selectedValue), "<%s>", value);
       value = selectedValue;
     }
+    // Keep full labels readable beside enlarged values on smaller displays.
+    const int valueWidth = canvas.textWidth(value);
+    const bool compactLabel = selected &&
+        canvas.textWidth(item.label) + valueWidth + 8 > valueRight - labelX;
+    if (compactLabel) canvas.setTextSize(1);
+    canvas.drawString(item.label, labelX, textY + (compactLabel ? 4 : 0));
+    canvas.setTextSize(textSize);
     canvas.setTextAlign(TextAlign::Right);
     canvas.drawString(value, valueRight, textY);
     y += selected ? selectedLineHeight : lineHeight;

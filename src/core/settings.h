@@ -35,6 +35,10 @@ struct Settings {
   uint8_t matrixBrightness = 5;
   bool batteryDisplay = true;
   uint8_t displayWarmth = 0;
+  bool musicEnabled = false;
+  uint8_t musicVolume = 30;
+  bool soundEffectsEnabled = true;
+  uint8_t soundEffectsVolume = 100;
 };
 
 Settings normalizeSettings(Settings settings);

@@ -5,6 +5,28 @@ All notable user-facing changes to BitMap16 DX are documented here.
 The v0.8.0 release artifact targets the M5Stack Cardputer ADV. Version 0.9.0
 adds a Cardputer Zero package.
 
+## [0.9.1] — Unreleased
+
+### Added
+
+- Optional app-wide background music with an eight-track playlist, BGM track labels, and play/pause and track shortcuts on desktop, Zero, and Steam Deck.
+- Sound effects for navigation, color changes, menu transitions, cartridge insertion, opening sketches, and saving.
+- An Audio settings section with independent sound effects and music toggles and saved volume percentages.
+- Zero system-volume controls through Fn+S/D and USB volume keys, with an on-screen percentage.
+- Audio credits, source and checksum inventory, and private-asset instructions for licensed sound effects.
+
+### Changed
+
+- Steam Deck L3 plays/pauses music throughout the app. L4 resizes the canvas and opens palette import.
+- Zero uses holding Escape to return HOME; plain Q no longer quits.
+- Importing a Lospec palette by name or URL opens a preview before saving and applying it. Browsing palettes still allows direct selection.
+
+### Fixed
+
+- Fixed Zero Sym-key input, including hyphens, periods, and slashes in palette names and URLs.
+- Fixed the save-changes prompt flashing when opening or moving between buttons.
+- Fixed the import-preview cartridge appearing without its entrance animation.
+
 ## [0.9.0] — Cardputer Zero
 
 ### Added

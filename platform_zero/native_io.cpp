@@ -1,4 +1,5 @@
 #include "native_io.h"
+#include "system_volume.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -75,19 +76,19 @@ void NativeIo::present(const uint16_t* pixels, int width, int height) {
   frameWidth_ = width;
   frameHeight_ = height;
   lastFrame_.assign(pixels, pixels + std::size_t{static_cast<unsigned>(width)} * height);
-  redrawEscCountdown();
+  redrawOverlay();
 }
 
-void NativeIo::redrawEscCountdown() {
+void NativeIo::redrawOverlay() {
   if (lastFrame_.empty() || escHold_.homeRequested()) return;
-  if (countdown_ == 0) {
+  if (countdown_ == 0 && volumeLabel_[0] == '\0') {
     writeFrame(lastFrame_.data(), frameWidth_, frameHeight_);
     return;
   }
   if ((countdownFrame_.width() != frameWidth_ || countdownFrame_.height() != frameHeight_) &&
       !countdownFrame_.create(frameWidth_, frameHeight_)) return;
   std::copy(lastFrame_.begin(), lastFrame_.end(), countdownFrame_.pixels());
-  // Match the regular centered status line, replacing the footer while held.
+  // Compose over the last complete frame, including modal dialogs.
   const uint16_t background = countdownFrame_.readPixel(0, frameHeight_ - 1);
   const int red = ((background >> 11) & 31) * 255 / 31;
   const int green = ((background >> 5) & 63) * 255 / 63;
@@ -100,7 +101,8 @@ void NativeIo::redrawEscCountdown() {
   countdownFrame_.setTextAlign(TextAlign::Center);
   char label[24];
   std::snprintf(label, sizeof(label), "Exit in %d", countdown_);
-  countdownFrame_.drawString(label, frameWidth_ / 2, frameHeight_ - 11);
+  countdownFrame_.drawString(countdown_ > 0 ? label : volumeLabel_,
+                             frameWidth_ / 2, frameHeight_ - 11);
   writeFrame(countdownFrame_.pixels(), frameWidth_, frameHeight_);
 }
 
@@ -115,7 +117,7 @@ bool NativeIo::updateEsc(SDL_Event* event) {
   const int countdown = escHold_.secondsRemaining(now);
   if (countdown != countdown_) {
     countdown_ = countdown;
-    redrawEscCountdown();
+    redrawOverlay();
   }
   return false;
 }
@@ -170,10 +172,29 @@ void NativeIo::writeFrame(
 }
 
 int NativeIo::pollEvent(SDL_Event* event) {
+  const Uint32 now = SDL_GetTicks();
+  if (volumeLabel_[0] != '\0' && SDL_TICKS_PASSED(now, volumeUntil_)) {
+    volumeLabel_[0] = '\0';
+    redrawOverlay();
+  }
   const bool externalBefore = keyboards_.externalActive();
-  const int available = keyboards_.pollEvent(event);
+  int available = keyboards_.pollEvent(event);
   escHold_.setPressed(keyboards_.keys()[SDL_SCANCODE_ESCAPE] != 0, SDL_GetTicks());
   if (updateEsc(event)) return 1;
+  if (available && (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) &&
+      (event->key.keysym.sym == SDLK_VOLUMEUP || event->key.keysym.sym == SDLK_VOLUMEDOWN)) {
+    if (event->type == SDL_KEYDOWN &&
+        (event->key.repeat == 0 || now - lastVolumeChange_ >= 100u)) {
+      const int percent = adjustSystemVolume(event->key.keysym.sym == SDLK_VOLUMEUP);
+      if (percent >= 0) std::snprintf(volumeLabel_, sizeof(volumeLabel_), "Volume: %d%%", percent);
+      else std::snprintf(volumeLabel_, sizeof(volumeLabel_), "Volume unavailable");
+      lastVolumeChange_ = now;
+      volumeUntil_ = SDL_GetTicks() + 1500u;
+      redrawOverlay();
+    }
+    // Keep Fn+S/D and USB volume keys out of app commands and text fields.
+    available = 0;
+  }
   if (available) return 1;
   if (externalBefore != keyboards_.externalActive()) {
     *event = {};

@@ -85,6 +85,7 @@ def check(deb=None):
         require(fields.get('Version') == manifest['version'], 'Package version differs from listing')
         require(fields.get('Architecture') == 'arm64', 'Store package must be ARM64')
         require(fields.get('Maintainer', '').startswith('Brad McNally'), 'Package maintainer is missing or unexpected')
+        require('libsdl2-mixer-2.0-0' in fields.get('Depends', ''), 'Declare the SDL2_mixer runtime dependency')
     with archive(deb, 'data') as data:
         files = {m.name.removeprefix('./'): m for m in data.getmembers() if m.isfile()}
         base = 'usr/share/APPLaunch/'
@@ -94,6 +95,9 @@ def check(deb=None):
                     'usr/share/doc/bitmap16dx/licenses/picojson-license.h']
         for path in expected:
             require(path in files, f'Package is missing {path}')
+        for track in (REPO / 'assets/audio/music').glob('*.mp3'):
+            path = base + 'apps/bitmap16dx/music/' + track.name
+            require(path in files, f'Package is missing music track {track.name}')
         binary = data.extractfile(files[expected[2]]).read(20)
         require(len(binary) >= 20 and binary[:4] == b'\x7fELF' and binary[4:6] == b'\x02\x01' and
                 struct.unpack('<H', binary[18:20])[0] == 183,

@@ -37,7 +37,7 @@ if [[ $mode == package ]]; then
 
   tar --format=ustar --no-xattrs -C "$repo" -cf - \
     CMakeLists.txt CMakePresets.json LICENSE app-builder.json \
-    platform_desktop platform_zero src third_party \
+    assets/audio platform_desktop platform_zero src third_party \
     -C "$release_config" build_zero_device/lospec-key.txt build_zero_device/lospec-feed-url.txt |
     ssh -T "$device" '
       set -eu
