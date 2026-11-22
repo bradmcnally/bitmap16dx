@@ -8,9 +8,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(BITMAP16_DEFAULT_WIDTH 240 CACHE STRING
+set(BITMAP16_DEFAULT_WIDTH 448 CACHE STRING
     "Default desktop simulator framebuffer width")
-set(BITMAP16_DEFAULT_HEIGHT 135 CACHE STRING
+set(BITMAP16_DEFAULT_HEIGHT 288 CACHE STRING
     "Default desktop simulator framebuffer height")
 option(BITMAP16_CARDPUTER_ZERO_DEVICE
        "Build the SDL shell for the Cardputer Zero Linux runtime" OFF)
@@ -152,6 +152,9 @@ target_compile_definitions(bitmap16dx_desktop PRIVATE
   BITMAP16_APP_VERSION="${BITMAP16_APP_VERSION}"
   BITMAP16_SDL_AUDIO=1
 )
+if(NOT BITMAP16_CARDPUTER_ZERO AND NOT BITMAP16_STEAM_DECK)
+  target_compile_definitions(bitmap16dx_desktop PRIVATE BITMAP16_PC=1)
+endif()
 if(BITMAP16_CARDPUTER_ZERO)
   target_compile_definitions(
     bitmap16dx_desktop PRIVATE BITMAP16_CARDPUTER_ZERO=1 ENABLE_LED_MATRIX=0)
@@ -307,6 +310,9 @@ if(BUILD_TESTING)
     src/core/sketch.cpp
   )
   target_include_directories(bitmap16dx_history_test PRIVATE src)
+  if(NOT BITMAP16_CARDPUTER_ZERO AND NOT BITMAP16_STEAM_DECK)
+    target_compile_definitions(bitmap16dx_history_test PRIVATE BITMAP16_PC=1)
+  endif()
   add_test(NAME editor_history COMMAND bitmap16dx_history_test)
   add_executable(bitmap16dx_workspace_test
     platform_desktop/tests/test_workspace.cpp

@@ -119,7 +119,13 @@ Layout layoutFor(int width, int height, uint8_t gridSize) {
   constexpr int kToolIconWidth = 24;
   const int logicalSize =
       isSupportedGridSize(gridSize) ? gridSize : 8;
+#ifdef BITMAP16_PC
+  // Keep 32x32 pixels as large as 16x16 pixels in the PC work area.
+  const int canvasLimit = logicalSize == 32 && width >= 384 && height >= 263 ? 256 : 128;
+  const int available = std::max(8, std::min(canvasLimit, height - 7));
+#else
   const int available = std::max(8, std::min(128, height - 7));
+#endif
   const int cellSize = std::max(1, available / logicalSize);
   const int gridPixels = cellSize * logicalSize;
   const int paletteSwatchSize =
@@ -353,7 +359,7 @@ void render(
 
   // Apply the cursor last so a ruler passing through the focused cell remains
   // beneath the cursor treatment.
-  if (!state.moveMode &&
+  if (state.cursorHighlightVisible && !state.moveMode &&
       state.cursorX >= viewportX && state.cursorX < viewportRight &&
       state.cursorY >= viewportY && state.cursorY < viewportBottom) {
     const int selectedCellX =
@@ -382,7 +388,7 @@ void render(
   cutGridCorners(canvas, layout, theme);
 
   const int columns = state.paletteSize > 8 ? 2 : 1;
-#if defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_CARDPUTER_ZERO)
+#if defined(BITMAP16_PC) || defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_CARDPUTER_ZERO)
   const int paletteStartX = layout.paletteX;
 #else
   const int paletteStartX =

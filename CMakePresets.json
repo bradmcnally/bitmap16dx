@@ -8,8 +8,8 @@
       "binaryDir": "${sourceDir}/build/desktop",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "BITMAP16_DEFAULT_WIDTH": "240",
-        "BITMAP16_DEFAULT_HEIGHT": "135",
+        "BITMAP16_DEFAULT_WIDTH": "448",
+        "BITMAP16_DEFAULT_HEIGHT": "288",
         "BITMAP16_CARDPUTER_ZERO": "OFF",
         "BITMAP16_CARDPUTER_ZERO_DEVICE": "OFF",
         "BITMAP16_STEAM_DECK": "OFF"

@@ -165,8 +165,17 @@ cmake --build --preset zero
 ```
 
 The simulator persists sketches, exports, settings, and custom palettes under
-`~/.local/share/bitmap16dx`. The desktop ADV simulator also opens an RGB-matrix
-simulation window. RGB matrix support and its controls are disabled for Zero
+`~/.local/share/bitmap16dx`. Desktop builds open only the main app window. Resize it or press F11 / Alt+Enter
+to toggle fullscreen. The PC starts with a 448×288 work area. Views expand to the full window while
+the canvas stays centered and UI scaling is capped at 4× in screen points. The 16×16 and 32×32
+canvases use the same pixel size: 32×32 is twice as wide and tall.
+On PC, click a color swatch to select it, or click Draw, Erase, or Fill to select
+the tool used by left clicks on the canvas. Drag with Draw or Erase to paint a
+stroke; Fill applies once per click. With Fill selected, right-click fills with
+transparency; with other tools, right-click erases pixels. The mouse pointer
+uses the selected in-app pixel cursor artwork throughout the window. These mouse tools are specific to PC builds.
+
+RGB matrix support and its controls are disabled for desktop, Zero
 and Steam Deck builds.
 
 Icons are embedded directly in the application; no separate icon files are needed at runtime.

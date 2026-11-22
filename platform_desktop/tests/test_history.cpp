@@ -2,6 +2,8 @@
 #include <iostream>
 
 #include "core/editor.h"
+#include "../mouse_controls.h"
+#include "../display_layout.h"
 #include "core/canvas_view.h"
 
 static void require(bool condition, const char* message) {
@@ -12,6 +14,64 @@ static void require(bool condition, const char* message) {
 }
 
 int main() {
+#ifdef BITMAP16_PC
+  const auto sixteen = bitmap16::CanvasView::layoutFor(448, 288, 16);
+  const auto thirtyTwo = bitmap16::CanvasView::layoutFor(448, 288, 32);
+  require(sixteen.paletteX - (sixteen.gridX + sixteen.gridPixels) == 19 &&
+          thirtyTwo.paletteX - (thirtyTwo.gridX + thirtyTwo.gridPixels) == 19,
+          "PC swatches must stay anchored beside both canvas sizes");
+  require(sixteen.cellSize == thirtyTwo.cellSize,
+          "PC 32x32 pixels must retain the 16x16 pixel size");
+  require(thirtyTwo.gridPixels == sixteen.gridPixels * 2,
+          "PC 32x32 canvas must be twice the width and height of 16x16");
+  uint8_t cornerX = 0, cornerY = 0;
+  require(bitmap16::CanvasView::cellAtPointer(448, 288, 32, {},
+      thirtyTwo.gridX + thirtyTwo.gridPixels - 1,
+      thirtyTwo.gridY + thirtyTwo.gridPixels - 1, cornerX, cornerY) &&
+      cornerX == 31 && cornerY == 31, "Expanded PC canvas must remain clickable at its edge");
+#endif
+
+  for (const int width : {1280, 1920, 3840}) {
+    const auto layout = bitmap16::Desktop::displayLayout(width, 2160, width, 2160, 320, 200);
+    require(layout.scale == 4 && layout.width == width && layout.height == 2160,
+            "PC views must fill the screen while UI scale stays capped");
+    require(layout.x == 0 && layout.y == 0,
+            "PC view must reach the physical screen edges");
+    require(layout.logicalX(layout.x, width, width) == 0 &&
+            layout.logicalX(layout.x - 1, width, width) == -1,
+            "Mouse input must match the centered UI and reject its margins");
+  }
+  const auto retina = bitmap16::Desktop::displayLayout(3840, 2160, 1920, 1080, 320, 200);
+  require(retina.scale == 8 && retina.width == 3840,
+          "Retina pixels must preserve the UI size in screen points");
+
+  for (const uint8_t size : {4, 8, 9, 16}) {
+    const auto layout = bitmap16::CanvasView::layoutFor(240, 135, 8);
+#ifdef BITMAP16_PC
+    const int left = layout.paletteX;
+#else
+    const int left = 240 - (size > 8 ? 2 : 1) * layout.paletteSwatchSize - 5;
+#endif
+    for (int color = 1; color <= size; ++color) {
+      require(bitmap16::Desktop::colorAtPointer(240, 135, 8, size,
+          left + ((color - 1) / 8) * layout.paletteSwatchSize,
+          layout.gridY + ((color - 1) % 8) * layout.paletteSwatchSize) == color,
+          "Mouse color selection does not match rendered swatches");
+    }
+    require(bitmap16::Desktop::colorAtPointer(240, 135, 8, size,
+        left - 1, layout.gridY) == 0, "Palette margin must not select a color");
+  }
+  for (int index = 0; index < 3; ++index) {
+    const auto layout = bitmap16::CanvasView::layoutFor(240, 135, 8);
+    auto tool = bitmap16::Desktop::MouseTool::Draw;
+    require(bitmap16::Desktop::toolAtPointer(240, 135, 8,
+        layout.toolsX, layout.gridY - 2 + index * 27, tool) &&
+        static_cast<int>(tool) == index, "Mouse tool selection missed its icon");
+    require(!bitmap16::Desktop::toolAtPointer(240, 135, 8,
+        layout.toolsX, layout.gridY - 2 + index * 27 + 24, tool),
+        "Tool gap must not select a tool");
+  }
+
   bitmap16::Sketch blank;
   blank.gridSize = 32;
   bitmap16::Editor editor;

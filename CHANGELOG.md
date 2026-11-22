@@ -17,6 +17,11 @@ adds a Cardputer Zero package.
 
 ### Changed
 
+- Desktop builds hide RGB matrix controls, the simulator window, and battery views.
+- PC color swatches stay beside the canvas, and views extend to the window edges.
+- PC 32×32 canvases retain the 16×16 pixel size, doubling canvas width and height.
+- PC builds show the mouse pointer and support clicking color swatches and selecting Draw, Erase, or Fill tools.
+- Desktop windows use a centered PC work area, capped at 4× UI scale, with F11 or Alt+Enter for fullscreen.
 - Steam Deck L3 plays/pauses music throughout the app. L4 resizes the canvas and opens palette import.
 - Cartridge insertion randomly selects among three melodic sound effects without repeating the previous choice.
 - Zero uses holding Escape to return HOME; plain Q no longer quits.

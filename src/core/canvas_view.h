@@ -38,6 +38,7 @@ struct State {
   bool palettePressed = false;
   bool showKeyboardPrompts = false;
   bool batteryCharging = false;
+  bool cursorHighlightVisible = true;
 };
 
 struct Theme {

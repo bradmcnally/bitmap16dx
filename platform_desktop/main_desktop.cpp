@@ -1,3 +1,6 @@
+#include "mouse_controls.h"
+#include "pixel_cursor.h"
+#include "display_layout.h"
 #include "core/dialog_view.h"
 #include <SDL.h>
 
@@ -86,6 +89,20 @@ bool externalKeyboardActive() {
 }
 #endif
 
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+bitmap16::Desktop::MouseTool desktopMouseTool = bitmap16::Desktop::MouseTool::Draw;
+bool desktopPointerOnCanvas = false;
+SDL_Renderer* desktopRenderer = nullptr;
+int desktopLogicalWidth = 448, desktopLogicalHeight = 288;
+bitmap16::Desktop::DisplayLayout desktopDisplayLayout(SDL_Window* window) {
+  int ww = 1, wh = 1, ow = 1, oh = 1;
+  SDL_GetWindowSize(window, &ww, &wh);
+  SDL_GetRendererOutputSize(desktopRenderer, &ow, &oh);
+  return bitmap16::Desktop::displayLayout(ow, oh, ww, wh,
+                                        desktopLogicalWidth, desktopLogicalHeight);
+}
+
+#endif
 bitmap16::Desktop::AudioPlayer* appAudio = nullptr;
 std::function<void(SDL_Keycode)> musicShortcut;
 Uint32 musicEventType = static_cast<Uint32>(-1);
@@ -112,6 +129,41 @@ int waitEvent(SDL_Event* event, int timeout = -1) {
     const int available = slice < 0 ? SDL_WaitEvent(event) : SDL_WaitEventTimeout(event, slice);
 #endif
     if (available) {
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+      if (desktopRenderer && (event->type == SDL_MOUSEMOTION ||
+          event->type == SDL_MOUSEBUTTONDOWN || event->type == SDL_MOUSEBUTTONUP)) {
+        const bool motion = event->type == SDL_MOUSEMOTION;
+        const Uint32 id = motion ? event->motion.windowID : event->button.windowID;
+        if (auto* target = SDL_GetWindowFromID(id)) {
+          int ww = 1, wh = 1, ow = 1, oh = 1;
+          SDL_GetWindowSize(target, &ww, &wh);
+          SDL_GetRendererOutputSize(desktopRenderer, &ow, &oh);
+          const auto layout = desktopDisplayLayout(target);
+          if (motion) {
+            event->motion.x = layout.logicalX(event->motion.x, ww, ow);
+            event->motion.y = layout.logicalY(event->motion.y, wh, oh);
+          } else {
+            event->button.x = layout.logicalX(event->button.x, ww, ow);
+            event->button.y = layout.logicalY(event->button.y, wh, oh);
+          }
+        }
+      }
+      const bool fullscreenKey =
+          (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) &&
+          (event->key.keysym.sym == SDLK_F11 ||
+           (event->key.keysym.sym == SDLK_RETURN &&
+            (event->key.keysym.mod & KMOD_ALT) != 0));
+      if (fullscreenKey) {
+        if (event->type == SDL_KEYDOWN && event->key.repeat == 0) {
+          if (auto* target = SDL_GetWindowFromID(event->key.windowID)) {
+            const bool fullscreen = (SDL_GetWindowFlags(target) & SDL_WINDOW_FULLSCREEN_DESKTOP) != 0;
+            if (SDL_SetWindowFullscreen(target, fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP) != 0)
+              SDL_Log("Fullscreen could not be changed: %s", SDL_GetError());
+          }
+        }
+        continue;
+      }
+#endif
 #ifdef BITMAP16_STEAM_DECK
       // Handle L3 here so music works in every screen and nested dialog.
       if (musicShortcut &&
@@ -180,7 +232,7 @@ struct BatteryReading {
 };
 
 BatteryReading readPlatformBattery() {
-#ifdef BITMAP16_STEAM_DECK
+#if defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_PC)
   return {};
 #elif defined(BITMAP16_CARDPUTER_ZERO_DEVICE)
   constexpr const char* kPowerSupplyRoot = "/sys/class/power_supply";
@@ -224,11 +276,9 @@ SDL_Keycode paletteFilterKey(Uint8 button, uint8_t currentFilter, bool localList
 #endif
 
 bool platformHasLedMatrixControls() {
-#if defined(BITMAP16_STEAM_DECK) || (defined(ENABLE_LED_MATRIX) && !ENABLE_LED_MATRIX)
+  // The desktop app has no physical RGB matrix. ADV firmware provides its own
+  // hardware support; SDL builds hide the controls and simulator window.
   return false;
-#else
-  return true;
-#endif
 }
 
 bool platformHasShakeUndo() {
@@ -258,7 +308,7 @@ bool platformHasHelpSetting() {
 }
 
 bool platformHasBatteryDisplay() {
-#ifdef BITMAP16_STEAM_DECK
+#if defined(BITMAP16_STEAM_DECK) || defined(BITMAP16_PC)
   return false;
 #else
   return true;
@@ -553,6 +603,15 @@ void present(
   (void)brightness;
   nativeIo.present(canvas.pixels(), canvas.width(), canvas.height());
 #else
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+  const auto layout = desktopDisplayLayout(SDL_RenderGetWindow(renderer));
+  // Render the composed UI once into a physical output rectangle. Combining
+  // a scaled viewport with renderer scaling applies the enlargement twice on
+  // SDL2-compat and can move the canvas entirely outside the visible window.
+  SDL_RenderSetScale(renderer, 1, 1);
+  SDL_RenderSetViewport(renderer, nullptr);
+  const SDL_Rect desktopDestination{layout.x, layout.y, layout.width, layout.height};
+#endif
   SDL_UpdateTexture(
       texture,
       nullptr,
@@ -579,7 +638,11 @@ void present(
       backgroundBlue,
       255);
   SDL_RenderClear(renderer);
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+  SDL_RenderCopy(renderer, texture, nullptr, &desktopDestination);
+#else
   SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+#endif
   if (brightness < 100) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(
@@ -693,7 +756,7 @@ void renderCurrentView(
       }
     }
 #endif
-    const bitmap16::CanvasView::State state = {
+    bitmap16::CanvasView::State state = {
         sketch.pixels,
         sketch.gridSize,
         sketch.paletteColors,
@@ -705,9 +768,15 @@ void renderCurrentView(
         desktopMoveModeActive,
         status,
         settings.batteryDisplay ? batteryReading.percent : -1,
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+        desktopDrawPressed || desktopMouseTool == bitmap16::Desktop::MouseTool::Draw,
+        desktopErasePressed || desktopMouseTool == bitmap16::Desktop::MouseTool::Erase,
+        desktopFillPressed || desktopMouseTool == bitmap16::Desktop::MouseTool::Fill,
+#else
         desktopDrawPressed,
         desktopErasePressed,
         desktopFillPressed,
+#endif
         desktopCanvasViewport.cellSize,
         desktopCanvasViewport.x,
         desktopCanvasViewport.y,
@@ -730,8 +799,16 @@ void renderCurrentView(
 #endif
         batteryReading.charging,
     };
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+    state.cursorHighlightVisible = desktopPointerOnCanvas;
+    auto assets = canvasAssets(settings);
+    assets.cursor = {};
+    assets.moveCursor = {};
+    bitmap16::CanvasView::render(canvas, state, canvasTheme(settings), &assets);
+#else
     bitmap16::CanvasView::render(
         canvas, state, canvasTheme(settings), &canvasAssets(settings));
+#endif
   } else if (view == DesktopView::Help) {
 #ifdef BITMAP16_CARDPUTER_ZERO
     helpState.externalKeyboard = externalKeyboardActive();
@@ -886,13 +963,21 @@ int main(int argc, char** argv) {
       SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS |
       SDL_WINDOW_FULLSCREEN_DESKTOP;
 #else
+#ifdef BITMAP16_PC
+  const int windowWidth = width * 2;
+  const int windowHeight = height * 2;
+#else
   const int windowWidth = width * 3;
   const int windowHeight = height * 3;
-  const Uint32 windowFlags = SDL_WINDOW_SHOWN;
+#endif
+  const Uint32 windowFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
 #endif
 
-  // The artwork cursor supplies pointer feedback in every SDL build.
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+  SDL_ShowCursor(SDL_ENABLE);
+#else
   SDL_ShowCursor(SDL_DISABLE);
+#endif
   SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
   SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
   SDL_Window* window = SDL_CreateWindow(
@@ -930,10 +1015,17 @@ int main(int argc, char** argv) {
             SDL_TEXTUREACCESS_STREAMING,
             width,
             height);
+  if (window != nullptr) SDL_SetWindowMinimumSize(window, width, height);
   if (renderer != nullptr) {
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+    desktopRenderer = renderer;
+    desktopLogicalWidth = width;
+    desktopLogicalHeight = height;
+#else
     SDL_RenderSetLogicalSize(renderer, width, height);
 #ifdef BITMAP16_STEAM_DECK
     SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
+#endif
 #endif
   }
 
@@ -995,6 +1087,7 @@ int main(int argc, char** argv) {
   SDL_Log("Workspace: %s", workspace.root().string().c_str());
   bitmap16::Settings& settings = workspace.settings();
   if (!platformHasLedMatrixControls()) settings.matrixEnabled = false;
+  if (!platformHasBatteryDisplay()) settings.batteryDisplay = false;
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
   nativeIo.setDisplayWarmth(settings.displayWarmth);
 #endif
@@ -1286,8 +1379,47 @@ int main(int argc, char** argv) {
   auto menuSoundView = currentView;
   bool cartridgeApplied = false;
   bool sketchOpened = false;
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+  bitmap16::Desktop::PixelCursor mouseCursor;
+  const auto updateMouseCursor = [&]() {
+    int windowW = 0, windowH = 0;
+    SDL_GetWindowSize(window, &windowW, &windowH);
+    const int scale = std::max(1, std::min({4, windowW / desktopLogicalWidth, windowH / desktopLogicalHeight}));
+    mouseCursor.update(canvasAssets(settings), canvasTheme(settings), scale);
+  };
+  updateMouseCursor();
+#endif
   const auto renderNow = [&](uint8_t resizeGridSelection = 0,
                              bool presentFrame = true) {
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+    const auto display = desktopDisplayLayout(window);
+    const int nextWidth = display.width / display.scale;
+    const int nextHeight = display.height / display.scale;
+    if (nextWidth > 0 && nextHeight > 0 && (nextWidth != width || nextHeight != height)) {
+      SDL_Texture* nextTexture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565,
+          SDL_TEXTUREACCESS_STREAMING, nextWidth, nextHeight);
+      if (!nextTexture) {
+        SDL_Log("Could not resize desktop view: %s", SDL_GetError());
+        return;
+      }
+      if (!canvas.create(nextWidth, nextHeight)) {
+        SDL_DestroyTexture(nextTexture);
+        SDL_Log("Could not allocate resized desktop view");
+        return;
+      }
+      SDL_DestroyTexture(texture);
+      texture = nextTexture;
+      width = nextWidth;
+      height = nextHeight;
+      // Reload blends retain a frame at the old dimensions. Finish that blend
+      // before rendering at the new size so its pixels cannot be read past end.
+      paletteState.reloadAnimating = false;
+      paletteState.reloadFrame = nullptr;
+      paletteHasPresented = false;
+      pointerInsideCanvas = desktopPointerOnCanvas = false;
+    }
+    updateMouseCursor();
+#endif
     if (menuSoundView != currentView) {
       const auto cue = bitmap16::Desktop::menuTransitionCue(
           menuSoundView, currentView, returnView, cartridgeApplied, sketchOpened);
@@ -1648,6 +1780,32 @@ int main(int argc, char** argv) {
     return editor.resizeGrid(chosenSize);
   };
   if (smokeTest) {
+#ifdef BITMAP16_PC
+    int originalWidth = 0, originalHeight = 0;
+    SDL_GetWindowSize(window, &originalWidth, &originalHeight);
+    const auto originalView = currentView;
+    for (const auto dimensions : {std::pair<int, int>{1200, 800}, {1920, 1080}}) {
+      SDL_SetWindowSize(window, dimensions.first, dimensions.second);
+      SDL_PumpEvents();
+      currentView = DesktopView::Palette;
+      renderNow();
+      // SDL2-compat refreshes drawable dimensions on the first present after
+      // a programmatic window resize. Verify the following redraw as well.
+      renderNow();
+      const auto display = desktopDisplayLayout(window);
+      if (canvas.width() * display.scale != display.width ||
+          canvas.height() * display.scale != display.height) {
+        SDL_Log("PC resize mismatch: canvas=%dx%d scale=%d output=%dx%d",
+                canvas.width(), canvas.height(), display.scale, display.width, display.height);
+        return 1;
+      }
+    }
+    SDL_SetWindowSize(window, originalWidth, originalHeight);
+    SDL_PumpEvents();
+    currentView = originalView;
+    renderNow();
+    renderNow();
+#endif
     SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
     // Music notifications must never consume Menu, redo, or palette-stick events.
     for (const auto code : {kToggleSettings, kColorLeft, kColorRight, kRedo}) {
@@ -2066,6 +2224,13 @@ int main(int argc, char** argv) {
   Uint32 nextBatteryRefresh = SDL_GetTicks() + kBatteryRefreshMs;
 #endif
   while (running) {
+#ifdef BITMAP16_PC
+    // Some backends expose the new drawable size only after presenting the
+    // resize frame. Complete that resize before the app waits for more input.
+    const auto display = desktopDisplayLayout(window);
+    if (display.width / display.scale != width || display.height / display.scale != height)
+      renderNow();
+#endif
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
     if (zeroHomeRequested) break;
 #endif
@@ -2456,6 +2621,16 @@ int main(int argc, char** argv) {
       if (currentView == DesktopView::Canvas) renderNow();
     }
 #endif
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+    if (event.type == SDL_WINDOWEVENT &&
+        event.window.windowID == SDL_GetWindowID(window) &&
+        (event.window.event == SDL_WINDOWEVENT_LEAVE ||
+         event.window.event == SDL_WINDOWEVENT_FOCUS_LOST)) {
+      desktopPointerOnCanvas = false;
+      pointerInsideCanvas = false;
+      if (currentView == DesktopView::Canvas) renderNow();
+    }
+#endif
     if ((event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
          event.type == SDL_MOUSEBUTTONUP) &&
         (event.type == SDL_MOUSEMOTION ? event.motion.windowID : event.button.windowID) ==
@@ -2463,15 +2638,65 @@ int main(int argc, char** argv) {
       const bool motion = event.type == SDL_MOUSEMOTION;
       const int pointerX = motion ? event.motion.x : event.button.x;
       const int pointerY = motion ? event.motion.y : event.button.y;
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+      const bool wasOnCanvas = desktopPointerOnCanvas;
+      uint8_t hoverX = 0, hoverY = 0;
+      desktopPointerOnCanvas = bitmap16::CanvasView::cellAtPointer(
+          width, height, editor.sketch().gridSize, desktopCanvasViewport,
+          pointerX, pointerY, hoverX, hoverY);
+#endif
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+      if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+        const int color = bitmap16::Desktop::colorAtPointer(
+            width, height, editor.sketch().gridSize, editor.sketch().paletteSize,
+            pointerX, pointerY);
+        auto tool = desktopMouseTool;
+        if (color != 0) {
+          if (color != editor.selectedColor()) audioPlayer.playNavigationTick();
+          editor.setSelectedColor(static_cast<uint8_t>(color));
+          renderNow();
+          continue;
+        }
+        if (bitmap16::Desktop::toolAtPointer(width, height, editor.sketch().gridSize,
+                                            pointerX, pointerY, tool)) {
+          if (tool != desktopMouseTool) audioPlayer.playNavigationTick();
+          desktopMouseTool = tool;
+          renderNow();
+          continue;
+        }
+      }
+#endif
       uint8_t cellX = 0, cellY = 0;
       const bool inside = bitmap16::CanvasView::cellAtPointer(
           width, height, editor.sketch().gridSize, desktopCanvasViewport,
           pointerX, pointerY, cellX, cellY);
       if (event.type == SDL_MOUSEBUTTONDOWN && inside) {
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+        if (desktopMouseTool == bitmap16::Desktop::MouseTool::Fill &&
+            (event.button.button == SDL_BUTTON_LEFT || event.button.button == SDL_BUTTON_RIGHT)) {
+          const bool eraseFill = event.button.button == SDL_BUTTON_RIGHT;
+          editor.endUndoGroup();
+          editor.setCursor(cellX, cellY);
+          editor.floodFill(eraseFill ? 0 : editor.selectedColor());
+          setDesktopStatus(eraseFill ? "Erase Fill" : "Fill");
+          renderNow();
+          continue;
+        }
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          mouseDrawHeld = desktopMouseTool == bitmap16::Desktop::MouseTool::Draw;
+          mouseEraseHeld = desktopMouseTool == bitmap16::Desktop::MouseTool::Erase;
+        }
+#else
         if (event.button.button == SDL_BUTTON_LEFT) mouseDrawHeld = true;
+#endif
         if (event.button.button == SDL_BUTTON_RIGHT) mouseEraseHeld = true;
       } else if (event.type == SDL_MOUSEBUTTONUP) {
-        if (event.button.button == SDL_BUTTON_LEFT) mouseDrawHeld = false;
+        if (event.button.button == SDL_BUTTON_LEFT) {
+          mouseDrawHeld = false;
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+          mouseEraseHeld = false;
+#endif
+        }
         if (event.button.button == SDL_BUTTON_RIGHT) mouseEraseHeld = false;
       }
       const Uint8* pointerKeys = keyboardState();
@@ -2502,6 +2727,10 @@ int main(int argc, char** argv) {
         renderNow();
       } else if (event.type == SDL_MOUSEBUTTONUP) {
         renderNow();
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+      } else if (wasOnCanvas != desktopPointerOnCanvas) {
+        renderNow();
+#endif
       }
       pointerInsideCanvas = inside;
       // Leave the existing Palettes-button handler available for UI clicks.
@@ -2522,6 +2751,13 @@ int main(int argc, char** argv) {
     }
     if (event.type == SDL_QUIT) {
       if (requestSketchAction(SketchAction::Quit)) running = false;
+      continue;
+    }
+    if (event.type == SDL_WINDOWEVENT &&
+        event.window.windowID == SDL_GetWindowID(window) &&
+        (event.window.event == SDL_WINDOWEVENT_EXPOSED ||
+         event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
+      renderNow();
       continue;
     }
     if (event.type == SDL_WINDOWEVENT &&
@@ -3628,6 +3864,9 @@ int main(int argc, char** argv) {
     if (changed) renderNow();
   }
 
+#if !defined(BITMAP16_CARDPUTER_ZERO) && !defined(BITMAP16_STEAM_DECK)
+  mouseCursor.clear();
+#endif
   paletteBrowser.cancelAndWait();
   musicShortcut = {};
   appAudio = nullptr;
