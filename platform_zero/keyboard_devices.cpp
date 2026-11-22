@@ -158,6 +158,7 @@ bool KeyboardDevices::open(Uint32 backlightEventType) {
 
 void KeyboardDevices::discover() {
   nextDiscovery_ = SDL_GetTicks() + kDiscoveryIntervalMs;
+  discovery_.beginScan();
   std::error_code error;
   std::filesystem::directory_iterator entry("/dev/input", error);
   for (const std::filesystem::directory_iterator end; !error && entry != end;
@@ -166,15 +167,23 @@ void KeyboardDevices::discover() {
     if (path.filename().string().compare(0, 5, "event") != 0) continue;
     if (std::any_of(devices_.begin(), devices_.end(),
         [&](const Device& device) { return device.path == path.string(); })) continue;
+    struct stat node{};
+    if (stat(path.c_str(), &node) != 0 ||
+        !discovery_.shouldProbe(path.string(), node.st_rdev, node.st_ino)) continue;
     const int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) continue;
     const bool builtIn = isBuiltIn(fd);
-    if (!builtIn && !isKeyboard(fd)) { close(fd); continue; }
+    if (!builtIn && !isKeyboard(fd)) {
+      discovery_.reject(path.string(), node.st_rdev, node.st_ino);
+      close(fd);
+      continue;
+    }
     // Do not grab exclusively: APPLaunch watches the built-in hold-Esc shortcut.
     devices_.push_back({fd, path.string(), builtIn});
     state_.addDevice(fd, builtIn);
     SDL_Log("Zero %s keyboard connected: %s", builtIn ? "built-in" : "external", path.c_str());
   }
+  if (!error) discovery_.endScan();
 }
 
 void KeyboardDevices::remove(std::size_t index) {

@@ -126,7 +126,7 @@ Help switches to **HELP USB** when a USB keyboard connects or you press one of
 its keys, showing Arrows, M+Arrow, F1–F8, and the other USB mappings. Using the
 built-in keyboard switches Help back to the device mappings. Unplugging the
 last USB keyboard also restores the device mappings. Controls labeled
-**On device** use the Zero's built-in keyboard.
+**Built-in** use the Zero's built-in keyboard.
 
 ## Using the app
 

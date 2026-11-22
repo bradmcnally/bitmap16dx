@@ -69,7 +69,7 @@ constexpr Item kItems[] = {
     {"Move", "M arrows", "M + FZXC", 0, false, false, "M arrows"},
     {"Undo", "Z", "Ctrl Z", 0, false, false},
     {"Redo", "Fn Z", "Ctrl Y", 0, false, false, "Ctrl Sh Z"},
-    {"Clear", "G0", "Fn Bksp", 0, false, false, "On device"},
+    {"Clear", "G0", "Fn Bksp", 0, false, false, "Built-in"},
     {"Zoom", "+/-", "Fn+L/M", 1, false, false, "+/-"},
     {"Edge jump", "Fn edge", "Shift dir", 1, false, false},
     {"Grid size", "G", "G", 1, false, false},
@@ -87,7 +87,7 @@ constexpr Item kItems[] = {
     {"Settings", "T", "T", 4, false, false},
     {"Screensaver", "Fn B", "Ctrl B", 4, false, true},
 #ifdef BITMAP16_CARDPUTER_ZERO_DEVICE
-    {"Brightness", "B +/-", "Fn U/I", 5, false, false, "On device"},
+    {"Brightness", "B +/-", "Fn U/I", 5, false, false, "Built-in"},
     {"Home", "", "Esc 3s", 5, false, false},
 #else
     {"Brightness", "B +/-", "B +/-", 5, false, false},
