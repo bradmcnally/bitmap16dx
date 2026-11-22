@@ -62,6 +62,13 @@ int main(int argc, char** argv) {
       require(sounds.playCartridgeInsert() && Mix_PlayingMusic() && !Mix_PausedMusic(),
               "Cartridge effects play over background music");
       const auto* cartridgeCue = Mix_GetChunk(0);
+      const Mix_Chunk* lastCartridge = cartridgeCue;
+      for (int insertion = 0; insertion < 24; ++insertion) {
+        require(sounds.playCartridgeInsert() && Mix_GetChunk(0) != lastCartridge,
+                "Cartridge completion varies without immediately repeating a sample");
+        lastCartridge = Mix_GetChunk(0);
+      }
+      cartridgeCue = Mix_GetChunk(0);
       require(sounds.playNavigationTick(2000) && Mix_GetChunk(0) == cartridgeCue && Mix_PlayingMusic(),
               "Navigation leaves cartridge sounds and background music uninterrupted");
       require(sounds.playMenuOpen() && Mix_GetChunk(0) == cartridgeCue && Mix_PlayingMusic(),

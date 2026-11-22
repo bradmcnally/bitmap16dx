@@ -1,4 +1,5 @@
 #include "keyboard_state.h"
+#include "keyboard_discovery.h"
 #include "keyboard_event.h"
 #include "esc_hold.h"
 
@@ -82,6 +83,26 @@ void checkLayouts() {
 }
 
 int main() {
+  bitmap16::Zero::KeyboardDiscovery discovery;
+  discovery.beginScan();
+  require(discovery.shouldProbe("event5", 70, 123), "New interface must be probed");
+  discovery.reject("event5", 70, 123);
+  discovery.endScan();
+  for (int scan = 0; scan < 10; ++scan) {
+    discovery.beginScan();
+    require(!discovery.shouldProbe("event5", 70, 123),
+            "Idle USB companion interface must not be reopened every scan");
+    discovery.endScan();
+  }
+  discovery.beginScan();
+  require(discovery.shouldProbe("event5", 70, 124),
+          "Replacement device at the same path must be probed");
+  discovery.reject("event5", 70, 124);
+  discovery.endScan();
+  discovery.beginScan();
+  discovery.endScan();
+  require(discovery.shouldProbe("event5", 70, 124),
+          "Unplugging must invalidate a rejected interface");
   SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
   require(SDL_Init(SDL_INIT_VIDEO) == 0, "SDL dummy video initializes");
   checkLayouts();

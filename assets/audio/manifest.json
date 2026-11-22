@@ -109,7 +109,7 @@
       "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
       "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
       "public_git": false,
-      "use": "Completed cartridge insertion",
+      "use": "Varied completed cartridge insertion",
       "bytes": 368920,
       "sha256": "286ffd165f72aa4813d952a3bcbef8fd061dbd81e0ea9086d6ce76312980a523"
     },
@@ -253,6 +253,28 @@
       "changes": [],
       "bytes": 7599982,
       "sha256": "65f44d37dc1d8718daa1e7f96ed9bfba8bda4d4a1b348f6be6fd9d1c4378dcab"
+    },
+    {
+      "file": "success_melodic_01a.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Varied completed cartridge insertion",
+      "bytes": 278518,
+      "sha256": "69ca82974cf6faee897a2e3aaa14e619aa620d616144b063e1a11e7a1a662666"
+    },
+    {
+      "file": "success_melodic_01c.wav",
+      "creator": "Andrea Baroni / Cyberleaf Studio",
+      "source": "https://cyberleaf.itch.io/modern-ui-sfx",
+      "license": "LicenseRef-Cyberleaf-Modern-UI-SFX",
+      "license_document": "LICENSE.txt in the privately obtained Modern UI SFX v2 pack (June 2021 heading)",
+      "public_git": false,
+      "use": "Varied completed cartridge insertion",
+      "bytes": 368920,
+      "sha256": "5fc5b8e7d7fbdd58fe5d7d6757e2e879be545180f076f121fd87ff44cfa724e8"
     }
   ]
 }

@@ -28,10 +28,12 @@ bool AudioPlayer::open(const std::filesystem::path& musicDirectory) {
       static_cast<int>(sizeof(AudioAssets::kCartridgeSlide))), 1);
   if (cartridgeSlide_ == nullptr)
     SDL_Log("Cartridge slide sound could not be loaded: %s", Mix_GetError());
-  cartridgeInsert_ = Mix_LoadWAV_RW(SDL_RWFromConstMem(AudioAssets::kCartridgeInsert,
-      static_cast<int>(sizeof(AudioAssets::kCartridgeInsert))), 1);
-  if (cartridgeInsert_ == nullptr)
-    SDL_Log("Cartridge sound could not be loaded: %s", Mix_GetError());
+  for (std::size_t i = 0; i < cartridgeInsert_.size(); ++i) {
+    const auto& sound = AudioAssets::kCartridgeInsertSounds[i];
+    cartridgeInsert_[i] = Mix_LoadWAV_RW(SDL_RWFromConstMem(sound.data, sound.size), 1);
+    if (cartridgeInsert_[i] == nullptr)
+      SDL_Log("Cartridge sound %zu could not be loaded: %s", i + 1, Mix_GetError());
+  }
   menuOpen_ = Mix_LoadWAV_RW(SDL_RWFromConstMem(AudioAssets::kMenuOpen,
       static_cast<int>(sizeof(AudioAssets::kMenuOpen))), 1);
   menuClose_ = Mix_LoadWAV_RW(SDL_RWFromConstMem(AudioAssets::kMenuClose,
@@ -78,8 +80,18 @@ bool AudioPlayer::playCartridgeSlide() {
 }
 
 bool AudioPlayer::playCartridgeInsert() {
-  return soundEffectsEnabled_ && opened_ && cartridgeInsert_ != nullptr &&
-         Mix_PlayChannel(0, cartridgeInsert_, 0) >= 0;
+  if (!soundEffectsEnabled_ || !opened_) return false;
+  std::array<std::size_t, 3> choices{};
+  std::size_t count = 0;
+  for (std::size_t i = 0; i < cartridgeInsert_.size(); ++i)
+    if (cartridgeInsert_[i] != nullptr && i != lastCartridgeSound_) choices[count++] = i;
+  if (count == 0 && lastCartridgeSound_ < cartridgeInsert_.size() &&
+      cartridgeInsert_[lastCartridgeSound_] != nullptr) choices[count++] = lastCartridgeSound_;
+  if (count == 0) return false;
+  const auto selected = choices[std::uniform_int_distribution<std::size_t>(0, count - 1)(navigationRandom_)];
+  if (Mix_PlayChannel(0, cartridgeInsert_[selected], 0) < 0) return false;
+  lastCartridgeSound_ = selected;
+  return true;
 }
 
 bool AudioPlayer::playMenuOpen() {
@@ -195,7 +207,7 @@ void AudioPlayer::close() {
     Mix_HaltChannel(-1);
     if (music_ != nullptr) Mix_FreeMusic(music_);
     if (cartridgeSlide_ != nullptr) Mix_FreeChunk(cartridgeSlide_);
-    if (cartridgeInsert_ != nullptr) Mix_FreeChunk(cartridgeInsert_);
+    for (auto* sound : cartridgeInsert_) if (sound != nullptr) Mix_FreeChunk(sound);
     if (menuOpen_ != nullptr) Mix_FreeChunk(menuOpen_);
     if (menuClose_ != nullptr) Mix_FreeChunk(menuClose_);
     if (sketchOpen_ != nullptr) Mix_FreeChunk(sketchOpen_);
@@ -205,7 +217,8 @@ void AudioPlayer::close() {
   }
   music_ = nullptr;
   cartridgeSlide_ = nullptr;
-  cartridgeInsert_ = nullptr;
+  cartridgeInsert_.fill(nullptr);
+  lastCartridgeSound_ = cartridgeInsert_.size();
   menuOpen_ = menuClose_ = nullptr;
   sketchOpen_ = nullptr;
   sketchSave_ = nullptr;

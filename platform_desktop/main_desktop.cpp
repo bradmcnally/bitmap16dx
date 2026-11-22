@@ -89,6 +89,7 @@ bool externalKeyboardActive() {
 bitmap16::Desktop::AudioPlayer* appAudio = nullptr;
 std::function<void(SDL_Keycode)> musicShortcut;
 Uint32 musicEventType = static_cast<Uint32>(-1);
+Uint32 controllerEventType = static_cast<Uint32>(-1);
 
 int waitEvent(SDL_Event* event, int timeout = -1) {
   const Uint32 started = SDL_GetTicks();
@@ -321,8 +322,8 @@ enum DeckControllerEvent : Sint32 {
 
 void pushControllerEvent(DeckControllerEvent controllerEvent) {
   SDL_Event event = {};
-  event.type = SDL_USEREVENT;
-  event.user.type = SDL_USEREVENT;
+  event.type = controllerEventType;
+  event.user.type = controllerEventType;
   event.user.code = controllerEvent;
   SDL_PushEvent(&event);
 }
@@ -1255,7 +1256,12 @@ int main(int argc, char** argv) {
   audioPlayer.setSoundEffectsEnabled(settings.soundEffectsEnabled);
   audioPlayer.setMusicEnabled(settings.musicEnabled);
   appAudio = &audioPlayer;
-  musicEventType = SDL_RegisterEvents(1);
+  controllerEventType = SDL_RegisterEvents(2);
+  if (controllerEventType == static_cast<Uint32>(-1)) {
+    SDL_Log("Could not allocate controller and music events: %s", SDL_GetError());
+    return 1;
+  }
+  musicEventType = controllerEventType + 1;
   musicShortcut = [&](SDL_Keycode key) {
     bool success = true;
     if (key == SDLK_AUDIOPLAY) success = audioPlayer.setMusicEnabled(!audioPlayer.musicEnabled());
@@ -1643,6 +1649,20 @@ int main(int argc, char** argv) {
   };
   if (smokeTest) {
     SDL_FlushEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+    // Music notifications must never consume Menu, redo, or palette-stick events.
+    for (const auto code : {kToggleSettings, kColorLeft, kColorRight, kRedo}) {
+      pushControllerEvent(code);
+      SDL_Event controlEvent{};
+      const Uint32 controlDeadline = SDL_GetTicks() + 1000;
+      while (waitEvent(&controlEvent, 100) && controlEvent.type != controllerEventType &&
+             controlEvent.type != musicEventType && !SDL_TICKS_PASSED(SDL_GetTicks(), controlDeadline)) {}
+      if (controlEvent.type != controllerEventType ||
+          controlEvent.user.code != code || controlEvent.type == musicEventType) {
+        SDL_Log("Controller event mismatch: got=%u code=%d expected=%u code=%d music=%u",
+                controlEvent.type, controlEvent.user.code, controllerEventType, code, musicEventType);
+        return 1;
+      }
+    }
     const auto musicView = currentView;
     const bool musicWasEnabled = settings.musicEnabled;
     if (audioPlayer.trackCount() > 0 && SDL_WasInit(SDL_INIT_AUDIO)) {
@@ -2426,7 +2446,7 @@ int main(int argc, char** argv) {
     if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
       controllerPrompts = event.key.windowID == 0;
     } else if (event.type == SDL_CONTROLLERBUTTONDOWN ||
-               event.type == SDL_USEREVENT) {
+               event.type == controllerEventType) {
       controllerPrompts = true;
     } else if (event.type == SDL_KEYDOWN && event.key.windowID == 0) {
       controllerPrompts = true;
@@ -2692,7 +2712,7 @@ int main(int argc, char** argv) {
       pushKeyEvent(SDLK_z, false);
       continue;
     }
-    if (event.type == SDL_USEREVENT && event.user.code == kRedo) {
+    if (event.type == controllerEventType && event.user.code == kRedo) {
       if (currentView == DesktopView::Canvas) {
         const bool redone = editor.redo();
         setDesktopStatus(redone ? "Redo" : "No redo");
@@ -2704,7 +2724,7 @@ int main(int argc, char** argv) {
       }
       continue;
     }
-    if (event.type == SDL_USEREVENT &&
+    if (event.type == controllerEventType &&
         event.user.code == kToggleSettings) {
       currentView = currentView == DesktopView::Settings
           ? DesktopView::Canvas
@@ -2712,7 +2732,7 @@ int main(int argc, char** argv) {
       renderNow();
       continue;
     }
-    if (event.type == SDL_USEREVENT &&
+    if (event.type == controllerEventType &&
         event.user.code >= kColorLeft &&
         event.user.code <= kColorDown) {
       bool changed = false;

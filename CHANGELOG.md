@@ -5,7 +5,7 @@ All notable user-facing changes to BitMap16 DX are documented here.
 The v0.8.0 release artifact targets the M5Stack Cardputer ADV. Version 0.9.0
 adds a Cardputer Zero package.
 
-## [0.9.1] — Unreleased
+## Unreleased
 
 ### Added
 
@@ -18,15 +18,27 @@ adds a Cardputer Zero package.
 ### Changed
 
 - Steam Deck L3 plays/pauses music throughout the app. L4 resizes the canvas and opens palette import.
+- Cartridge insertion randomly selects among three melodic sound effects without repeating the previous choice.
 - Zero uses holding Escape to return HOME; plain Q no longer quits.
-- Importing a Lospec palette by name or URL opens a preview before saving and applying it. Browsing palettes still allows direct selection.
 
 ### Fixed
 
+- Fixed music events consuming Steam Deck Menu, redo, and palette-stick navigation events.
 - Fixed Steam Deck builds exiting at launch when SDL2_mixer is only installed in the build container. The Steam shortcut now launches through the same Distrobox runtime.
-- Fixed Zero Sym-key input, including hyphens, periods, and slashes in palette names and URLs.
-- Fixed the save-changes prompt flashing when opening or moving between buttons.
-- Fixed the import-preview cartridge appearing without its entrance animation.
+
+## [0.9.1] — 2026-11-21
+
+### Added
+
+- Zero USB keyboard support.
+
+### Fixed
+
+- Lospec palette previews before saving and applying.
+- Zero Sym-key input for hyphens, periods, and slashes.
+- Save-changes prompt flashing.
+- Missing cartridge entrance animation during palette import.
+- ADV compilation with newer FastLED versions.
 
 ## [0.9.0] — Cardputer Zero
 

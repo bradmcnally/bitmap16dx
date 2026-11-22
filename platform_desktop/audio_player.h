@@ -49,7 +49,8 @@ class AudioPlayer {
   bool soundEffectsEnabled_ = true;
   uint8_t soundEffectsVolume_ = 100;
   Mix_Chunk* cartridgeSlide_ = nullptr;
-  Mix_Chunk* cartridgeInsert_ = nullptr;
+  std::array<Mix_Chunk*, 3> cartridgeInsert_{};
+  std::size_t lastCartridgeSound_ = 3;
   Mix_Chunk* menuOpen_ = nullptr;
   Mix_Chunk* menuClose_ = nullptr;
   Mix_Chunk* sketchOpen_ = nullptr;

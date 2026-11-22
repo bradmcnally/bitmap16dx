@@ -1,5 +1,6 @@
 #include "platform_adv/led_matrix.h"
 
+#include <Arduino.h>
 #include <FastLED.h>
 
 #include "core/led_mapping.h"

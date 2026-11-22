@@ -24,11 +24,11 @@ Replace the hostname or username if your Deck uses different ones.
 ## Arch build container maintenance
 
 Run this in Konsole on the Deck to refresh the Arch `dev` container and install
-the SDL2_mixer audio dependency. It also resolves package-download 404 errors
+the SDL2_mixer audio dependency and PulseAudio client library. It also resolves package-download 404 errors
 caused by an outdated package list:
 
 ```sh
-distrobox enter dev -- sudo pacman -Syu --needed sdl2_mixer
+distrobox enter dev -- sudo pacman -Syu --needed sdl2_mixer libpulse
 ```
 
 This upgrades packages inside the build container, not SteamOS. Review and
@@ -40,6 +40,14 @@ After the command finishes successfully, rebuild and install the app:
 
 ```sh
 distrobox enter dev -- /home/deck/bitmap16dx/platform_steamdeck/update_and_build.sh
+```
+
+The `libpulse` client connects container audio to the Deck's existing sound
+server. If Music reports unavailable and logs show ALSA cannot open a device,
+install it inside `dev`, then close and reopen the app:
+
+```sh
+distrobox enter dev -- sudo pacman -S --needed libpulse
 ```
 
 ## First launch

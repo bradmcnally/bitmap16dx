@@ -2,7 +2,7 @@
 
 ## Install
 
-Download the ADV `.bin` firmware from the [v0.9.0 GitHub release](https://github.com/bradmcnally/bitmap16dx/releases/tag/v.0.9.0)
+Download the ADV `.bin` firmware from the [v0.9.1 GitHub release](https://github.com/bradmcnally/bitmap16dx/releases/tag/v.0.9.1)
 or [M5Launcher](https://bmorcelli.github.io/Launcher/) and flash it to your Cardputer ADV. To build and upload from source, see the
 [development guide](../docs/development.md#build-and-install-the-adv-firmware).
 

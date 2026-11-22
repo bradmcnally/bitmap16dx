@@ -62,10 +62,12 @@ Public sources, credits and checksums are tracked separately from those ignored
 WAVs. Audio credits are copied into each build's `music/` folder and included by
 the Zero package and Steam Deck installer. SDL builds preload
 `assets/audio/transition_soft_02b.wav` for the start of a cartridge slide and
-`assets/audio/success_melodic_01b.wav` for the first completed insertion frame.
+a random choice of `success_melodic_01a.wav`, `success_melodic_01b.wav`, or
+`success_melodic_01c.wav` for the first completed insertion frame. Consecutive
+insertions avoid repeating the same sample.
 The completion cue plays once, before the existing brief hold and return to
-Canvas. CMake embeds both WAVs into the executable, including Zero packages, so no runtime asset path or
-extra effect files are needed. SDL2_mixer 2.6+ streams MP3 music from the
+Canvas. CMake embeds the slide and completion WAVs into the executable, including
+Zero packages, so no runtime asset path or extra effect files are needed. SDL2_mixer 2.6+ streams MP3 music from the
 `music/` directory beside the executable, while effects mix over it. CMake
 copies `assets/audio/music/*.mp3` into that directory in filename order.
 The Zero package and Steam Deck installer include the directory. Music is off

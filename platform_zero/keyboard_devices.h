@@ -1,6 +1,7 @@
 #pragma once
 
 #include "keyboard_state.h"
+#include "keyboard_discovery.h"
 
 #include <string>
 #include <vector>
@@ -31,6 +32,7 @@ class KeyboardDevices {
   void remove(std::size_t index);
   std::vector<Device> devices_;
   KeyboardState state_;
+  KeyboardDiscovery discovery_;
   Uint32 nextDiscovery_ = 0;
   Uint32 backlightEventType_ = static_cast<Uint32>(-1);
   std::size_t nextDevice_ = 0;

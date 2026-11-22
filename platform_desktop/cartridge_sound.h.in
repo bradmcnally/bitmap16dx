@@ -9,6 +9,12 @@ inline constexpr unsigned char kSketchOpen[] = {@BITMAP16_SKETCH_OPEN_BYTES@};
 inline constexpr unsigned char kSketchSave[] = {@BITMAP16_SKETCH_SAVE_BYTES@};
 @BITMAP16_NAVIGATION_SOUND_ARRAYS@
 struct SoundData { const unsigned char* data; int size; };
+@BITMAP16_CARTRIDGE_ALTERNATE_ARRAYS@
+inline constexpr SoundData kCartridgeInsertSounds[] = {
+  {kCartridgeInsert_a, sizeof(kCartridgeInsert_a)},
+  {kCartridgeInsert, sizeof(kCartridgeInsert)},
+  {kCartridgeInsert_c, sizeof(kCartridgeInsert_c)},
+};
 inline constexpr SoundData kNavigationSounds[] = {
   {kNavigation1, sizeof(kNavigation1)},
   {kNavigation2, sizeof(kNavigation2)},

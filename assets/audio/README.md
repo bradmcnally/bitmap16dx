@@ -19,7 +19,7 @@ the file to Git. New sources need their own license review.
 
 ## Private Cyberleaf sound effects
 
-All 13 WAVs currently in `assets/audio/` are from **Modern UI SFX v2** by
+All 15 WAVs currently in `assets/audio/` are from **Modern UI SFX v2** by
 **Andrea Baroni / Cyberleaf Studio**:
 <https://cyberleaf.itch.io/modern-ui-sfx>
 
