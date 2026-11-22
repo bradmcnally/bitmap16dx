@@ -3,13 +3,13 @@
 ## Install
 
 Download the Zero `.deb` from the
-[v0.9.0 GitHub release](https://github.com/bradmcnally/bitmap16dx/releases/tag/v.0.9.0).
+[v0.9.1 GitHub release](https://github.com/bradmcnally/bitmap16dx/releases/tag/v.0.9.1).
 The [Cardputer Zero Store listing](https://cardputer.cc/#/apps/16DX) is coming soon.
 
 If you download the ARM64 Debian package from GitHub, install it on the Zero:
 
 ```sh
-sudo dpkg -i bitmap16dx_0.9.0-1_arm64.deb
+sudo dpkg -i bitmap16dx_0.9.1-1_arm64.deb
 ```
 
 To create the package from source or update over SSH, follow the

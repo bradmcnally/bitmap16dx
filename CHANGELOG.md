@@ -5,24 +5,19 @@ All notable user-facing changes to BitMap16 DX are documented here.
 The v0.8.0 release artifact targets the M5Stack Cardputer ADV. Version 0.9.0
 adds a Cardputer Zero package.
 
-## [0.9.1] — Unreleased
+## [0.9.1] — 2026-11-21
 
 ### Added
 
-- Added Zero USB keyboard support with arrow-key navigation, Space to draw, and adaptive Help mappings. USB F/Z/X/C remain letter keys.
+- Zero USB keyboard support.
 
 ### Fixed
 
-- Restored previewing imported Lospec palettes before saving and applying them.
-- Fixed Zero Sym-key input, including hyphens, periods, and slashes in palette names and URLs.
-- Fixed the save-changes prompt flashing when opening or moving between buttons.
-- Fixed the import-preview cartridge appearing without its entrance animation.
-- Fixed ADV firmware compilation with newer FastLED versions.
-- Fixed periodic screensaver stutters while a USB keyboard is connected.
-- Clarified built-in keyboard shortcuts in USB Help.
-
-This release retains the v0.9.0 audio-free build. Music, sound effects, Audio
-settings, and system-volume controls are reserved for a later release.
+- Lospec palette previews before saving and applying.
+- Zero Sym-key input for hyphens, periods, and slashes.
+- Save-changes prompt flashing.
+- Missing cartridge entrance animation during palette import.
+- ADV compilation with newer FastLED versions.
 
 ## [0.9.0] — Cardputer Zero
 
