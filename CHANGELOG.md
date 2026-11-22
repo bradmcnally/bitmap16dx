@@ -13,6 +13,7 @@ adds a Cardputer Zero package.
 - Fixed Zero Sym-key input, including hyphens, periods, and slashes in palette names and URLs.
 - Fixed the save-changes prompt flashing when opening or moving between buttons.
 - Fixed the import-preview cartridge appearing without its entrance animation.
+- Fixed ADV firmware compilation with newer FastLED versions.
 
 This release retains the v0.9.0 audio-free build and controls. Music, sound
 effects, Audio settings, system-volume controls, and USB keyboard support are
