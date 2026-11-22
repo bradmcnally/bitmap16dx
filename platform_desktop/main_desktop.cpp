@@ -1416,7 +1416,7 @@ int main(int argc, char** argv) {
     SketchResult result = sketchWorkflow.request(action, settings.saveWarnings, key);
     const bool showedDialog = result == SketchResult::AwaitingChoice;
     const auto draw = [&]() {
-      renderNow();
+      renderNow(0, false);
       drawUnsavedChangesModal(canvas, settings, static_cast<int>(sketchWorkflow.choice()));
       present(canvas, texture, renderer, settings.displayBrightness);
     };
@@ -1541,12 +1541,22 @@ int main(int argc, char** argv) {
     settings.saveWarnings = true;
     if (!editor.draw()) return 1;
     pushKeyEvent(SDLK_ESCAPE, false);
+    const uint64_t beforeSaveWarning = desktopPresentedFrames;
     if (requestSketchAction(SketchAction::NewSketch) || !editor.canUndo() ||
         !sketchWorkflow.hasUnsavedChanges()) return 1;
+    if (desktopPresentedFrames - beforeSaveWarning != 2) {
+      SDL_Log("Save warning must present once on open and once on close");
+      return 1;
+    }
+    const uint64_t beforeSaveFocusChange = desktopPresentedFrames;
     pushKeyEvent(SDLK_LEFT, false);
     pushKeyEvent(SDLK_RETURN, false);
     if (!requestSketchAction(SketchAction::NewSketch) || editor.canUndo() ||
         sketchWorkflow.hasUnsavedChanges()) return 1;
+    if (desktopPresentedFrames - beforeSaveFocusChange != 3) {
+      SDL_Log("Save warning must present once per focus change");
+      return 1;
+    }
     if (!editor.draw()) return 1;
     pushKeyEvent(SDLK_ESCAPE, false);
     if (requestSketchAction(SketchAction::Quit) || !editor.canUndo()) return 1;

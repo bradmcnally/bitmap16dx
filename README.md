@@ -86,7 +86,8 @@ options for your device. Open Help for the controls available on your platform.
 
 ## Downloads and releases
 
-The latest release is **v0.9.0** for Cardputer ADV and Cardputer Zero.
+Version **v0.9.1** is in preparation. The latest published release is
+**v0.9.0** for Cardputer ADV and Cardputer Zero.
 Download the file for your device from the
 [v0.9.0 release](https://github.com/bradmcnally/bitmap16dx/releases/tag/v.0.9.0):
 

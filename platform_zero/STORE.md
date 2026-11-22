@@ -16,11 +16,11 @@ python3 platform_zero/tools/check_store.py
 ```
 
 The package command builds on the Zero and checks the resulting
-`build_zero_device/bitmap16dx_0.9.0-1_arm64.deb`. Local installation uses the
+`build_zero_device/bitmap16dx_0.9.1-1_arm64.deb`. Local installation uses the
 same package. To check a package again:
 
 ```sh
-python3 platform_zero/tools/check_store.py --deb build_zero_device/bitmap16dx_0.9.0-1_arm64.deb
+python3 platform_zero/tools/check_store.py --deb build_zero_device/bitmap16dx_0.9.1-1_arm64.deb
 ```
 
 The checks cover listing assets, version, package name, architecture, the ARM64

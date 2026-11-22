@@ -5,6 +5,19 @@ All notable user-facing changes to BitMap16 DX are documented here.
 The v0.8.0 release artifact targets the M5Stack Cardputer ADV. Version 0.9.0
 adds a Cardputer Zero package.
 
+## [0.9.1] — Unreleased
+
+### Fixed
+
+- Restored previewing imported Lospec palettes before saving and applying them.
+- Fixed Zero Sym-key input, including hyphens, periods, and slashes in palette names and URLs.
+- Fixed the save-changes prompt flashing when opening or moving between buttons.
+- Fixed the import-preview cartridge appearing without its entrance animation.
+
+This release retains the v0.9.0 audio-free build and controls. Music, sound
+effects, Audio settings, system-volume controls, and USB keyboard support are
+reserved for a later release.
+
 ## [0.9.0] — Cardputer Zero
 
 ### Added

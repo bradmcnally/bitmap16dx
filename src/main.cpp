@@ -1,5 +1,5 @@
 /**
- * BitMap16 DX - v0.9.0
+ * BitMap16 DX - v0.9.1
  *
  * Working pixel sketch station for Cardputer ADV!
  *
@@ -120,7 +120,7 @@ bitmap16::ShakeDetector shakeDetector;
 
 
 // Firmware version displayed on boot screen
-const char* FIRMWARE_VERSION = "v0.9.0";
+const char* FIRMWARE_VERSION = "v0.9.1";
 
 // File format version for sketch files
 // Version 1: gridSize (1B) + paletteSize (1B) + palette (32B) + pixels (256B) = 290 bytes
